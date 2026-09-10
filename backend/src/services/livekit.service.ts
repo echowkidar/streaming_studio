@@ -27,9 +27,9 @@ export class LiveKitService {
   private readonly host: string;
 
   constructor() {
-    this.host = process.env.LIVEKIT_HTTP_URL ?? process.env.LIVEKIT_HOST ?? 'http://livekit:7880';
-    this.apiKey = process.env.LIVEKIT_API_KEY ?? 'APIxxxxxxxxxx';
-    this.apiSecret = process.env.LIVEKIT_API_SECRET ?? 'CHANGE_ME_LIVEKIT_SECRET';
+    this.host = process.env.LIVEKIT_HTTP_URL || process.env.LIVEKIT_HOST || 'http://livekit:7880';
+    this.apiKey = process.env.LIVEKIT_API_KEY || 'APIxxxxxxxxxx';
+    this.apiSecret = process.env.LIVEKIT_API_SECRET || 'CHANGE_ME_LIVEKIT_SECRET';
 
     this.roomService = new RoomServiceClient(this.host, this.apiKey, this.apiSecret);
   }

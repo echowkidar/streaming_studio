@@ -190,8 +190,13 @@ export function useLiveKit({
         .on(RoomEvent.LocalTrackPublished, () => syncParticipants(newRoom))
         .on(RoomEvent.LocalTrackUnpublished, () => syncParticipants(newRoom));
 
-      // 4. Connect to Room
-      await newRoom.connect(livekitWsUrl, token);
+      // 4. Connect to Room with timeout
+      await Promise.race([
+        newRoom.connect(livekitWsUrl, token),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Connection timeout: LiveKit server did not respond within 15s")), 15000)
+        ),
+      ]);
 
       // 5. Enable Local Camera & Microphone by default
       try {
@@ -208,6 +213,10 @@ export function useLiveKit({
       setError(err instanceof Error ? err.message : "Connection failed");
       setIsConnecting(false);
       setIsConnected(false);
+      if (roomRef.current) {
+        roomRef.current.disconnect();
+        roomRef.current = null;
+      }
     }
   }, [roomName, participantName, role, isConnecting, isConnected, syncParticipants]);
 
