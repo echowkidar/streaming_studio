@@ -254,6 +254,8 @@ services:
       - frontend
       - api
       - websocket
+      - livekit
+      - minio
     networks:
       - livestudio
       - proxy
