@@ -1,7 +1,7 @@
 "use client";
 
-import { Mail, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { Mail, Lock, Eye, EyeOff, AlertCircle, Sparkles } from "lucide-react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -10,13 +10,24 @@ import { apiRequest } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setUser, setToken } = useAuthStore();
+  const { user, token, setUser, setToken } = useAuthStore();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user && token) {
+      router.replace("/");
+    }
+  }, [user, token, router]);
+
+  const handleDemoFill = () => {
+    setEmail("admin@livestudio.io");
+    setPassword("AdminPassword123!");
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +55,7 @@ export default function LoginPage() {
         router.push("/");
       } else {
         // Fallback for standalone demo mode
+        setToken("mock-jwt-token");
         setUser({
           id: "usr-admin",
           name: email.split("@")[0],
@@ -63,7 +75,25 @@ export default function LoginPage() {
   return (
     <div className="glass-strong rounded-2xl p-8 border-t border-white/20">
       <h2 className="text-2xl font-semibold text-white mb-2">Welcome back</h2>
-      <p className="text-xs text-slate-400 mb-6">Sign in to your LiveStudio account</p>
+      <p className="text-xs text-slate-400 mb-5">Sign in to your LiveStudio account</p>
+
+      {/* Demo Credentials Helper */}
+      <div className="mb-5 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs flex items-center justify-between">
+        <div>
+          <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            Demo Admin Credentials
+          </p>
+          <p className="text-[11px] text-slate-400 mt-0.5">admin@livestudio.io • AdminPassword123!</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleDemoFill}
+          className="px-2.5 py-1 text-[11px] font-medium text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg transition-colors"
+        >
+          Auto-fill
+        </button>
+      </div>
 
       {error && (
         <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">

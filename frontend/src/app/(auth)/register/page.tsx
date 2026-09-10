@@ -1,7 +1,7 @@
 "use client";
 
 import { Mail, Lock, User, Eye, EyeOff, ShieldCheck, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +10,7 @@ import { apiRequest } from "@/lib/api";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { setUser, setToken } = useAuthStore();
+  const { user, token, setUser, setToken } = useAuthStore();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -18,6 +18,12 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user && token) {
+      router.replace("/");
+    }
+  }, [user, token, router]);
 
   const calculateStrength = () => {
     if (!password) return 0;
@@ -57,6 +63,7 @@ export default function RegisterPage() {
         router.push("/");
       } else {
         // If backend is not reached in demo mode, create local state and login
+        setToken("mock-jwt-token");
         setUser({
           id: `usr-${Date.now()}`,
           name,

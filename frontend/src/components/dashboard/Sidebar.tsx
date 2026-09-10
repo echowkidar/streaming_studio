@@ -3,11 +3,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useAuthStore } from "@/stores/auth.store";
 import { cn } from "@/lib/utils";
 import { 
   Home, Video, Radio, Film, Send, Palette, 
   FolderOpen, Users, Sparkles, FileText, BarChart3,
-  UserPlus, Settings, Shield, ChevronLeft, ChevronRight
+  UserPlus, Settings, Shield, ChevronLeft, ChevronRight, LogOut
 } from "lucide-react";
 
 const navigation = [
@@ -31,8 +33,15 @@ const secondaryNavigation = [
 ];
 
 export default function Sidebar() {
+  const router = useRouter();
+  const { logout } = useAuthStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+
+  const handleLogout = () => {
+    logout();
+    router.push("/login");
+  };
 
   return (
     <div 
@@ -94,10 +103,22 @@ export default function Sidebar() {
         ))}
       </div>
 
-      <div className="p-3 border-t border-white/5 shrink-0">
+      <div className="p-3 border-t border-white/5 shrink-0 flex flex-col gap-1">
+        <button
+          onClick={handleLogout}
+          className={cn(
+            "group flex items-center rounded-xl px-3 py-2 text-sm font-medium transition-all w-full",
+            "text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10"
+          )}
+          title={isCollapsed ? "Log out" : undefined}
+        >
+          <LogOut className="shrink-0 h-5 w-5 text-rose-400 group-hover:text-rose-300" />
+          {!isCollapsed && <span className="ml-3 truncate font-medium">Log out</span>}
+        </button>
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="w-full flex items-center justify-center p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {isCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
         </button>

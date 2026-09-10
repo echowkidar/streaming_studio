@@ -1,11 +1,17 @@
+"use client";
+
 import { Button } from "@/components/ui/Button";
 import { formatDate } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth.store";
 import { 
   Radio, Film, HardDrive, Users, 
   Play, Plus, Video, Calendar, ArrowRight
 } from "lucide-react";
 
 export default function DashboardHome() {
+  const { user } = useAuthStore();
+  const displayName = user?.name ? user.name.split(" ")[0] : "Creator";
+
   const stats = [
     { label: "Broadcasts", value: "24", icon: Radio, color: "text-indigo-400", bg: "bg-indigo-500/10" },
     { label: "Recordings", value: "156", icon: Film, color: "text-cyan-400", bg: "bg-cyan-500/10" },
@@ -19,7 +25,7 @@ export default function DashboardHome() {
       {/* Welcome Section */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-1">Welcome back, Salar</h1>
+          <h1 className="text-3xl font-bold text-white mb-1">Welcome back, {displayName}</h1>
           <p className="text-slate-400">{formatDate(new Date())}</p>
         </div>
         <div className="flex items-center gap-3">
