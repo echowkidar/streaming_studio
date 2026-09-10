@@ -204,12 +204,12 @@ services:
 
   # ─── LiveKit (WebRTC SFU) ───────────────────────────────
   livekit:
-    image: livekit/livekit-server:latest
+    build:
+      context: ./livekit
+      dockerfile: Dockerfile
     container_name: livestudio-livekit
     restart: unless-stopped
     command: --config /etc/livekit.yaml
-    volumes:
-      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
     ports:
       - "7881:7881/tcp"
       - "7882:7882/udp"
@@ -224,11 +224,11 @@ services:
 
   # ─── coturn (TURN Server) ───────────────────────────────
   coturn:
-    image: coturn/coturn:latest
+    build:
+      context: ./coturn
+      dockerfile: Dockerfile
     container_name: livestudio-coturn
     restart: unless-stopped
-    volumes:
-      - ./coturn/turnserver.conf:/etc/turnserver.conf:ro
     ports:
       - "${TURN_PORT:-3478}:3478/tcp"
       - "${TURN_PORT:-3478}:3478/udp"
@@ -240,22 +240,22 @@ services:
 
   # ─── Nginx (Reverse Proxy) ──────────────────────────────
   nginx:
-    image: nginx:alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
     container_name: livestudio-nginx
     restart: unless-stopped
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - nginx_certs:/etc/nginx/certs
     ports:
-      - "80:80"
-      - "443:443"
+      - "${NGINX_PORT:-8088}:80"
     depends_on:
       - frontend
       - api
       - websocket
     networks:
       - livestudio
+      - proxy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
       interval: 30s
@@ -268,6 +268,9 @@ networks:
   livestudio:
     driver: bridge
     name: livestudio-network
+  proxy:
+    external: true
+
 
 # ─── Volumes ──────────────────────────────────────────────
 volumes:
