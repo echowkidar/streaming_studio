@@ -13,6 +13,7 @@ import mediaRoutes from './routes/media.routes';
 import participantRoutes from './routes/participant.routes';
 import brandRoutes from './routes/brand.routes';
 import adminRoutes from './routes/admin.routes';
+import livekitRoutes from './routes/livekit.routes';
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/participants', participantRoutes);
 app.use('/api/brand', brandRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/livekit', livekitRoutes);
 
 // Global Error Handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

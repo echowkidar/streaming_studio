@@ -40,6 +40,7 @@ interface StudioState {
 
   // Participants
   participants: Participant[];
+  setParticipants: (participants: Participant[]) => void;
   addParticipant: (participant: Participant) => void;
   removeParticipant: (id: string | number) => void;
   updateParticipant: (id: string | number, updates: Partial<Participant>) => void;
@@ -101,49 +102,8 @@ export const useStudioStore = create<StudioState>((set) => ({
   toggleCam: () => set((s) => ({ camEnabled: !s.camEnabled })),
   toggleScreenShare: () => set((s) => ({ screenShareEnabled: !s.screenShareEnabled })),
 
-  participants: [
-    {
-      id: "host-1",
-      name: "Salar (Host)",
-      role: "host",
-      status: "ON_STAGE",
-      micOn: true,
-      camOn: true,
-      isSpeaking: true,
-      connectionQuality: "EXCELLENT",
-    },
-    {
-      id: "guest-1",
-      name: "Elena Rostova",
-      role: "guest",
-      status: "ON_STAGE",
-      micOn: true,
-      camOn: true,
-      isSpeaking: false,
-      connectionQuality: "GOOD",
-    },
-    {
-      id: "guest-2",
-      name: "Alex Chen (Product Lead)",
-      role: "guest",
-      status: "BACKSTAGE",
-      micOn: false,
-      camOn: true,
-      isSpeaking: false,
-      connectionQuality: "EXCELLENT",
-    },
-    {
-      id: "guest-3",
-      name: "Sarah Jenkins",
-      role: "guest",
-      status: "GREEN_ROOM",
-      micOn: true,
-      camOn: false,
-      isSpeaking: false,
-      connectionQuality: "GOOD",
-    }
-  ],
-
+  participants: [],
+  setParticipants: (participants) => set({ participants }),
   addParticipant: (participant) =>
     set((s) => ({ participants: [...s.participants, participant] })),
   removeParticipant: (id) =>

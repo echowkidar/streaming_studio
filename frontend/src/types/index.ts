@@ -86,8 +86,11 @@ export interface Participant {
   camOn: boolean;
   isSpeaking: boolean;
   isScreen?: boolean;
+  isLocal?: boolean;
   avatar?: string;
   connectionQuality?: "EXCELLENT" | "GOOD" | "FAIR" | "POOR";
+  videoTrack?: any;
+  audioTrack?: any;
 }
 
 export type DestinationPlatform = "YOUTUBE" | "FACEBOOK" | "TWITCH" | "LINKEDIN" | "CUSTOM_RTMP";

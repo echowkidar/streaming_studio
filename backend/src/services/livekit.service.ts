@@ -27,14 +27,18 @@ export class LiveKitService {
   private readonly host: string;
 
   constructor() {
-    this.host = process.env.LIVEKIT_HOST ?? 'http://localhost:7880';
-    this.apiKey = process.env.LIVEKIT_API_KEY ?? 'devkey';
-    this.apiSecret = process.env.LIVEKIT_API_SECRET ?? 'secret';
+    this.host = process.env.LIVEKIT_HTTP_URL ?? process.env.LIVEKIT_HOST ?? 'http://livekit:7880';
+    this.apiKey = process.env.LIVEKIT_API_KEY ?? 'APIxxxxxxxxxx';
+    this.apiSecret = process.env.LIVEKIT_API_SECRET ?? 'CHANGE_ME_LIVEKIT_SECRET';
 
     this.roomService = new RoomServiceClient(this.host, this.apiKey, this.apiSecret);
   }
 
-  public async generateToken(roomName: string, participant: ParticipantInput): Promise<ServiceResponse<string>> {
+  public async generateToken(
+    roomName: string, 
+    participant: ParticipantInput,
+    isHost = false
+  ): Promise<ServiceResponse<string>> {
     try {
       const validated = ParticipantSchema.parse(participant);
       
@@ -44,7 +48,14 @@ export class LiveKitService {
         metadata: validated.metadata,
       });
 
-      at.addGrant({ roomJoin: true, room: roomName });
+      at.addGrant({ 
+        roomJoin: true, 
+        room: roomName,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+        roomAdmin: isHost,
+      });
 
       const token = await at.toJwt();
       return { success: true, data: token };

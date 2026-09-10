@@ -1,8 +1,10 @@
 "use client";
 
 import React from "react";
-import { Mic, MicOff, Video, VideoOff, MonitorUp, Sparkles } from "lucide-react";
-import { useStudioStore, StudioLayout } from "@/stores/studio.store";
+import { Video } from "lucide-react";
+import { useStudioStore } from "@/stores/studio.store";
+import { VideoTrackView } from "./VideoTrackView";
+import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
 
 export const StagePreview: React.FC = () => {
@@ -30,59 +32,19 @@ export const StagePreview: React.FC = () => {
     "bottom-right": "bottom-14 right-6",
   };
 
-  // Helper to render individual participant tile
-  const renderTile = (p: typeof participants[0], index: number, extraClasses = "") => {
+  // Helper to render individual participant tile using real WebRTC VideoTrackView
+  const renderTile = (p: Participant, index: number, extraClasses = "") => {
     return (
-      <div
-        key={p.id}
-        className={cn(
-          "relative rounded-2xl bg-[#0e0e17] border overflow-hidden flex items-center justify-center transition-all duration-300 shadow-xl",
-          p.isSpeaking ? "border-indigo-500 shadow-indigo-500/20" : "border-white/10",
-          extraClasses
-        )}
-      >
-        {/* Background / Video Feed Placeholder */}
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-950/20 via-slate-900 to-black">
-          {p.isScreen ? (
-            <div className="flex flex-col items-center gap-3 text-indigo-400">
-              <MonitorUp className="w-16 h-16 animate-pulse" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Screen Feed Active</span>
-            </div>
-          ) : p.camOn ? (
-            <div className="flex flex-col items-center gap-3">
-              <div
-                className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-2xl border-2 border-white/20"
-                style={{
-                  background: `linear-gradient(135deg, ${activeThemeColor}80, #1e1b4b)`,
-                }}
-              >
-                {p.name[0]}
-              </div>
-              {p.isSpeaking && (
-                <div className="flex items-center gap-1">
-                  <span className="w-1 h-3 bg-emerald-400 animate-bounce rounded-full" />
-                  <span className="w-1 h-5 bg-emerald-400 animate-bounce delay-100 rounded-full" />
-                  <span className="w-1 h-2 bg-emerald-400 animate-bounce delay-200 rounded-full" />
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2 text-slate-500">
-              <VideoOff className="w-8 h-8" />
-              <span className="text-xs">Camera Off</span>
-            </div>
-          )}
-        </div>
-
-        {/* Participant Name Badge */}
-        <div className="absolute bottom-3 left-3 px-3 py-1 rounded-xl bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2 z-10">
-          <span className="text-xs font-medium text-white">{p.name}</span>
-          {p.micOn ? (
-            <Mic className="w-3.5 h-3.5 text-emerald-400" />
-          ) : (
-            <MicOff className="w-3.5 h-3.5 text-rose-400" />
-          )}
-        </div>
+      <div key={p.id} className={cn("relative w-full h-full", extraClasses)}>
+        <VideoTrackView
+          track={p.videoTrack}
+          name={p.name}
+          isSpeaking={p.isSpeaking}
+          micOn={p.micOn}
+          camOn={p.camOn}
+          isLocal={p.isLocal}
+          role={p.role}
+        />
       </div>
     );
   };

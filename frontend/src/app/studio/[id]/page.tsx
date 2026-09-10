@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -39,8 +39,31 @@ import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLiveKit } from "@/hooks/useLiveKit";
+import { useAuthStore } from "@/stores/auth.store";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
+  const { user } = useAuthStore();
+  const hostName = user?.name || "Host";
+
+  const {
+    isConnected,
+    isConnecting,
+    error: livekitError,
+    camEnabled: lkCam,
+    micEnabled: lkMic,
+    screenEnabled: lkScreen,
+    liveParticipants,
+    toggleCamera,
+    toggleMicrophone,
+    toggleScreenShare,
+  } = useLiveKit({
+    roomName: `studio-${params.id}`,
+    participantName: hostName,
+    role: "HOST",
+    autoConnect: true,
+  });
+
   const {
     broadcastTitle,
     setTitle,
@@ -51,12 +74,6 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     startRecord,
     stopRecord,
     viewerCount,
-    micEnabled,
-    toggleMic,
-    camEnabled,
-    toggleCam,
-    screenShareEnabled,
-    toggleScreenShare,
     participants,
     moveToStage,
     moveToBackstage,
@@ -69,12 +86,19 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Sync LiveKit participants to studio store
+  useEffect(() => {
+    if (liveParticipants.length > 0) {
+      useStudioStore.getState().setParticipants(liveParticipants);
+    }
+  }, [liveParticipants]);
+
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
   const backstageParticipants = participants.filter((p) => p.status === "BACKSTAGE");
   const greenRoomParticipants = participants.filter((p) => p.status === "GREEN_ROOM");
 
   const handleCopyInvite = () => {
-    const inviteUrl = `${window.location.origin}/join/guest-invite-token-${params.id}`;
+    const inviteUrl = `${window.location.origin}/join/studio-${params.id}`;
     navigator.clipboard.writeText(inviteUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -108,13 +132,25 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400 pl-2 border-l border-white/10">
             <span className="flex items-center gap-1">
               <Users className="w-3 h-3 text-slate-400" />
-              {isLive ? `${viewerCount.toLocaleString()} Viewers` : "0 Viewers"}
+              {isLive ? `${viewerCount.toLocaleString()} Viewers` : `${participants.length} in Studio`}
             </span>
             <span>•</span>
-            <span className="flex items-center gap-1 text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Optimal Network
-            </span>
+            {isConnected ? (
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                LiveKit Connected
+              </span>
+            ) : isConnecting ? (
+              <span className="flex items-center gap-1 text-amber-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                Connecting WebRTC...
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-rose-400" title={livekitError || undefined}>
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                {livekitError ? "Connection Error" : "Offline"}
+              </span>
+            )}
           </div>
         </div>
 
@@ -247,33 +283,33 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             {/* Device Toggles */}
             <div className="flex items-center gap-2">
               <Button
-                variant={micEnabled ? "secondary" : "danger"}
+                variant={lkMic ? "secondary" : "danger"}
                 size="sm"
-                onClick={toggleMic}
+                onClick={toggleMicrophone}
                 className="h-10 px-3.5 rounded-xl font-medium"
               >
-                {micEnabled ? <Mic className="w-4 h-4 mr-2 text-emerald-400" /> : <MicOff className="w-4 h-4 mr-2" />}
-                {micEnabled ? "Mute" : "Unmuted"}
+                {lkMic ? <Mic className="w-4 h-4 mr-2 text-emerald-400" /> : <MicOff className="w-4 h-4 mr-2" />}
+                {lkMic ? "Mute" : "Unmute"}
               </Button>
 
               <Button
-                variant={camEnabled ? "secondary" : "danger"}
+                variant={lkCam ? "secondary" : "danger"}
                 size="sm"
-                onClick={toggleCam}
+                onClick={toggleCamera}
                 className="h-10 px-3.5 rounded-xl font-medium"
               >
-                {camEnabled ? <Video className="w-4 h-4 mr-2 text-indigo-400" /> : <VideoOff className="w-4 h-4 mr-2" />}
-                {camEnabled ? "Stop Cam" : "Start Cam"}
+                {lkCam ? <Video className="w-4 h-4 mr-2 text-indigo-400" /> : <VideoOff className="w-4 h-4 mr-2" />}
+                {lkCam ? "Stop Cam" : "Start Cam"}
               </Button>
 
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={toggleScreenShare}
-                className={cn("h-10 px-3.5 rounded-xl font-medium transition-all", screenShareEnabled && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
+                className={cn("h-10 px-3.5 rounded-xl font-medium transition-all", lkScreen && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
               >
                 <MonitorUp className="w-4 h-4 mr-2" />
-                {screenShareEnabled ? "Sharing Screen" : "Share Screen"}
+                {lkScreen ? "Stop Sharing" : "Share Screen"}
               </Button>
             </div>
 
