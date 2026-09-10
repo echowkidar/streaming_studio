@@ -210,7 +210,9 @@ services:
       dockerfile: Dockerfile
     container_name: livestudio-livekit
     restart: unless-stopped
-    command: --config /etc/livekit.yaml
+    command: ["--config", "/etc/livekit.yaml", "--keys", "${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"]
+    environment:
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"
     ports:
       - "7880:7880"
       - "7881:7881/tcp"
