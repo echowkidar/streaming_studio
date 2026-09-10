@@ -281,6 +281,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   <div key={p.id} className="w-full h-full min-h-[220px] max-h-[500px]">
                     <VideoTrackView
                       track={p.videoTrack}
+                      audioTrack={p.audioTrack}
                       name={p.name}
                       isSpeaking={p.isSpeaking}
                       micOn={p.micOn}

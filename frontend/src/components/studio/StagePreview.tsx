@@ -38,6 +38,7 @@ export const StagePreview: React.FC = () => {
       <div key={p.id} className={cn("relative w-full h-full", extraClasses)}>
         <VideoTrackView
           track={p.videoTrack}
+          audioTrack={p.audioTrack}
           name={p.name}
           isSpeaking={p.isSpeaking}
           micOn={p.micOn}

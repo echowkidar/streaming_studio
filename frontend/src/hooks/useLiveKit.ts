@@ -6,12 +6,12 @@ import {
   RoomEvent,
   Track,
   VideoPresets,
-  LocalParticipant,
   RemoteParticipant,
   RemoteTrackPublication,
-  LocalTrackPublication,
   LocalVideoTrack,
   LocalAudioTrack,
+  RemoteAudioTrack,
+  RemoteTrack,
 } from "livekit-client";
 import { Participant } from "@/types";
 
@@ -42,10 +42,14 @@ export function useLiveKit({
   const [screenTrack, setScreenTrack] = useState<LocalVideoTrack | null>(null);
 
   const [liveParticipants, setLiveParticipants] = useState<Participant[]>([]);
+  
   const roomRef = useRef<Room | null>(null);
+  const isConnectingRef = useRef(false);
+  const isConnectedRef = useRef(false);
 
   // Helper to re-map all LiveKit participants into our Participant state
   const syncParticipants = useCallback((currentRoom: Room) => {
+    if (!currentRoom) return;
     const list: Participant[] = [];
 
     // Local Participant
@@ -54,35 +58,53 @@ export function useLiveKit({
     let localMicTrack: LocalAudioTrack | null = null;
     let localScrTrack: LocalVideoTrack | null = null;
 
-    local.videoTrackPublications.forEach((pub) => {
-      if (pub.source === Track.Source.ScreenShare) {
-        localScrTrack = (pub.track as LocalVideoTrack) || null;
-      } else {
-        localCamTrack = (pub.track as LocalVideoTrack) || null;
+    if (local) {
+      local.videoTrackPublications.forEach((pub) => {
+        if (pub.source === Track.Source.ScreenShare) {
+          localScrTrack = (pub.track as LocalVideoTrack) || (pub.videoTrack as LocalVideoTrack) || null;
+        } else {
+          localCamTrack = (pub.track as LocalVideoTrack) || (pub.videoTrack as LocalVideoTrack) || null;
+        }
+      });
+
+      local.audioTrackPublications.forEach((pub) => {
+        localMicTrack = (pub.track as LocalAudioTrack) || (pub.audioTrack as LocalAudioTrack) || null;
+      });
+
+      if (!localCamTrack) {
+        const camPub = local.getTrackPublication(Track.Source.Camera);
+        if (camPub) {
+          localCamTrack = (camPub.track as LocalVideoTrack) || (camPub.videoTrack as LocalVideoTrack) || null;
+        }
       }
-    });
+      if (!localMicTrack) {
+        const micPub = local.getTrackPublication(Track.Source.Microphone);
+        if (micPub) {
+          localMicTrack = (micPub.track as LocalAudioTrack) || (micPub.audioTrack as LocalAudioTrack) || null;
+        }
+      }
 
-    local.audioTrackPublications.forEach((pub) => {
-      localMicTrack = (pub.track as LocalAudioTrack) || null;
-    });
+      setLocalVideoTrack(localCamTrack);
+      setLocalAudioTrack(localMicTrack);
+      setScreenTrack(localScrTrack);
 
-    setLocalVideoTrack(localCamTrack);
-    setLocalAudioTrack(localMicTrack);
-    setScreenTrack(localScrTrack);
+      const isCamActive = local.isCameraEnabled || !!localCamTrack;
+      const isMicActive = local.isMicrophoneEnabled || !!localMicTrack;
 
-    list.push({
-      id: local.identity,
-      name: local.name || participantName,
-      role: role.toLowerCase() as any,
-      status: "ON_STAGE",
-      micOn: local.isMicrophoneEnabled,
-      camOn: local.isCameraEnabled,
-      isSpeaking: local.isSpeaking,
-      isLocal: true,
-      videoTrack: localCamTrack,
-      audioTrack: localMicTrack,
-      connectionQuality: "EXCELLENT",
-    });
+      list.push({
+        id: local.identity,
+        name: local.name || participantName,
+        role: role.toLowerCase() as any,
+        status: "ON_STAGE",
+        micOn: isMicActive,
+        camOn: isCamActive,
+        isSpeaking: local.isSpeaking,
+        isLocal: true,
+        videoTrack: localCamTrack,
+        audioTrack: localMicTrack,
+        connectionQuality: "EXCELLENT",
+      });
+    }
 
     // Remote Participants
     currentRoom.remoteParticipants.forEach((remote: RemoteParticipant) => {
@@ -90,13 +112,13 @@ export function useLiveKit({
       let remoteAudio: any = null;
 
       remote.videoTrackPublications.forEach((pub: RemoteTrackPublication) => {
-        if (pub.isSubscribed && pub.track) {
+        if (pub.track) {
           remoteVideo = pub.track;
         }
       });
 
       remote.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
-        if (pub.isSubscribed && pub.track) {
+        if (pub.track) {
           remoteAudio = pub.track;
         }
       });
@@ -111,13 +133,16 @@ export function useLiveKit({
         // ignore
       }
 
+      const isRemoteCamActive = remote.isCameraEnabled || !!remoteVideo;
+      const isRemoteMicActive = remote.isMicrophoneEnabled || !!remoteAudio;
+
       list.push({
         id: remote.identity,
         name: remote.name || `Guest (${remote.identity.slice(0, 5)})`,
         role: parsedRole as any,
         status: "ON_STAGE",
-        micOn: remote.isMicrophoneEnabled,
-        camOn: remote.isCameraEnabled,
+        micOn: isRemoteMicActive,
+        camOn: isRemoteCamActive,
         isSpeaking: remote.isSpeaking,
         isLocal: false,
         videoTrack: remoteVideo,
@@ -129,8 +154,26 @@ export function useLiveKit({
     setLiveParticipants(list);
   }, [participantName, role]);
 
+  const disconnect = useCallback(() => {
+    isConnectingRef.current = false;
+    isConnectedRef.current = false;
+    if (roomRef.current) {
+      try {
+        roomRef.current.disconnect();
+      } catch (e) {
+        console.warn("Disconnect error:", e);
+      }
+      roomRef.current = null;
+    }
+    setRoom(null);
+    setIsConnected(false);
+    setIsConnecting(false);
+    setLiveParticipants([]);
+  }, []);
+
   const connect = useCallback(async () => {
-    if (isConnecting || isConnected) return;
+    if (isConnectingRef.current || isConnectedRef.current) return;
+    isConnectingRef.current = true;
     setIsConnecting(true);
     setError(null);
 
@@ -157,7 +200,7 @@ export function useLiveKit({
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const livekitWsUrl = `${protocol}//${window.location.host}/livekit/`;
 
-      // 3. Create LiveKit Room
+      // 3. Create LiveKit Room with resilient config
       const newRoom = new Room({
         adaptiveStream: true,
         dynacast: true,
@@ -171,36 +214,73 @@ export function useLiveKit({
 
       // Event Listeners
       newRoom
+        .on(RoomEvent.SignalConnected, () => {
+          syncParticipants(newRoom);
+        })
         .on(RoomEvent.Connected, () => {
+          isConnectedRef.current = true;
+          isConnectingRef.current = false;
           setIsConnected(true);
           setIsConnecting(false);
           syncParticipants(newRoom);
         })
+        .on(RoomEvent.ConnectionStateChanged, (state) => {
+          if (state === "connected") {
+            isConnectedRef.current = true;
+            isConnectingRef.current = false;
+            setIsConnected(true);
+            setIsConnecting(false);
+          } else if (state === "disconnected") {
+            isConnectedRef.current = false;
+            isConnectingRef.current = false;
+            setIsConnected(false);
+            setIsConnecting(false);
+          }
+          syncParticipants(newRoom);
+        })
         .on(RoomEvent.Disconnected, () => {
+          isConnectedRef.current = false;
+          isConnectingRef.current = false;
           setIsConnected(false);
+          setIsConnecting(false);
           setLiveParticipants([]);
         })
         .on(RoomEvent.ParticipantConnected, () => syncParticipants(newRoom))
         .on(RoomEvent.ParticipantDisconnected, () => syncParticipants(newRoom))
-        .on(RoomEvent.TrackSubscribed, () => syncParticipants(newRoom))
-        .on(RoomEvent.TrackUnsubscribed, () => syncParticipants(newRoom))
+        .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+          // Auto-play remote audio through browser speaker
+          if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).attach === "function") {
+            try {
+              (track as RemoteAudioTrack).attach();
+            } catch (e) {
+              console.warn("Audio attach error:", e);
+            }
+          }
+          syncParticipants(newRoom);
+        })
+        .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+          if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).detach === "function") {
+            try {
+              (track as RemoteAudioTrack).detach();
+            } catch (e) {
+              console.warn("Audio detach error:", e);
+            }
+          }
+          syncParticipants(newRoom);
+        })
         .on(RoomEvent.TrackMuted, () => syncParticipants(newRoom))
         .on(RoomEvent.TrackUnmuted, () => syncParticipants(newRoom))
         .on(RoomEvent.ActiveSpeakersChanged, () => syncParticipants(newRoom))
         .on(RoomEvent.LocalTrackPublished, () => syncParticipants(newRoom))
         .on(RoomEvent.LocalTrackUnpublished, () => syncParticipants(newRoom));
 
-      // 4. Connect to Room with timeout
-      await Promise.race([
-        newRoom.connect(livekitWsUrl, token),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Connection timeout: LiveKit server did not respond within 15s")), 15000)
-        ),
-      ]);
+      // 4. Connect to Room naturally without artificial timeout
+      await newRoom.connect(livekitWsUrl, token, { autoSubscribe: true });
 
-      // 5. Enable Local Camera & Microphone by default
+      // 5. Automatically enable Local Camera & Microphone
       try {
-        await newRoom.localParticipant.enableCameraAndMicrophone();
+        await newRoom.localParticipant.setCameraEnabled(true);
+        await newRoom.localParticipant.setMicrophoneEnabled(true);
         setCamEnabled(true);
         setMicEnabled(true);
       } catch (mediaErr) {
@@ -211,24 +291,12 @@ export function useLiveKit({
     } catch (err: unknown) {
       console.error("LiveKit connection error:", err);
       setError(err instanceof Error ? err.message : "Connection failed");
+      isConnectingRef.current = false;
+      isConnectedRef.current = false;
       setIsConnecting(false);
       setIsConnected(false);
-      if (roomRef.current) {
-        roomRef.current.disconnect();
-        roomRef.current = null;
-      }
     }
-  }, [roomName, participantName, role, isConnecting, isConnected, syncParticipants]);
-
-  const disconnect = useCallback(() => {
-    if (roomRef.current) {
-      roomRef.current.disconnect();
-      roomRef.current = null;
-      setRoom(null);
-      setIsConnected(false);
-      setLiveParticipants([]);
-    }
-  }, []);
+  }, [roomName, participantName, role, syncParticipants]);
 
   const toggleCamera = useCallback(async () => {
     if (!roomRef.current) return false;
@@ -272,6 +340,7 @@ export function useLiveKit({
     }
   }, [screenEnabled, syncParticipants]);
 
+  // Connect on mount / when room parameters change
   useEffect(() => {
     if (autoConnect) {
       connect();
@@ -279,7 +348,7 @@ export function useLiveKit({
     return () => {
       disconnect();
     };
-  }, [autoConnect, connect, disconnect]);
+  }, [roomName, participantName, role, autoConnect]);
 
   return {
     room,

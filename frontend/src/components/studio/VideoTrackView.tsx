@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 
 interface VideoTrackViewProps {
   track?: any; // LiveKit Track or LocalVideoTrack / RemoteVideoTrack
+  audioTrack?: any; // LiveKit RemoteAudioTrack
   mediaStream?: MediaStream | null;
   name: string;
   isSpeaking?: boolean;
@@ -18,6 +19,7 @@ interface VideoTrackViewProps {
 
 export function VideoTrackView({
   track,
+  audioTrack,
   mediaStream,
   name,
   isSpeaking = false,
@@ -28,6 +30,7 @@ export function VideoTrackView({
   className,
 }: VideoTrackViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -49,6 +52,23 @@ export function VideoTrackView({
       };
     }
   }, [track, mediaStream]);
+
+  // Play remote audio safely
+  useEffect(() => {
+    const audioEl = audioRef.current;
+    if (!audioEl || isLocal) return;
+
+    if (audioTrack && typeof audioTrack.attach === "function") {
+      audioTrack.attach(audioEl);
+      return () => {
+        try {
+          audioTrack.detach(audioEl);
+        } catch {
+          // ignore
+        }
+      };
+    }
+  }, [audioTrack, isLocal]);
 
   const initials = name
     .split(" ")
@@ -79,6 +99,9 @@ export function VideoTrackView({
           isLocal && "scale-x-[-1]" // Mirror local camera
         )}
       />
+
+      {/* Hidden Audio Element for Remote Participants */}
+      {!isLocal && <audio ref={audioRef} autoPlay playsInline className="hidden" />}
 
       {/* Camera Off / Fallback State */}
       {!hasActiveVideo && (
