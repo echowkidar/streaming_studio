@@ -15,14 +15,15 @@ services:
     restart: unless-stopped
     environment:
       - NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME:-LiveStudio}
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://api:4000}
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://websocket:4001}
-      - NEXT_PUBLIC_LIVEKIT_URL=${NEXT_PUBLIC_LIVEKIT_URL:-ws://livekit:7880}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
+      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-/ws}
+      - NEXT_PUBLIC_LIVEKIT_URL=${NEXT_PUBLIC_LIVEKIT_URL:-/livekit}
     depends_on:
       api:
         condition: service_healthy
     networks:
       - livestudio
+      - proxy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000 || exit 1"]
       interval: 10s
@@ -269,7 +270,9 @@ networks:
     driver: bridge
     name: livestudio-network
   proxy:
+    name: proxy
     external: true
+
 
 
 # ─── Volumes ──────────────────────────────────────────────
