@@ -1,14 +1,18 @@
 import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
 async function main() {
   try {
+    const passwordHash = await bcrypt.hash('AdminPassword123!', 10);
+
     const superAdmin = await prisma.user.upsert({
-      where: { email: 'admin@livestudio.local' },
+      where: { email: 'admin@livestudio.io' },
       update: {},
       create: {
-        email: 'admin@livestudio.local',
+        email: 'admin@livestudio.io',
+        passwordHash,
         name: 'Super Admin',
         role: 'SUPER_ADMIN',
       },
