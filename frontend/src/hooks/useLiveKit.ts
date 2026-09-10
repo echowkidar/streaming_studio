@@ -155,7 +155,7 @@ export function useLiveKit({
 
       // 2. Resolve WebSocket URL for LiveKit
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const livekitWsUrl = `${protocol}//${window.location.host}/livekit`;
+      const livekitWsUrl = `${protocol}//${window.location.host}/livekit/`;
 
       // 3. Create LiveKit Room
       const newRoom = new Room({

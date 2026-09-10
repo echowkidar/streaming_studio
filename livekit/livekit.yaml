@@ -1,10 +1,16 @@
 # LiveKit Server Configuration
 port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
 rtc:
+  tcp_port: 7881
   port_range_start: 7882
   port_range_end: 7882
-  use_external_ip: true
-  tcp_port: 7881
+  use_external_ip: false
+
+redis:
+  address: redis:6379
 
 keys:
   APIxxxxxxxxxx: CHANGE_ME_LIVEKIT_SECRET
@@ -14,11 +20,8 @@ logging:
 
 room:
   auto_create: true
-  max_participants: 20
+  empty_timeout: 300
+  max_participants: 50
 
 turn:
-  enabled: true
-  domain: studio.example.com
-  tls_port: 5349
-  udp_port: 3478
-  external_tls: true
+  enabled: false
