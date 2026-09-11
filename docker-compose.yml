@@ -213,8 +213,6 @@ services:
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${NODE_IP:-10.0.93.68}", "--keys", "${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"]
     environment:
       - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"
-    volumes:
-      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
     ports:
       - "7880:7880"
       - "7881:7881/tcp"
