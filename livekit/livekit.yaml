@@ -9,6 +9,22 @@ rtc:
   use_external_ip: false
   node_ip: "10.0.93.68"
   enable_loopback_candidate: true
+  turn_servers:
+    - host: "openrelay.metered.ca"
+      port: 443
+      protocol: tcp
+      username: "openrelayproject"
+      credential: "openrelayproject"
+    - host: "openrelay.metered.ca"
+      port: 443
+      protocol: udp
+      username: "openrelayproject"
+      credential: "openrelayproject"
+    - host: "openrelay.metered.ca"
+      port: 80
+      protocol: tcp
+      username: "openrelayproject"
+      credential: "openrelayproject"
 
 redis:
   address: redis:6379
