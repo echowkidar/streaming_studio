@@ -7,7 +7,7 @@ rtc:
   tcp_port: 7881
   udp_port: 7882
   use_external_ip: false
-  advertise_internal_ip: true
+  advertise_internal_ip: false
   enable_loopback_candidate: true
 
 redis:
