@@ -279,7 +279,7 @@ networks:
     driver: bridge
     name: livestudio-network
   proxy:
-    name: proxy
+    name: npm-network
     external: true
 
 
