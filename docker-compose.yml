@@ -210,7 +210,7 @@ services:
       dockerfile: Dockerfile
     container_name: livestudio-livekit
     restart: unless-stopped
-    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${NODE_IP:-10.0.93.68}", "--keys", "${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"]
+    command: ["--config", "/etc/livekit.yaml", "--keys", "${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"]
     environment:
       - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"
     ports:
