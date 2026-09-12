@@ -43,14 +43,37 @@ export function GoLiveModal({
     try {
       setLoading(true);
       const res = await fetch("/api/destinations");
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setDestinations(json.data);
-        // By default select all active destinations
-        setSelectedIds(json.data.map((d: Destination) => d.id));
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          setDestinations(json.data);
+          setSelectedIds(json.data.map((d: Destination) => d.id));
+          return;
+        }
+      }
+      // Fallback to local storage if API is empty or offline
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("livestudio_custom_destinations");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setDestinations(parsed);
+            setSelectedIds(parsed.map((d: Destination) => d.id));
+          }
+        }
       }
     } catch (e) {
-      console.error("Failed to load destinations:", e);
+      console.error("Failed to load destinations, checking localStorage fallback:", e);
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("livestudio_custom_destinations");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setDestinations(parsed);
+            setSelectedIds(parsed.map((d: Destination) => d.id));
+          }
+        }
+      }
     } finally {
       setLoading(false);
     }

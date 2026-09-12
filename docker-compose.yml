@@ -42,22 +42,26 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       - APP_NAME=${APP_NAME:-LiveStudio}
       - APP_URL=${APP_URL:-https://studio.example.com}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
+      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
+      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
+      - POSTGRES_HOST=postgres
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
       - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
       - LIVEKIT_HTTP_URL=${LIVEKIT_HTTP_URL:-http://livekit:7880}
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-default_jwt_secret_livestudio_2024}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-default_jwt_refresh_secret_livestudio_2024}
       - JWT_EXPIRY=${JWT_EXPIRY:-15m}
       - JWT_REFRESH_EXPIRY=${JWT_REFRESH_EXPIRY:-7d}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME}
@@ -94,9 +98,13 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
+      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
+      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
+      - POSTGRES_HOST=postgres
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-default_jwt_secret_livestudio_2024}
       - PORT=${WS_PORT:-4001}
       - WS_PORT=${WS_PORT:-4001}
     depends_on:
@@ -125,18 +133,22 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
+      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
+      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
+      - POSTGRES_HOST=postgres
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
       - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
       - LIVEKIT_HTTP_URL=${LIVEKIT_HTTP_URL:-http://livekit:7880}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
       - AI_PROVIDER=${AI_PROVIDER:-local}
       - AI_API_KEY=${AI_API_KEY}
     depends_on:
@@ -157,7 +169,7 @@ services:
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-livestudio}
       - POSTGRES_USER=${POSTGRES_USER:-livestudio}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

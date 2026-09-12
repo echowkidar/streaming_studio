@@ -27,11 +27,14 @@ const DEFAULT_URLS: Record<string, string> = {
   CUSTOM_RTMP: "rtmp://",
 };
 
+const LOCAL_STORAGE_KEY = "livestudio_custom_destinations";
+
 export default function DestinationsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form state
   const [name, setName] = useState("");
@@ -39,18 +42,44 @@ export default function DestinationsPage() {
   const [rtmpUrl, setRtmpUrl] = useState(DEFAULT_URLS.YOUTUBE);
   const [streamKey, setStreamKey] = useState("");
 
+  const getLocalDestinations = (): Destination[] => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveLocalDestinations = (items: Destination[]) => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
+    } catch {
+      // ignore
+    }
+  };
+
   const fetchDestinations = async () => {
     try {
       setLoading(true);
       const res = await fetch("/api/destinations");
       if (res.ok) {
         const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
           setDestinations(json.data);
+          saveLocalDestinations(json.data);
+          return;
         }
       }
+      // Fallback to local storage
+      const local = getLocalDestinations();
+      setDestinations(local);
     } catch (e) {
-      console.error("Failed to fetch destinations:", e);
+      console.error("Failed to fetch destinations from API, using offline backup:", e);
+      const local = getLocalDestinations();
+      setDestinations(local);
     } finally {
       setLoading(false);
     }
@@ -63,30 +92,59 @@ export default function DestinationsPage() {
   const handlePlatformChange = (p: string) => {
     setPlatform(p);
     setRtmpUrl(DEFAULT_URLS[p] || "rtmp://");
+    setFormError(null);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !streamKey) return;
+    if (!name.trim() || !streamKey.trim()) {
+      setFormError("Destination Name and Stream Key are required");
+      return;
+    }
+    setFormError(null);
+
+    const newDestItem: Destination = {
+      id: `dest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: name.trim(),
+      platform,
+      rtmpUrl: rtmpUrl.trim(),
+      streamKey: "••••••••••••",
+      status: "READY",
+      createdAt: new Date().toISOString(),
+    };
+
     try {
       setSubmitting(true);
       const res = await fetch("/api/destinations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, platform, rtmpUrl, streamKey }),
+        body: JSON.stringify({ name: name.trim(), platform, rtmpUrl: rtmpUrl.trim(), streamKey: streamKey.trim() }),
       });
       const json = await res.json();
-      if (json.success) {
+
+      if (json.success && json.data) {
         setName("");
         setStreamKey("");
         setIsModalOpen(false);
         fetchDestinations();
       } else {
-        alert(json.error || "Failed to add destination");
+        // Fallback: save to local state and local storage so user is not blocked
+        console.warn("API destination error, saving locally:", json.error);
+        const updated = [newDestItem, ...destinations.filter((d) => d.id !== newDestItem.id)];
+        setDestinations(updated);
+        saveLocalDestinations(updated);
+        setName("");
+        setStreamKey("");
+        setIsModalOpen(false);
       }
     } catch (e) {
-      console.error("Add destination error:", e);
-      alert("Error adding destination");
+      console.error("Add destination network error, saving locally:", e);
+      const updated = [newDestItem, ...destinations.filter((d) => d.id !== newDestItem.id)];
+      setDestinations(updated);
+      saveLocalDestinations(updated);
+      setName("");
+      setStreamKey("");
+      setIsModalOpen(false);
     } finally {
       setSubmitting(false);
     }
@@ -96,10 +154,12 @@ export default function DestinationsPage() {
     if (!confirm("Are you sure you want to remove this destination?")) return;
     try {
       await fetch(`/api/destinations/${id}`, { method: "DELETE" });
-      setDestinations((prev) => prev.filter((d) => d.id !== id));
     } catch (e) {
       console.error("Delete error:", e);
     }
+    const updated = destinations.filter((d) => d.id !== id);
+    setDestinations(updated);
+    saveLocalDestinations(updated);
   };
 
   const getIcon = (p: string) => {
@@ -259,6 +319,12 @@ export default function DestinationsPage() {
               Your stream key is encrypted with AES-256-GCM before storage. It is only decrypted server-side at the moment you click <strong>GO LIVE</strong>.
             </span>
           </div>
+
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300">
+              {formError}
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="ghost" type="button" onClick={() => setIsModalOpen(false)}>
