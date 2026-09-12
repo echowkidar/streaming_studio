@@ -158,7 +158,7 @@ export const useStudioStore = create<StudioState>((set) => ({
         const existingStatus = existingStatusMap.get(String(p.id));
         return {
           ...p,
-          status: existingStatus || p.status || (p.role === "host" || p.isLocal ? "ON_STAGE" : "BACKSTAGE"),
+          status: existingStatus || p.status || (p.role === "host" || p.isLocal || p.isScreen ? "ON_STAGE" : "BACKSTAGE"),
         };
       });
       return { participants: merged };

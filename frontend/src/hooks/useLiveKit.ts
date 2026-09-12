@@ -79,6 +79,12 @@ export function useLiveKit({
           localCamTrack = (camPub.track as LocalVideoTrack) || (camPub.videoTrack as LocalVideoTrack) || null;
         }
       }
+      if (!localScrTrack) {
+        const scrPub = local.getTrackPublication(Track.Source.ScreenShare);
+        if (scrPub) {
+          localScrTrack = (scrPub.track as LocalVideoTrack) || (scrPub.videoTrack as LocalVideoTrack) || null;
+        }
+      }
       if (!localMicTrack) {
         const micPub = local.getTrackPublication(Track.Source.Microphone);
         if (micPub) {
@@ -97,6 +103,7 @@ export function useLiveKit({
       const existingLocal = participantsRef.current.find((p) => p.id === local.identity);
       const localStatus = existingLocal ? existingLocal.status : (role === "HOST" ? "ON_STAGE" : "BACKSTAGE");
 
+      // 1. Local Participant Camera / Avatar Tile
       list.push({
         id: local.identity,
         name: local.name || participantName,
@@ -110,6 +117,37 @@ export function useLiveKit({
         audioTrack: localMicTrack,
         connectionQuality: "EXCELLENT",
       });
+
+      // 2. Local Participant Screen Share Tile (if sharing screen)
+      if (localScrTrack) {
+        if (localScrTrack.mediaStreamTrack) {
+          localScrTrack.mediaStreamTrack.onended = () => {
+            setScreenEnabled(false);
+            if (roomRef.current) {
+              syncParticipants(roomRef.current);
+            }
+          };
+        }
+
+        const screenId = `${local.identity}-screen`;
+        const existingScreen = participantsRef.current.find((p) => p.id === screenId);
+        const screenStatus = existingScreen ? existingScreen.status : "ON_STAGE";
+
+        list.push({
+          id: screenId,
+          name: `${local.name || participantName}'s Screen`,
+          role: "screen",
+          status: screenStatus,
+          micOn: false,
+          camOn: true,
+          isSpeaking: false,
+          isScreen: true,
+          isLocal: true,
+          videoTrack: localScrTrack,
+          audioTrack: null,
+          connectionQuality: "EXCELLENT",
+        });
+      }
     }
 
     // Remote Participants sorted stably by identity so their tiles NEVER swap
@@ -118,14 +156,30 @@ export function useLiveKit({
     );
 
     sortedRemotes.forEach((remote: RemoteParticipant) => {
-      let remoteVideo: any = null;
+      let remoteCamTrack: any = null;
+      let remoteScrTrack: any = null;
       let remoteAudio: any = null;
 
       remote.videoTrackPublications.forEach((pub: RemoteTrackPublication) => {
-        if (pub.track) {
-          remoteVideo = pub.track;
+        if (pub.source === Track.Source.ScreenShare) {
+          remoteScrTrack = pub.track || (pub.videoTrack as any) || null;
+        } else {
+          remoteCamTrack = pub.track || (pub.videoTrack as any) || null;
         }
       });
+
+      if (!remoteScrTrack) {
+        const scrPub = remote.getTrackPublication(Track.Source.ScreenShare);
+        if (scrPub) {
+          remoteScrTrack = scrPub.track || (scrPub.videoTrack as any) || null;
+        }
+      }
+      if (!remoteCamTrack) {
+        const camPub = remote.getTrackPublication(Track.Source.Camera);
+        if (camPub) {
+          remoteCamTrack = camPub.track || (camPub.videoTrack as any) || null;
+        }
+      }
 
       remote.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
         if (pub.track) {
@@ -143,7 +197,7 @@ export function useLiveKit({
         // ignore
       }
 
-      const isRemoteCamActive = remote.isCameraEnabled || !!remoteVideo;
+      const isRemoteCamActive = remote.isCameraEnabled || !!remoteCamTrack;
       const isRemoteMicActive = remote.isMicrophoneEnabled || !!remoteAudio;
 
       // StreamYard rule: preserve existing status if host placed them ON_STAGE/BACKSTAGE,
@@ -152,6 +206,7 @@ export function useLiveKit({
       const isHostRole = parsedRole === "host" || parsedRole === "co_host";
       const remoteStatus = existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE");
 
+      // Remote Participant Camera Tile
       list.push({
         id: remote.identity,
         name: remote.name || `Guest (${remote.identity.slice(0, 5)})`,
@@ -161,10 +216,32 @@ export function useLiveKit({
         camOn: isRemoteCamActive,
         isSpeaking: remote.isSpeaking,
         isLocal: false,
-        videoTrack: remoteVideo,
+        videoTrack: remoteCamTrack,
         audioTrack: remoteAudio,
         connectionQuality: "GOOD",
       });
+
+      // Remote Participant Screen Share Tile (if sharing screen)
+      if (remoteScrTrack) {
+        const remoteScreenId = `${remote.identity}-screen`;
+        const existingRemoteScreen = participantsRef.current.find((p) => p.id === remoteScreenId);
+        const remoteScreenStatus = existingRemoteScreen ? existingRemoteScreen.status : "ON_STAGE";
+
+        list.push({
+          id: remoteScreenId,
+          name: `${remote.name || `Guest (${remote.identity.slice(0, 5)})`}'s Screen`,
+          role: "screen",
+          status: remoteScreenStatus,
+          micOn: false,
+          camOn: true,
+          isSpeaking: false,
+          isScreen: true,
+          isLocal: false,
+          videoTrack: remoteScrTrack,
+          audioTrack: null,
+          connectionQuality: "GOOD",
+        });
+      }
     });
 
     participantsRef.current = list;

@@ -272,28 +272,40 @@ export const StagePreview: React.FC = () => {
 
       case "side-by-side":
       case "podcast":
-      case "interview":
+      case "interview": {
+        const sorted = [...onStageParticipants].sort((a, b) => {
+          if (a.isScreen && !b.isScreen) return -1;
+          if (!a.isScreen && b.isScreen) return 1;
+          return 0;
+        });
         return (
           <div className="w-full h-full grid grid-cols-2 gap-3 p-3">
-            {onStageParticipants.slice(0, 2).map((p, idx) => renderTile(p, idx, "w-full h-full"))}
+            {sorted.slice(0, 2).map((p, idx) => renderTile(p, idx, "w-full h-full"))}
           </div>
         );
+      }
 
       case "speaker-large":
       case "screen-speaker":
-      case "presentation":
+      case "presentation": {
+        const sorted = [...onStageParticipants].sort((a, b) => {
+          if (a.isScreen && !b.isScreen) return -1;
+          if (!a.isScreen && b.isScreen) return 1;
+          return 0;
+        });
         return (
           <div className="w-full h-full flex gap-3 p-3">
-            <div className="flex-[3] h-full">
-              {renderTile(onStageParticipants[0], 0, "w-full h-full")}
+            <div className="flex-[3] h-full min-w-0">
+              {renderTile(sorted[0], 0, "w-full h-full")}
             </div>
-            {onStageParticipants.length > 1 && (
-              <div className="flex-1 flex flex-col gap-3 h-full">
-                {onStageParticipants.slice(1, 4).map((p, idx) => renderTile(p, idx + 1, "w-full flex-1"))}
+            {sorted.length > 1 && (
+              <div className="flex-1 flex flex-col gap-3 h-full min-w-0">
+                {sorted.slice(1, 4).map((p, idx) => renderTile(p, idx + 1, "w-full flex-1"))}
               </div>
             )}
           </div>
         );
+      }
 
       case "pip":
         return (
@@ -308,12 +320,18 @@ export const StagePreview: React.FC = () => {
         );
 
       case "four-grid":
-      default:
+      default: {
+        const sorted = [...onStageParticipants].sort((a, b) => {
+          if (a.isScreen && !b.isScreen) return -1;
+          if (!a.isScreen && b.isScreen) return 1;
+          return 0;
+        });
         return (
           <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-3 p-3">
-            {onStageParticipants.slice(0, 4).map((p, idx) => renderTile(p, idx, "w-full h-full"))}
+            {sorted.slice(0, 4).map((p, idx) => renderTile(p, idx, "w-full h-full"))}
           </div>
         );
+      }
     }
   };
 
