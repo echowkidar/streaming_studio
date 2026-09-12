@@ -669,8 +669,16 @@ export const StagePreview: React.FC = () => {
     return (
       <div
         key={p.id || index}
+        data-stage-tile="true"
         data-participant-tile="true"
         data-participant-name={p.name || "Guest"}
+        data-participant-initials={p.name ? p.name.trim()[0].toUpperCase() : "G"}
+        data-participant-cam={p.camOn ? "on" : "off"}
+        data-participant-mic={p.micOn ? "on" : "off"}
+        data-participant-speaking={p.isSpeaking ? "true" : "false"}
+        data-participant-role={p.role || "guest"}
+        data-participant-local={p.isLocal ? "true" : "false"}
+        data-participant-screen={isScreen ? "true" : "false"}
         className={cn("relative w-full h-full", extraClasses)}
       >
         <VideoTrackView
@@ -693,13 +701,20 @@ export const StagePreview: React.FC = () => {
   const renderMediaTile = () => {
     if (!activeMedia) return null;
     return (
-      <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group">
+      <div
+        data-stage-tile="true"
+        data-stage-media="true"
+        data-media-name={activeMedia.name}
+        className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group"
+      >
         {activeMedia.type === "video" && (
           <video
+            id="livestudio-active-media-video"
             src={activeMedia.url}
             autoPlay
             controls
             playsInline
+            crossOrigin="anonymous"
             className="w-full h-full object-contain"
           />
         )}
@@ -707,6 +722,7 @@ export const StagePreview: React.FC = () => {
           <img
             src={activeMedia.url}
             alt={activeMedia.name}
+            crossOrigin="anonymous"
             className="w-full h-full object-contain"
           />
         )}
@@ -1005,6 +1021,7 @@ export const StagePreview: React.FC = () => {
           loop
           muted
           playsInline
+          crossOrigin="anonymous"
           className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
         />
       )}

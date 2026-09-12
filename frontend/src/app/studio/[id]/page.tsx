@@ -281,6 +281,17 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
   }, [liveParticipants]);
 
+  // Refresh broadcast audio when active media (video/audio) is played or stopped
+  const activeMedia = useStudioStore((s) => s.activeMedia);
+  useEffect(() => {
+    if (stageBroadcaster.isStreaming()) {
+      const t = setTimeout(() => {
+        stageBroadcaster.refreshAudioConnections();
+      }, 600);
+      return () => clearTimeout(t);
+    }
+  }, [activeMedia]);
+
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
   const backstageParticipants = participants.filter((p) => p.status === "BACKSTAGE");
   const greenRoomParticipants = participants.filter((p) => p.status === "GREEN_ROOM");
