@@ -137,6 +137,7 @@ interface StudioState {
   logoUrl: string;
   activeOverlayUrl: string | null;
   activeBackgroundUrl: string | null;
+  activeBackgroundType: "image" | "video";
   activeThemeColor: string;
   activeBanner: LowerThirdBanner | null;
   tickerText: string;
@@ -154,7 +155,7 @@ interface StudioState {
   setLogo: (url: string, show?: boolean) => void;
   setLogoPosition: (pos: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void;
   setOverlay: (url: string | null) => void;
-  setBackground: (url: string | null) => void;
+  setBackground: (url: string | null, type?: "image" | "video") => void;
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
   setTicker: (text: string, show: boolean) => void;
@@ -443,6 +444,7 @@ export const useStudioStore = create<StudioState>((set) => ({
   logoUrl: "LiveStudio",
   activeOverlayUrl: null,
   activeBackgroundUrl: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
+  activeBackgroundType: "image",
   activeThemeColor: "#6366f1",
   activeBanner: null,
   tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
@@ -550,7 +552,19 @@ export const useStudioStore = create<StudioState>((set) => ({
     })),
   setLogoPosition: (pos) => set({ logoPosition: pos }),
   setOverlay: (url) => set({ activeOverlayUrl: url }),
-  setBackground: (url) => set({ activeBackgroundUrl: url }),
+  setBackground: (url, type) =>
+    set({
+      activeBackgroundUrl: url,
+      activeBackgroundType:
+        type ||
+        (url &&
+        (url.endsWith(".mp4") ||
+          url.endsWith(".webm") ||
+          url.includes("mixkit") ||
+          url.includes("video"))
+          ? "video"
+          : "image"),
+    }),
   setThemeColor: (color) =>
     set((s) => ({
       activeThemeColor: color,

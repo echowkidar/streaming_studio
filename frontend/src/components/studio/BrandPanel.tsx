@@ -28,6 +28,9 @@ import {
   Undo2,
   ExternalLink,
   FolderOpen,
+  Film,
+  Lock,
+  Play,
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { useAuthStore } from "@/stores/auth.store";
@@ -122,6 +125,7 @@ export const BrandPanel: React.FC = () => {
     logoPosition,
     setLogoPosition,
     activeBackgroundUrl,
+    activeBackgroundType,
     setBackground,
     activeOverlayUrl,
     setOverlay,
@@ -440,6 +444,111 @@ export const BrandPanel: React.FC = () => {
     }
     if (chromaKeyConfig.backdropUrl === url) {
       setChromaKeyConfig({ backdropUrl: VIRTUAL_BACKGROUND_PRESETS[0].url });
+    }
+  };
+
+  // ─── Stage Video Backgrounds (Continuous 1-2 Min Loop, Max 2 Videos for VPS Storage Protection) ───
+  const STAGE_VIDEO_LOOP_PRESETS = [
+    {
+      id: "cyber-grid-loop",
+      name: "Cyber Grid Tunnel Loop",
+      desc: "Futuristic digital grid with neon cyan & purple light",
+      url: "https://assets.mixkit.co/videos/preview/mixkit-futuristic-technology-digital-grid-31718-large.mp4",
+      duration: "00:45",
+    },
+    {
+      id: "space-waves-loop",
+      name: "Deep Space Ambient Waves",
+      desc: "Calm continuous purple & blue digital particle waves",
+      url: "https://assets.mixkit.co/videos/preview/mixkit-curved-lines-of-a-purple-digital-wave-31720-large.mp4",
+      duration: "00:50",
+    },
+  ];
+
+  const [stageBgTab, setStageBgTab] = useState<"video" | "image">("video");
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const [videoUploadError, setVideoUploadError] = useState<string | null>(null);
+
+  const [customVideoBgs, setCustomVideoBgs] = useState<
+    { id: string; name: string; url: string; duration?: string; size?: string }[]
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("livestudio_custom_video_bgs");
+        if (saved) return JSON.parse(saved);
+      } catch (e) {
+        console.warn("Failed to parse custom video backgrounds:", e);
+      }
+    }
+    return [];
+  });
+
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Strict 2-video limit to protect VPS disk space
+    if (customVideoBgs.length >= 2) {
+      setVideoUploadError("VPS Storage Limit Reached: Maximum 2 custom background videos allowed. Please delete one below to upload another.");
+      return;
+    }
+
+    if (!file.type.startsWith("video/")) {
+      setVideoUploadError("Please select a valid video file (MP4 or WebM).");
+      return;
+    }
+
+    // 45MB max limit to protect VPS storage and streaming bandwidth
+    if (file.size > 45 * 1024 * 1024) {
+      setVideoUploadError("Video size exceeds 45MB. Please upload a lightweight 1–2 minute video loop.");
+      return;
+    }
+
+    setVideoUploadError(null);
+    const objectUrl = URL.createObjectURL(file);
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + " MB";
+
+    const tempVideo = document.createElement("video");
+    tempVideo.preload = "metadata";
+    tempVideo.src = objectUrl;
+    tempVideo.onloadedmetadata = () => {
+      const durationSec = Math.round(tempVideo.duration) || 60;
+      const mins = Math.floor(durationSec / 60);
+      const secs = durationSec % 60;
+      const formattedDuration = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+
+      const newItem = {
+        id: `stage-video-${Date.now()}`,
+        name: file.name.replace(/\.[^/.]+$/, "").slice(0, 20),
+        url: objectUrl,
+        duration: formattedDuration,
+        size: sizeMb,
+      };
+
+      const updated = [newItem, ...customVideoBgs].slice(0, 2);
+      setCustomVideoBgs(updated);
+      try {
+        localStorage.setItem("livestudio_custom_video_bgs", JSON.stringify(updated));
+      } catch {
+        // storage quota safety
+      }
+      setBackground(objectUrl, "video");
+    };
+
+    e.target.value = "";
+  };
+
+  const handleDeleteCustomVideoBg = (e: React.MouseEvent, id: string, url: string) => {
+    e.stopPropagation();
+    const updated = customVideoBgs.filter((v) => v.id !== id);
+    setCustomVideoBgs(updated);
+    try {
+      localStorage.setItem("livestudio_custom_video_bgs", JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    if (activeBackgroundUrl === url) {
+      setBackground(DEFAULT_CYBER_NEON_URL, "image");
     }
   };
 
@@ -862,16 +971,16 @@ export const BrandPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Stage Virtual Backgrounds */}
+      {/* 3. Stage Virtual Backgrounds (Images & Continuous 1-2 Min Looping Videos) */}
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-            <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+            <Video className="w-3.5 h-3.5 text-indigo-400" />
             Stage Virtual Background
           </h4>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setBackground(DEFAULT_CYBER_NEON_URL)}
+              onClick={() => setBackground(DEFAULT_CYBER_NEON_URL, "image")}
               title="Reset to default Cyber Neon background"
               className={cn(
                 "text-[10px] flex items-center gap-1 transition-colors px-1.5 py-0.5 rounded",
@@ -896,113 +1005,338 @@ export const BrandPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Hidden File Input for Image Upload */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleFileUpload}
-        />
+        {/* Mode Switcher Tabs: Looping Video vs Static Image */}
+        <div className="grid grid-cols-2 p-1 rounded-xl bg-black/50 border border-white/10 gap-1">
+          <button
+            type="button"
+            onClick={() => setStageBgTab("video")}
+            className={cn(
+              "py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all",
+              stageBgTab === "video"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            <Video className="w-3.5 h-3.5 text-cyan-300" />
+            <span>Looping Video</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStageBgTab("image")}
+            className={cn(
+              "py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all",
+              stageBgTab === "image"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-purple-300" />
+            <span>Static Image</span>
+          </button>
+        </div>
 
-        {/* Device Image Upload Button */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="w-full py-2 px-3 rounded-xl border border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
-        >
-          <Upload className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
-          <span>Upload Image from Device (PNG / JPG)</span>
-        </button>
+        {/* ─── TAB 1: Looping Video Backgrounds (1-2 Minutes, Max 2 Videos for VPS Storage) ─── */}
+        {stageBgTab === "video" && (
+          <div className="space-y-3 animate-in fade-in duration-150">
+            {/* Storage Protection Counter & Info Pill */}
+            <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider flex items-center gap-1">
+                  <Film className="w-3 h-3 text-cyan-400" />
+                  Custom Video Storage
+                </span>
+                <span
+                  className={cn(
+                    "text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border",
+                    customVideoBgs.length >= 2
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                      : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                  )}
+                >
+                  {customVideoBgs.length} / 2 Maximum
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                VPS Disk Protection: You can upload up to <strong>2 custom video loops (1–2 mins)</strong>. Videos loop continuously without pauses on stage.
+              </p>
+            </div>
 
-        {uploadError && (
-          <p className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5">
-            {uploadError}
-          </p>
-        )}
+            {/* Hidden File Input for Video Upload */}
+            <input
+              ref={videoFileInputRef}
+              type="file"
+              accept="video/mp4,video/webm"
+              className="hidden"
+              onChange={handleVideoUpload}
+            />
 
-        {/* User's Uploaded Custom Backgrounds */}
-        {customBgs.length > 0 && (
-          <div className="space-y-1.5">
-            <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Backgrounds</span>
-            <div className="grid grid-cols-2 gap-2">
-              {customBgs.map((bg) => {
-                const isSelected = activeBackgroundUrl === bg.url;
-                return (
-                  <div
-                    key={bg.id}
-                    onClick={() => setBackground(bg.url)}
-                    className={cn(
-                      "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group cursor-pointer",
-                      isSelected
-                        ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg"
-                        : "border-white/10 hover:border-white/30"
-                    )}
-                    style={{
-                      backgroundImage: `url(${bg.url})`,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                    }}
-                  >
-                    <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
-                    <span className="relative z-10 text-[10px] font-bold text-white drop-shadow truncate">
-                      {bg.name}
-                    </span>
-                    {isSelected && (
-                      <span className="absolute top-1 left-1 z-10 p-0.5 rounded-full bg-emerald-500 text-white">
-                        <Check className="w-2.5 h-2.5" />
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => handleDeleteCustomBg(e, bg.id, bg.url)}
-                      title="Delete uploaded image"
-                      className="absolute top-1 right-1 z-20 p-1 rounded-full bg-black/70 hover:bg-rose-600 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            {/* Upload Button (Disabled when 2/2 reached) */}
+            {customVideoBgs.length < 2 ? (
+              <button
+                onClick={() => videoFileInputRef.current?.click()}
+                className="w-full py-2.5 px-3 rounded-xl border border-dashed border-cyan-500/50 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-200 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-semibold group cursor-pointer shadow-sm"
+              >
+                <Upload className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+                <span>Upload 1–2 Min Video Loop ({2 - customVideoBgs.length} slot left)</span>
+              </button>
+            ) : (
+              <div className="w-full py-2 px-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="truncate text-[11px]">Storage full (2/2) — delete a video below to add another</span>
+                </div>
+              </div>
+            )}
+
+            {videoUploadError && (
+              <p className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-2">
+                {videoUploadError}
+              </p>
+            )}
+
+            {/* Custom Uploaded Video Slots (Max 2) */}
+            {customVideoBgs.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Videos (Max 2)</span>
+                <div className="space-y-2">
+                  {customVideoBgs.map((v, idx) => {
+                    const isSelected = activeBackgroundUrl === v.url;
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => setBackground(v.url, "video")}
+                        className={cn(
+                          "rounded-xl border p-2 relative overflow-hidden transition-all flex items-center gap-3 cursor-pointer group bg-surface",
+                          isSelected
+                            ? "border-emerald-400 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-500/10 bg-emerald-950/20"
+                            : "border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
+                        )}
+                      >
+                        {/* Video Mini Preview Thumbnail */}
+                        <div className="w-24 h-14 rounded-lg overflow-hidden bg-black relative border border-white/10 shrink-0">
+                          <video
+                            src={v.url}
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute bottom-1 right-1 text-[8px] font-mono px-1 py-0.2 rounded bg-black/80 text-cyan-300 font-bold">
+                            {v.duration || "Loop"}
+                          </span>
+                        </div>
+
+                        {/* Video Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                              Slot {idx + 1}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">{v.size || "MP4"}</span>
+                          </div>
+                          <h5 className="font-semibold text-white text-xs truncate mt-0.5 group-hover:text-cyan-300 transition-colors">
+                            {v.name}
+                          </h5>
+                          <div className="text-[9px] mt-0.5">
+                            {isSelected ? (
+                              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                LIVE ON STAGE (Looping)
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 group-hover:text-white transition-colors">
+                                Click to Play Loop
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Delete Button (Frees up slot) */}
+                        <button
+                          onClick={(e) => handleDeleteCustomVideoBg(e, v.id, v.url)}
+                          title="Delete video & free slot"
+                          className="p-1.5 rounded-lg bg-black/70 hover:bg-rose-600 text-slate-400 hover:text-white transition-colors border border-white/10 shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Studio Preset Video Loops (2 High Quality Loops) */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-slate-400 font-medium">Studio Preset Video Loops</span>
+                <span className="text-[9px] text-indigo-400 font-mono">Continuous 60FPS</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {STAGE_VIDEO_LOOP_PRESETS.map((preset) => {
+                  const isSelected = activeBackgroundUrl === preset.url;
+                  return (
+                    <div
+                      key={preset.id}
+                      onClick={() => setBackground(preset.url, "video")}
+                      className={cn(
+                        "h-24 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-between group cursor-pointer",
+                        isSelected
+                          ? "border-cyan-400 ring-2 ring-cyan-500/40 shadow-lg"
+                          : "border-white/10 hover:border-white/30"
+                      )}
                     >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
-                );
-              })}
+                      {/* Video Loop Playing in Background of Card */}
+                      <video
+                        src={preset.url}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:opacity-85 transition-opacity"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/60 pointer-events-none" />
+
+                      <div className="relative z-10 flex items-center justify-between">
+                        <span className="text-[8px] font-bold uppercase px-1 rounded bg-black/70 text-cyan-300 border border-cyan-500/30">
+                          {preset.duration} Loop
+                        </span>
+                        {isSelected && (
+                          <span className="p-0.5 rounded-full bg-cyan-500 text-white">
+                            <Check className="w-2.5 h-2.5" />
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="relative z-10">
+                        <span className="text-[10px] font-bold text-white drop-shadow block truncate">
+                          {preset.name}
+                        </span>
+                        <span className="text-[8px] text-slate-300 line-clamp-1">
+                          {preset.desc}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Preset Backgrounds */}
-        <div className="space-y-1.5">
-          <span className="text-[10px] text-slate-400 font-medium">Studio Presets</span>
-          <div className="grid grid-cols-2 gap-2">
-            {backgroundPresets.map((bg) => {
-              const isSelected = activeBackgroundUrl === bg.url;
-              return (
-                <button
-                  key={bg.id}
-                  onClick={() => setBackground(bg.url)}
-                  className={cn(
-                    "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group",
-                    isSelected
-                      ? "border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg"
-                      : "border-white/10 hover:border-white/30"
-                  )}
-                  style={{
-                    backgroundImage: bg.url ? `url(${bg.url})` : undefined,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }}
-                >
-                  {!bg.url && <div className={cn("absolute inset-0 bg-gradient-to-br", bg.gradient)} />}
-                  <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
-                  <span className="relative z-10 text-[10px] font-bold text-white drop-shadow">
-                    {bg.name}
-                  </span>
-                  {isSelected && (
-                    <span className="absolute top-1 right-1 z-10 p-0.5 rounded-full bg-indigo-500 text-white">
-                      <Check className="w-2.5 h-2.5" />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+        {/* ─── TAB 2: Static Image Backgrounds ─── */}
+        {stageBgTab === "image" && (
+          <div className="space-y-3 animate-in fade-in duration-150">
+            {/* Hidden File Input for Image Upload */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+
+            {/* Device Image Upload Button */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full py-2 px-3 rounded-xl border border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
+            >
+              <Upload className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+              <span>Upload Image from Device (PNG / JPG)</span>
+            </button>
+
+            {uploadError && (
+              <p className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5">
+                {uploadError}
+              </p>
+            )}
+
+            {/* User's Uploaded Custom Backgrounds */}
+            {customBgs.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Backgrounds</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {customBgs.map((bg) => {
+                    const isSelected = activeBackgroundUrl === bg.url;
+                    return (
+                      <div
+                        key={bg.id}
+                        onClick={() => setBackground(bg.url, "image")}
+                        className={cn(
+                          "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group cursor-pointer",
+                          isSelected
+                            ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg"
+                            : "border-white/10 hover:border-white/30"
+                        )}
+                        style={{
+                          backgroundImage: `url(${bg.url})`,
+                          backgroundSize: "cover",
+                          backgroundPosition: "center",
+                        }}
+                      >
+                        <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                        <span className="relative z-10 text-[10px] font-bold text-white drop-shadow truncate">
+                          {bg.name}
+                        </span>
+                        {isSelected && (
+                          <span className="absolute top-1 left-1 z-10 p-0.5 rounded-full bg-emerald-500 text-white">
+                            <Check className="w-2.5 h-2.5" />
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => handleDeleteCustomBg(e, bg.id, bg.url)}
+                          title="Delete uploaded image"
+                          className="absolute top-1 right-1 z-20 p-1 rounded-full bg-black/70 hover:bg-rose-600 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Preset Backgrounds */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] text-slate-400 font-medium">Studio Presets</span>
+              <div className="grid grid-cols-2 gap-2">
+                {backgroundPresets.map((bg) => {
+                  const isSelected = activeBackgroundUrl === bg.url;
+                  return (
+                    <button
+                      key={bg.id}
+                      onClick={() => setBackground(bg.url, "image")}
+                      className={cn(
+                        "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group",
+                        isSelected
+                          ? "border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg"
+                          : "border-white/10 hover:border-white/30"
+                      )}
+                      style={{
+                        backgroundImage: bg.url ? `url(${bg.url})` : undefined,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                      }}
+                    >
+                      {!bg.url && <div className={cn("absolute inset-0 bg-gradient-to-br", bg.gradient)} />}
+                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                      <span className="relative z-10 text-[10px] font-bold text-white drop-shadow">
+                        {bg.name}
+                      </span>
+                      {isSelected && (
+                        <span className="absolute top-1 right-1 z-10 p-0.5 rounded-full bg-indigo-500 text-white">
+                          <Check className="w-2.5 h-2.5" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Custom Image URL fallback */}
         <div className="flex items-center gap-1.5 pt-1">

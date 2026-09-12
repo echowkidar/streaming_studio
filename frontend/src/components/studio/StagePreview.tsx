@@ -37,6 +37,7 @@ export const StagePreview: React.FC = () => {
     setStageOverlay,
     toggleStageOverlayVisibility,
     activeBackgroundUrl,
+    activeBackgroundType,
     activeThemeColor,
     activeBanner,
     tickerText,
@@ -968,20 +969,42 @@ export const StagePreview: React.FC = () => {
     );
   };
 
+  const isVideoBg = Boolean(
+    activeBackgroundUrl &&
+    (activeBackgroundType === "video" ||
+      activeBackgroundUrl.endsWith(".mp4") ||
+      activeBackgroundUrl.endsWith(".webm") ||
+      activeBackgroundUrl.includes("mixkit") ||
+      activeBackgroundUrl.includes("video"))
+  );
+
   return (
     <div
       ref={stageContainerRef}
       onClick={() => setSelectedParticipantId(null)}
       className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
       style={{
-        backgroundImage: activeBackgroundUrl ? `url(${activeBackgroundUrl})` : undefined,
+        backgroundImage: activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
       }}
     >
+      {/* Real-time Video Background Layer (Seamless continuous loop) */}
+      {isVideoBg && activeBackgroundUrl && (
+        <video
+          key={activeBackgroundUrl}
+          src={activeBackgroundUrl}
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+        />
+      )}
+
       {/* Active Video Stage Content */}
-      <div className="flex-1 w-full relative">{renderLayoutContent()}</div>
+      <div className="flex-1 w-full relative z-10">{renderLayoutContent()}</div>
 
       {/* Global Transparent Drag Overlay (captures all pointer events anywhere on screen while dragging/resizing) */}
       {(activeDragState || isDraggingSplit) && (
