@@ -3,9 +3,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { 
   Mic, MicOff, VideoOff, MonitorUp, Maximize2, Crop, 
-  ZoomIn, ZoomOut, RotateCw, FlipHorizontal, RefreshCw, Move 
+  ZoomIn, ZoomOut, RotateCw, FlipHorizontal, RefreshCw, Move, Sparkles 
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
+import { ChromaKeyCanvas } from "./ChromaKeyCanvas";
 import { cn } from "@/lib/utils";
 
 interface VideoTrackViewProps {
@@ -45,7 +46,8 @@ export function VideoTrackView({
     tileTransforms, 
     setTileTransform, 
     resetTileTransform, 
-    activeThemeColor 
+    activeThemeColor,
+    chromaKeyConfig,
   } = useStudioStore();
 
   const tileId = String(id || name || "tile");
@@ -196,6 +198,12 @@ export function VideoTrackView({
   // Mirror camera feed for local user if not explicitly flipped
   const mirrorClass = isLocal && !isScreen && !flipH ? "scale-x-[-1]" : "";
 
+  const isChromaActive = Boolean(
+    chromaKeyConfig?.enabled &&
+    !isScreen &&
+    hasActiveVideo
+  );
+
   return (
     <div
       ref={containerRef}
@@ -208,12 +216,34 @@ export function VideoTrackView({
         boxShadow: `0 0 24px ${activeThemeColor}70`,
       } : {}}
       className={cn(
-        "relative w-full h-full bg-[#0c0c14] rounded-2xl overflow-hidden flex items-center justify-center border transition-all duration-300 group",
+        "relative w-full h-full rounded-2xl overflow-hidden flex items-center justify-center border transition-all duration-300 group",
+        isChromaActive ? "bg-transparent" : "bg-[#0c0c14]",
         isSpeaking ? "border-2" : "border-white/10 hover:border-white/25",
         zoom > 1 && "cursor-grab active:cursor-grabbing",
         className
       )}
     >
+      {/* Virtual Backdrop Layer (Shown behind keyed subject when Chroma Key is active) */}
+      {isChromaActive && (
+        <>
+          {chromaKeyConfig.backdropType === "image" && chromaKeyConfig.backdropUrl && (
+            <img
+              src={chromaKeyConfig.backdropUrl}
+              alt="Chroma Backdrop"
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none -z-10"
+            />
+          )}
+          {chromaKeyConfig.backdropType === "blur" && (
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl pointer-events-none -z-10" />
+          )}
+          {/* Active Chroma Indicator Badge */}
+          <div className="absolute top-2.5 right-2.5 z-30 px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-md border border-emerald-500/40 text-[9px] font-mono text-emerald-400 flex items-center gap-1.5 shadow-md">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Green Screen</span>
+          </div>
+        </>
+      )}
+
       {/* Real Video Element with Transform Matrix */}
       <div className="w-full h-full overflow-hidden flex items-center justify-center relative">
         <video
@@ -229,11 +259,24 @@ export function VideoTrackView({
           }}
           className={cn(
             "w-full h-full transition-opacity duration-300 pointer-events-none",
-            fitMode === "contain" && "bg-black",
-            hasActiveVideo ? "opacity-100" : "opacity-0 absolute",
+            isChromaActive ? "opacity-0 absolute w-1 h-1 pointer-events-none" : (fitMode === "contain" && "bg-black"),
+            hasActiveVideo ? (isChromaActive ? "opacity-0 absolute" : "opacity-100") : "opacity-0 absolute",
             mirrorClass
           )}
         />
+
+        {/* Real-time WebGL GPU Chroma Key Canvas */}
+        {isChromaActive && hasActiveVideo && (
+          <ChromaKeyCanvas
+            videoElement={videoRef.current}
+            keyColor={chromaKeyConfig.keyColor}
+            tolerance={chromaKeyConfig.tolerance}
+            smoothness={chromaKeyConfig.smoothness}
+            spill={chromaKeyConfig.spill}
+            mirror={isLocal && !flipH}
+            className="w-full h-full object-cover pointer-events-none z-10"
+          />
+        )}
       </div>
 
       {/* Camera Off / Screen Share Fallback State */}

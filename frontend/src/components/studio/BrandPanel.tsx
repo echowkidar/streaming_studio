@@ -141,6 +141,12 @@ export const BrandPanel: React.FC = () => {
     tickerText,
     showTicker,
     setTicker,
+    tickerConfig,
+    setTickerConfig,
+    logoConfig,
+    setLogoConfig,
+    chromaKeyConfig,
+    setChromaKeyConfig,
   } = useStudioStore();
 
   const [logoTextInput, setLogoTextInput] = useState(logoUrl || "LIVESTUDIO");
@@ -548,33 +554,188 @@ export const BrandPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Watermark Logo & 4 Corners */}
+      {/* 2. Watermark Logo Customization */}
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
-          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px]">
+          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
             Watermark Logo
           </h4>
           <button
             onClick={() => setLogo(logoTextInput, !showLogo)}
-            className="text-indigo-400 font-medium hover:underline flex items-center gap-1"
+            className="text-indigo-400 font-medium hover:underline flex items-center gap-1 text-xs"
           >
             {showLogo ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
             {showLogo ? "Visible" : "Hidden"}
           </button>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
+        <div className="space-y-2.5">
+          {/* Watermark Text Input */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400">Logo / Brand Text</span>
             <input
               type="text"
               value={logoTextInput}
               onChange={(e) => {
                 setLogoTextInput(e.target.value);
                 setLogo(e.target.value, showLogo);
+                setLogoConfig({ text: e.target.value });
               }}
-              placeholder="Watermark Text or URL"
-              className="flex-1 h-8 px-3 rounded-lg bg-surface border border-white/10 text-white font-mono uppercase text-xs"
+              placeholder="Watermark Text (e.g. LIVESTUDIO)"
+              className="w-full h-8 px-3 rounded-lg bg-surface border border-white/10 text-white font-mono uppercase text-xs focus:border-indigo-500 outline-none"
             />
+          </div>
+
+          {/* Text Color Selection */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400">Text Color</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                {[
+                  { label: "White", color: "#ffffff" },
+                  { label: "Gold", color: "#fbbf24" },
+                  { label: "Cyan", color: "#22d3ee" },
+                  { label: "Pink", color: "#f43f5e" },
+                  { label: "Theme", color: activeThemeColor },
+                ].map((c) => (
+                  <button
+                    key={c.color}
+                    onClick={() => setLogoConfig({ textColor: c.color })}
+                    className={cn(
+                      "w-6 h-6 rounded-full border transition-transform flex items-center justify-center",
+                      (logoConfig?.textColor || "#ffffff") === c.color
+                        ? "scale-110 ring-2 ring-white border-transparent"
+                        : "border-white/20 hover:scale-105"
+                    )}
+                    style={{ backgroundColor: c.color }}
+                    title={c.label}
+                  >
+                    {(logoConfig?.textColor || "#ffffff") === c.color && (
+                      <Check className={cn("w-3 h-3", c.color === "#ffffff" ? "text-black" : "text-white")} />
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 flex items-center gap-1 bg-surface border border-white/10 rounded-lg px-2 py-1">
+                <span className="text-[10px] text-slate-400 font-mono">#</span>
+                <input
+                  type="text"
+                  value={(logoConfig?.textColor || "#ffffff").replace("#", "")}
+                  onChange={(e) => {
+                    const hex = `#${e.target.value.replace(/[^0-9A-Fa-f]/g, "").slice(0, 6)}`;
+                    setLogoConfig({ textColor: hex });
+                  }}
+                  className="bg-transparent text-white font-mono text-[11px] uppercase w-full outline-none"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Background & Transparency Controls */}
+          <div className="space-y-1.5 p-2.5 rounded-xl bg-black/40 border border-white/5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-300 font-medium">Background Styling</span>
+              {/* 1-Click Transparent Toggle */}
+              <button
+                onClick={() => setLogoConfig({ isTransparentBg: !logoConfig?.isTransparentBg })}
+                className={cn(
+                  "px-2 py-0.5 rounded-md text-[10px] font-semibold border transition-all flex items-center gap-1",
+                  logoConfig?.isTransparentBg
+                    ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300 shadow-sm"
+                    : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+                )}
+                title="Toggle 100% Transparent Background (only text and dot show)"
+              >
+                <Sparkles className="w-3 h-3" />
+                {logoConfig?.isTransparentBg ? "100% Transparent (ON)" : "Make Transparent"}
+              </button>
+            </div>
+
+            {!logoConfig?.isTransparentBg && (
+              <>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-[9px] text-slate-400 shrink-0">Color:</span>
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { label: "Black", color: "#000000" },
+                      { label: "Navy", color: "#0f172a" },
+                      { label: "Dark Purple", color: "#2e1065" },
+                      { label: "Slate", color: "#1e293b" },
+                    ].map((c) => (
+                      <button
+                        key={c.color}
+                        onClick={() => setLogoConfig({ bgColor: c.color })}
+                        className={cn(
+                          "w-5 h-5 rounded-full border transition-transform flex items-center justify-center",
+                          (logoConfig?.bgColor || "#000000") === c.color
+                            ? "scale-110 ring-2 ring-white border-transparent"
+                            : "border-white/20 hover:scale-105"
+                        )}
+                        style={{ backgroundColor: c.color }}
+                        title={c.label}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex-1 flex items-center gap-1 bg-surface border border-white/10 rounded-lg px-2 py-0.5">
+                    <span className="text-[9px] text-slate-400 font-mono">#</span>
+                    <input
+                      type="text"
+                      value={(logoConfig?.bgColor || "#000000").replace("#", "")}
+                      onChange={(e) => {
+                        const hex = `#${e.target.value.replace(/[^0-9A-Fa-f]/g, "").slice(0, 6)}`;
+                        setLogoConfig({ bgColor: hex });
+                      }}
+                      className="bg-transparent text-white font-mono text-[10px] uppercase w-full outline-none"
+                      maxLength={6}
+                    />
+                  </div>
+                </div>
+
+                {/* Opacity Slider */}
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-slate-400">Box Opacity</span>
+                    <span className="font-mono text-slate-300">{logoConfig?.bgOpacity ?? 75}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={logoConfig?.bgOpacity ?? 75}
+                    onChange={(e) => setLogoConfig({ bgOpacity: Number(e.target.value) })}
+                    className="w-full accent-indigo-500 h-1.5 bg-white/10 rounded-lg cursor-pointer"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Font Size Selector */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400">Text Size</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { id: "small" as const, label: "Small (10px)" },
+                { id: "medium" as const, label: "Medium (12px)" },
+                { id: "large" as const, label: "Large (14px)" },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setLogoConfig({ fontSize: s.id })}
+                  className={cn(
+                    "py-1 px-1.5 rounded-lg border text-center text-[10px] transition-all",
+                    (logoConfig?.fontSize || "medium") === s.id
+                      ? "bg-indigo-600 border-indigo-400 text-white font-medium shadow-sm"
+                      : "bg-white/5 border-white/5 text-slate-400 hover:text-white"
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* 4 Corner Positions */}
@@ -589,9 +750,12 @@ export const BrandPanel: React.FC = () => {
               ].map((pos) => (
                 <button
                   key={pos.id}
-                  onClick={() => setLogoPosition(pos.id)}
+                  onClick={() => {
+                    setLogoPosition(pos.id);
+                    setLogoConfig({ position: pos.id });
+                  }}
                   className={cn(
-                    "py-1.5 px-2 rounded-lg border text-center transition-all",
+                    "py-1.5 px-2 rounded-lg border text-center text-xs transition-all",
                     logoPosition === pos.id
                       ? "bg-indigo-600 border-indigo-400 text-white font-medium"
                       : "bg-white/5 border-white/5 text-slate-400 hover:text-white"
@@ -600,6 +764,43 @@ export const BrandPanel: React.FC = () => {
                   {pos.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Live Watermark Preview */}
+          <div className="p-2.5 rounded-xl border border-white/10 bg-black/60 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400 font-medium">Preview</span>
+            <div
+              className={cn(
+                "px-3 py-1 flex items-center gap-2 transition-all",
+                logoConfig?.isTransparentBg
+                  ? "bg-transparent border-0"
+                  : "rounded-xl backdrop-blur-md border shadow-md"
+              )}
+              style={
+                logoConfig?.isTransparentBg
+                  ? undefined
+                  : {
+                      backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
+                      borderColor: `${activeThemeColor}50`,
+                    }
+              }
+            >
+              <span
+                className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0"
+                style={{ backgroundColor: activeThemeColor }}
+              />
+              <span
+                className={cn(
+                  "font-bold tracking-wider uppercase font-mono drop-shadow-md",
+                  logoConfig?.fontSize === "small" && "text-[10px]",
+                  logoConfig?.fontSize === "large" && "text-sm font-black",
+                  (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+                )}
+                style={{ color: logoConfig?.textColor || "#ffffff" }}
+              >
+                {logoConfig?.text || logoUrl}
+              </span>
             </div>
           </div>
         </div>
@@ -1316,34 +1517,401 @@ export const BrandPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* 5. Breaking News Ticker */}
+      {/* 5. Breaking News Ticker Customization */}
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
-          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px]">
+          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <Type className="w-3.5 h-3.5 text-indigo-400" />
             News Ticker Crawl
           </h4>
           <button
-            onClick={() => setTicker(tickerInput, !showTicker)}
-            className="text-indigo-400 font-medium hover:underline text-[11px]"
+            onClick={() => {
+              setTicker(tickerInput, !showTicker);
+              setTickerConfig({ text: tickerInput });
+            }}
+            className={cn(
+              "font-semibold text-[11px] px-2 py-0.5 rounded transition-colors",
+              showTicker
+                ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                : "text-indigo-400 hover:underline"
+            )}
           >
-            {showTicker ? "Disable" : "Enable"}
+            {showTicker ? "Disable Ticker" : "Enable Ticker"}
           </button>
         </div>
-        <textarea
-          rows={2}
-          value={tickerInput}
-          onChange={(e) => setTickerInput(e.target.value)}
-          placeholder="Enter scrolling ticker text..."
-          className="w-full p-2.5 text-xs rounded-lg bg-surface border border-white/10 text-white resize-none"
-        />
+
+        {/* Ticker Textarea */}
+        <div className="space-y-1">
+          <span className="text-[10px] text-slate-400">Scrolling Headline Text</span>
+          <textarea
+            rows={2}
+            value={tickerInput}
+            onChange={(e) => {
+              setTickerInput(e.target.value);
+              setTickerConfig({ text: e.target.value });
+            }}
+            placeholder="Enter scrolling ticker headline text..."
+            className="w-full p-2.5 text-xs rounded-lg bg-surface border border-white/10 text-white resize-none focus:border-indigo-500 outline-none"
+          />
+        </div>
+
+        {/* Ticker Text & Background Colors */}
+        <div className="space-y-2 p-2.5 rounded-xl bg-black/40 border border-white/5">
+          {/* Text Color */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-300 font-medium">Text Color</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                {[
+                  { label: "White", color: "#ffffff" },
+                  { label: "Yellow", color: "#facc15" },
+                  { label: "Cyan", color: "#22d3ee" },
+                  { label: "Lime", color: "#a3e635" },
+                  { label: "Amber", color: "#fb923c" },
+                ].map((c) => (
+                  <button
+                    key={c.color}
+                    onClick={() => setTickerConfig({ textColor: c.color })}
+                    className={cn(
+                      "w-5 h-5 rounded-full border transition-transform flex items-center justify-center",
+                      (tickerConfig?.textColor || "#ffffff") === c.color
+                        ? "scale-110 ring-2 ring-white border-transparent"
+                        : "border-white/20 hover:scale-105"
+                    )}
+                    style={{ backgroundColor: c.color }}
+                    title={c.label}
+                  >
+                    {(tickerConfig?.textColor || "#ffffff") === c.color && (
+                      <Check className={cn("w-2.5 h-2.5", c.color === "#ffffff" ? "text-black" : "text-white")} />
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 flex items-center gap-1 bg-surface border border-white/10 rounded-lg px-2 py-0.5">
+                <span className="text-[9px] text-slate-400 font-mono">#</span>
+                <input
+                  type="text"
+                  value={(tickerConfig?.textColor || "#ffffff").replace("#", "")}
+                  onChange={(e) => {
+                    const hex = `#${e.target.value.replace(/[^0-9A-Fa-f]/g, "").slice(0, 6)}`;
+                    setTickerConfig({ textColor: hex });
+                  }}
+                  className="bg-transparent text-white font-mono text-[10px] uppercase w-full outline-none"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bar Background Color */}
+          <div className="space-y-1 pt-1 border-t border-white/5">
+            <span className="text-[10px] text-slate-300 font-medium">Ticker Bar Background</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                {[
+                  { label: "Pure Black", color: "#050508" },
+                  { label: "Navy Dark", color: "#020617" },
+                  { label: "Breaking Red", color: "#450a0a" },
+                  { label: "Slate Dark", color: "#0f172a" },
+                  { label: "Theme Dark", color: "#1e1b4b" },
+                ].map((c) => (
+                  <button
+                    key={c.color}
+                    onClick={() => setTickerConfig({ bgColor: c.color })}
+                    className={cn(
+                      "w-5 h-5 rounded-full border transition-transform flex items-center justify-center",
+                      (tickerConfig?.bgColor || "#050508") === c.color
+                        ? "scale-110 ring-2 ring-white border-transparent"
+                        : "border-white/20 hover:scale-105"
+                    )}
+                    style={{ backgroundColor: c.color }}
+                    title={c.label}
+                  />
+                ))}
+              </div>
+              <div className="flex-1 flex items-center gap-1 bg-surface border border-white/10 rounded-lg px-2 py-0.5">
+                <span className="text-[9px] text-slate-400 font-mono">#</span>
+                <input
+                  type="text"
+                  value={(tickerConfig?.bgColor || "#050508").replace("#", "")}
+                  onChange={(e) => {
+                    const hex = `#${e.target.value.replace(/[^0-9A-Fa-f]/g, "").slice(0, 6)}`;
+                    setTickerConfig({ bgColor: hex });
+                  }}
+                  className="bg-transparent text-white font-mono text-[10px] uppercase w-full outline-none"
+                  maxLength={6}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Badge Label & Badge Color */}
+          <div className="space-y-1 pt-1 border-t border-white/5">
+            <span className="text-[10px] text-slate-300 font-medium">Badge Label & Badge Color</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={tickerConfig?.badgeText || "LIVE UPDATES"}
+                onChange={(e) => setTickerConfig({ badgeText: e.target.value })}
+                placeholder="Badge Text"
+                className="w-28 h-7 px-2 rounded-lg bg-surface border border-white/10 text-white font-bold text-[10px] uppercase tracking-wider outline-none"
+              />
+              <div className="flex items-center gap-1">
+                {[
+                  { label: "Red", color: "#e11d48" },
+                  { label: "Theme", color: activeThemeColor },
+                  { label: "Emerald", color: "#10b981" },
+                  { label: "Amber", color: "#d97706" },
+                  { label: "Cyan", color: "#06b6d4" },
+                ].map((c) => (
+                  <button
+                    key={c.color}
+                    onClick={() => setTickerConfig({ badgeBgColor: c.color })}
+                    className={cn(
+                      "w-5 h-5 rounded-full border transition-transform flex items-center justify-center",
+                      (tickerConfig?.badgeBgColor || "#e11d48") === c.color
+                        ? "scale-110 ring-2 ring-white border-transparent"
+                        : "border-white/20 hover:scale-105"
+                    )}
+                    style={{ backgroundColor: c.color }}
+                    title={c.label}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Text Size & Speed Controls */}
+        <div className="grid grid-cols-2 gap-2">
+          {/* Font Size */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400">Text Size</span>
+            <div className="grid grid-cols-2 gap-1">
+              {[
+                { id: "small" as const, label: "Small (11px)" },
+                { id: "medium" as const, label: "Medium (12px)" },
+                { id: "large" as const, label: "Large (14px)" },
+                { id: "xlarge" as const, label: "XL (16px)" },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setTickerConfig({ fontSize: s.id })}
+                  className={cn(
+                    "py-1 px-1 rounded-lg border text-center text-[10px] transition-all",
+                    (tickerConfig?.fontSize || "medium") === s.id
+                      ? "bg-indigo-600 border-indigo-400 text-white font-medium shadow-sm"
+                      : "bg-white/5 border-white/5 text-slate-400 hover:text-white"
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Speed */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400">Scroll Speed</span>
+            <div className="grid grid-cols-3 gap-1">
+              {[
+                { id: "slow" as const, label: "Slow" },
+                { id: "normal" as const, label: "Normal" },
+                { id: "fast" as const, label: "Fast" },
+              ].map((sp) => (
+                <button
+                  key={sp.id}
+                  onClick={() => setTickerConfig({ speed: sp.id })}
+                  className={cn(
+                    "py-1 px-1 rounded-lg border text-center text-[10px] transition-all",
+                    (tickerConfig?.speed || "normal") === sp.id
+                      ? "bg-indigo-600 border-indigo-400 text-white font-medium shadow-sm"
+                      : "bg-white/5 border-white/5 text-slate-400 hover:text-white"
+                  )}
+                >
+                  {sp.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Live Ticker Preview Card */}
+        <div className="p-2 rounded-xl bg-black/60 border border-white/10 space-y-1">
+          <span className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider block">Live Preview</span>
+          <div
+            className="h-7 rounded-lg flex items-center overflow-hidden border border-white/10"
+            style={{ backgroundColor: tickerConfig?.bgColor || "#050508" }}
+          >
+            <span
+              className="px-2 h-full text-[9px] font-black uppercase text-white tracking-wider flex items-center shrink-0"
+              style={{ backgroundColor: tickerConfig?.badgeBgColor || "#e11d48" }}
+            >
+              {tickerConfig?.badgeText || "LIVE UPDATES"}
+            </span>
+            <span
+              className="px-2 truncate text-xs font-medium"
+              style={{ color: tickerConfig?.textColor || "#ffffff" }}
+            >
+              {tickerInput}
+            </span>
+          </div>
+        </div>
+
         <Button
-          variant="secondary"
+          variant="primary"
           size="sm"
           className="w-full text-xs h-8"
-          onClick={() => setTicker(tickerInput, true)}
+          onClick={() => {
+            setTicker(tickerInput, true);
+            setTickerConfig({ text: tickerInput });
+          }}
         >
-          Update & Push Ticker
+          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+          Update & Push Ticker Live
         </Button>
+      </div>
+
+      {/* 6. Chroma Key (Green Screen) StreamYard Parity */}
+      <div className="space-y-3 pt-3 border-t border-white/5">
+        <div className="flex items-center justify-between">
+          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            Chroma Key (Green Screen)
+          </h4>
+          <button
+            onClick={() => setChromaKeyConfig({ enabled: !chromaKeyConfig?.enabled })}
+            className={cn(
+              "text-[10px] font-semibold px-2 py-0.5 rounded-lg border transition-all flex items-center gap-1",
+              chromaKeyConfig?.enabled
+                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300 shadow-sm"
+                : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+            )}
+          >
+            <span className={cn("w-1.5 h-1.5 rounded-full", chromaKeyConfig?.enabled ? "bg-emerald-400 animate-pulse" : "bg-slate-500")} />
+            {chromaKeyConfig?.enabled ? "Chroma ON" : "Chroma OFF"}
+          </button>
+        </div>
+
+        {/* Chroma Key Controls */}
+        <div className="space-y-2.5 p-2.5 rounded-xl bg-black/40 border border-white/5">
+          {/* Key Color Picker */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400 font-medium">Backdrop Key Color</span>
+            <div className="flex items-center gap-2">
+              {[
+                { label: "Green Screen", color: "#00b140", icon: "🟢" },
+                { label: "Blue Screen", color: "#0047bb", icon: "🔵" },
+              ].map((k) => (
+                <button
+                  key={k.color}
+                  onClick={() => setChromaKeyConfig({ keyColor: k.color })}
+                  className={cn(
+                    "flex-1 py-1 px-2 rounded-lg border text-[10px] font-medium flex items-center justify-center gap-1.5 transition-all",
+                    (chromaKeyConfig?.keyColor || "#00b140").toLowerCase() === k.color.toLowerCase()
+                      ? "bg-indigo-600/30 border-indigo-400 text-white shadow-sm"
+                      : "bg-surface border-white/10 text-slate-300 hover:border-white/20"
+                  )}
+                >
+                  <span>{k.icon}</span>
+                  <span>{k.label}</span>
+                </button>
+              ))}
+              <div className="flex items-center gap-1 bg-surface border border-white/10 rounded-lg px-2 py-1">
+                <input
+                  type="color"
+                  value={chromaKeyConfig?.keyColor || "#00b140"}
+                  onChange={(e) => setChromaKeyConfig({ keyColor: e.target.value })}
+                  className="w-5 h-5 rounded cursor-pointer bg-transparent border-0"
+                  title="Eyedropper Custom Color"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Tolerance / Similarity Slider */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">Key Tolerance (Similarity)</span>
+              <span className="font-mono text-emerald-400 font-bold">
+                {Math.round((chromaKeyConfig?.tolerance ?? 0.38) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="0.8"
+              step="0.02"
+              value={chromaKeyConfig?.tolerance ?? 0.38}
+              onChange={(e) => setChromaKeyConfig({ tolerance: Number(e.target.value) })}
+              className="w-full accent-emerald-500 h-1.5 bg-white/10 rounded-lg cursor-pointer"
+            />
+          </div>
+
+          {/* Smoothness Slider */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">Smoothness / Feather Edge</span>
+              <span className="font-mono text-indigo-400 font-bold">
+                {Math.round((chromaKeyConfig?.smoothness ?? 0.12) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.0"
+              max="0.4"
+              step="0.01"
+              value={chromaKeyConfig?.smoothness ?? 0.12}
+              onChange={(e) => setChromaKeyConfig({ smoothness: Number(e.target.value) })}
+              className="w-full accent-indigo-500 h-1.5 bg-white/10 rounded-lg cursor-pointer"
+            />
+          </div>
+
+          {/* Spill Reduction */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">Spill Suppression (Hair/Skin)</span>
+              <span className="font-mono text-cyan-400 font-bold">
+                {Math.round((chromaKeyConfig?.spill ?? 0.35) * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.0"
+              max="1.0"
+              step="0.05"
+              value={chromaKeyConfig?.spill ?? 0.35}
+              onChange={(e) => setChromaKeyConfig({ spill: Number(e.target.value) })}
+              className="w-full accent-cyan-500 h-1.5 bg-white/10 rounded-lg cursor-pointer"
+            />
+          </div>
+
+          {/* Backdrop Selection */}
+          <div className="space-y-1 pt-1 border-t border-white/5">
+            <span className="text-[10px] text-slate-400 font-medium">Keyed Backdrop Layer</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { id: "stage" as const, label: "Stage Canvas", desc: "Transparent" },
+                { id: "blur" as const, label: "Studio Blur", desc: "Blurred" },
+                { id: "image" as const, label: "Virtual Image", desc: "Custom" },
+              ].map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => setChromaKeyConfig({ backdropType: b.id })}
+                  className={cn(
+                    "p-1.5 rounded-lg border text-center transition-all",
+                    (chromaKeyConfig?.backdropType || "stage") === b.id
+                      ? "bg-emerald-600/30 border-emerald-400 text-white font-medium"
+                      : "bg-surface border-white/5 text-slate-400 hover:text-white"
+                  )}
+                >
+                  <div className="text-[10px] font-semibold">{b.label}</div>
+                  <div className="text-[8px] text-slate-400">{b.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
       {/* Hidden File Input for Modal Upload */}
       <input

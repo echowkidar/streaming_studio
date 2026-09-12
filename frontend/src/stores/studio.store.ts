@@ -49,6 +49,36 @@ export interface ParticipantBounds {
   isLockedRatio?: boolean;
 }
 
+export interface TickerConfig {
+  text: string;
+  textColor: string;
+  bgColor: string;
+  badgeBgColor: string;
+  badgeText: string;
+  fontSize: "small" | "medium" | "large" | "xlarge";
+  speed: "slow" | "normal" | "fast";
+}
+
+export interface LogoConfig {
+  text: string;
+  textColor: string;
+  bgColor: string;
+  bgOpacity: number;
+  isTransparentBg: boolean;
+  fontSize: "small" | "medium" | "large";
+  position?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+}
+
+export interface ChromaKeyConfig {
+  enabled: boolean;
+  keyColor: string; // e.g. '#00b140' or '#0047bb'
+  tolerance: number; // 0.1 to 0.8
+  smoothness: number; // 0.0 to 0.4
+  spill: number; // 0.0 to 1.0
+  backdropType: "stage" | "blur" | "image";
+  backdropUrl?: string;
+}
+
 interface StudioState {
   broadcastTitle: string;
   setTitle: (title: string) => void;
@@ -111,6 +141,15 @@ interface StudioState {
   activeBanner: LowerThirdBanner | null;
   tickerText: string;
   showTicker: boolean;
+  tickerConfig: TickerConfig;
+  setTickerConfig: (config: Partial<TickerConfig>) => void;
+  logoConfig: LogoConfig;
+  setLogoConfig: (config: Partial<LogoConfig>) => void;
+  chromaKeyConfig: ChromaKeyConfig;
+  setChromaKeyConfig: (config: Partial<ChromaKeyConfig>) => void;
+  isLeftSidebarCollapsed: boolean;
+  setLeftSidebarCollapsed: (collapsed: boolean) => void;
+  toggleLeftSidebar: () => void;
 
   setLogo: (url: string, show?: boolean) => void;
   setLogoPosition: (pos: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void;
@@ -450,7 +489,65 @@ export const useStudioStore = create<StudioState>((set) => ({
       };
     }),
 
-  setLogo: (url, show) => set((s) => ({ logoUrl: url, showLogo: show !== undefined ? show : s.showLogo })),
+  tickerConfig: {
+    text: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
+    textColor: "#ffffff",
+    bgColor: "#050508",
+    badgeBgColor: "#e11d48",
+    badgeText: "LIVE UPDATES",
+    fontSize: "medium",
+    speed: "normal",
+  },
+  setTickerConfig: (updates) =>
+    set((s) => {
+      const next = { ...s.tickerConfig, ...updates };
+      return {
+        tickerConfig: next,
+        tickerText: next.text,
+      };
+    }),
+
+  logoConfig: {
+    text: "LiveStudio",
+    textColor: "#ffffff",
+    bgColor: "#000000",
+    bgOpacity: 75,
+    isTransparentBg: false,
+    fontSize: "medium",
+  },
+  setLogoConfig: (updates) =>
+    set((s) => {
+      const next = { ...s.logoConfig, ...updates };
+      return {
+        logoConfig: next,
+        logoUrl: next.text,
+      };
+    }),
+
+  chromaKeyConfig: {
+    enabled: false,
+    keyColor: "#00b140",
+    tolerance: 0.38,
+    smoothness: 0.12,
+    spill: 0.35,
+    backdropType: "stage",
+    backdropUrl: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
+  },
+  setChromaKeyConfig: (updates) =>
+    set((s) => ({
+      chromaKeyConfig: { ...s.chromaKeyConfig, ...updates },
+    })),
+
+  isLeftSidebarCollapsed: false,
+  setLeftSidebarCollapsed: (collapsed) => set({ isLeftSidebarCollapsed: collapsed }),
+  toggleLeftSidebar: () => set((s) => ({ isLeftSidebarCollapsed: !s.isLeftSidebarCollapsed })),
+
+  setLogo: (url, show) =>
+    set((s) => ({
+      logoUrl: url,
+      showLogo: show !== undefined ? show : s.showLogo,
+      logoConfig: { ...s.logoConfig, text: url },
+    })),
   setLogoPosition: (pos) => set({ logoPosition: pos }),
   setOverlay: (url) => set({ activeOverlayUrl: url }),
   setBackground: (url) => set({ activeBackgroundUrl: url }),
@@ -464,7 +561,12 @@ export const useStudioStore = create<StudioState>((set) => ({
       },
     })),
   setBanner: (banner) => set({ activeBanner: banner }),
-  setTicker: (text, show) => set({ tickerText: text, showTicker: show }),
+  setTicker: (text, show) =>
+    set((s) => ({
+      tickerText: text,
+      showTicker: show,
+      tickerConfig: { ...s.tickerConfig, text },
+    })),
 
   activeStageOverlay: null,
   overlayHistory: (() => {

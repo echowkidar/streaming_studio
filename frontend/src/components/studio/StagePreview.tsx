@@ -41,6 +41,8 @@ export const StagePreview: React.FC = () => {
     activeBanner,
     tickerText,
     showTicker,
+    tickerConfig,
+    logoConfig,
     pinnedMessage,
     activeMedia,
     setActiveMedia,
@@ -1221,14 +1223,36 @@ export const StagePreview: React.FC = () => {
       {showLogo && (
         <div className={cn("absolute z-30 pointer-events-none transition-all", logoPositionClasses[logoPosition])}>
           <div 
-            className="px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border flex items-center gap-2 shadow-xl"
-            style={{ borderColor: `${activeThemeColor}50` }}
+            className={cn(
+              "px-3.5 py-1.5 flex items-center gap-2 transition-all select-none",
+              logoConfig?.isTransparentBg
+                ? "bg-transparent border-0 shadow-none"
+                : "rounded-xl backdrop-blur-md border shadow-xl"
+            )}
+            style={
+              logoConfig?.isTransparentBg
+                ? undefined
+                : {
+                    backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
+                    borderColor: `${activeThemeColor}50`,
+                  }
+            }
           >
             <span 
-              className="w-2 h-2 rounded-full animate-pulse shadow-sm" 
+              className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0" 
               style={{ backgroundColor: activeThemeColor }} 
             />
-            <span className="text-xs font-bold tracking-wider text-white font-mono uppercase">{logoUrl}</span>
+            <span 
+              className={cn(
+                "font-bold tracking-wider uppercase font-mono drop-shadow-md",
+                logoConfig?.fontSize === "small" && "text-[10px]",
+                logoConfig?.fontSize === "large" && "text-sm font-black",
+                (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+              )}
+              style={{ color: logoConfig?.textColor || "#ffffff" }}
+            >
+              {logoConfig?.text || logoUrl}
+            </span>
           </div>
         </div>
       )}
@@ -1277,21 +1301,35 @@ export const StagePreview: React.FC = () => {
       {/* Animated News Ticker Crawl */}
       {showTicker && (
         <div 
-          className="absolute bottom-0 inset-x-0 h-8 bg-black/90 border-t backdrop-blur-md z-30 flex items-center overflow-hidden"
+          className="absolute bottom-0 inset-x-0 h-9 border-t backdrop-blur-md z-30 flex items-center overflow-hidden"
           style={{ 
+            backgroundColor: tickerConfig?.bgColor || "#050508",
             borderColor: `${activeThemeColor}40`,
             borderBottom: `2px solid ${activeThemeColor}`
           }}
         >
           <div 
-            className="px-3 text-[10px] font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
-            style={{ backgroundColor: activeThemeColor }}
+            className="px-3.5 text-[10px] font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
+            style={{ backgroundColor: tickerConfig?.badgeBgColor || activeThemeColor }}
           >
-            LIVE UPDATES
+            {tickerConfig?.badgeText || "LIVE UPDATES"}
           </div>
           <div className="flex-1 overflow-hidden relative">
-            <div className="animate-marquee text-xs font-medium text-white px-4">
-              {tickerText}
+            <div 
+              className={cn(
+                "animate-marquee font-medium px-4",
+                tickerConfig?.fontSize === "small" && "text-[11px]",
+                tickerConfig?.fontSize === "medium" && "text-xs",
+                tickerConfig?.fontSize === "large" && "text-sm font-semibold",
+                tickerConfig?.fontSize === "xlarge" && "text-base font-bold",
+                !tickerConfig?.fontSize && "text-xs"
+              )}
+              style={{ 
+                color: tickerConfig?.textColor || "#ffffff",
+                animationDuration: tickerConfig?.speed === "slow" ? "45s" : tickerConfig?.speed === "fast" ? "14s" : "24s"
+              }}
+            >
+              {tickerConfig?.text || tickerText}
             </div>
           </div>
         </div>
