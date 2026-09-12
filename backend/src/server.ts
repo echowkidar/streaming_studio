@@ -18,20 +18,16 @@ import webinarRoutes from './routes/webinar.routes';
 
 const app = express();
 
+// Healthcheck endpoints (used by Docker and Load Balancers) - fast response
+app.get(['/health', '/api/health'], (req: Request, res: Response) => {
+  res.status(200).json({ success: true, data: { status: 'healthy', service: 'livestudio-api', timestamp: new Date().toISOString() } });
+});
+
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Healthcheck endpoints (used by Docker and Load Balancers)
-app.get('/health', (req: Request, res: Response) => {
-  res.status(200).json({ success: true, data: { status: 'healthy', service: 'livestudio-api', timestamp: new Date().toISOString() } });
-});
-
-app.get('/api/health', (req: Request, res: Response) => {
-  res.status(200).json({ success: true, data: { status: 'healthy', service: 'livestudio-api', timestamp: new Date().toISOString() } });
-});
 
 // Mount All API Routes
 app.use('/api/auth', authRoutes);

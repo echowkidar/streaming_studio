@@ -20,13 +20,15 @@ export class StorageService {
   private readonly defaultBucket: string;
 
   constructor() {
-    this.defaultBucket = process.env.MINIO_BUCKET ?? 'livestudio-storage';
+    this.defaultBucket = process.env.MINIO_BUCKET || 'livestudio';
+    const accessKey = process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || 'minioadmin';
+    const secretKey = process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || 'minioadmin';
     this.s3Client = new S3Client({
       endpoint: process.env.MINIO_ENDPOINT ?? 'http://localhost:9000',
       region: process.env.MINIO_REGION ?? 'us-east-1',
       credentials: {
-        accessKeyId: process.env.MINIO_ACCESS_KEY ?? 'minioadmin',
-        secretAccessKey: process.env.MINIO_SECRET_KEY ?? 'minioadmin',
+        accessKeyId: accessKey,
+        secretAccessKey: secretKey,
       },
       forcePathStyle: true,
     });

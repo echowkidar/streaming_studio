@@ -47,6 +47,8 @@ services:
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
@@ -79,7 +81,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 25s
+      start_period: 40s
 
   # ─── WebSocket Server (Socket.IO) ───────────────────────
   websocket:
@@ -128,6 +130,8 @@ services:
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}

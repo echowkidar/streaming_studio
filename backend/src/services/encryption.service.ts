@@ -18,11 +18,14 @@ export class EncryptionService {
   private readonly secretKey: Buffer;
 
   constructor() {
-    const key = process.env.ENCRYPTION_KEY ?? '0123456789abcdef0123456789abcdef';
-    if (key.length !== 32) {
-      throw new Error('ENCRYPTION_KEY must be exactly 32 bytes long');
+    const rawKey = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef';
+    if (rawKey.length === 64 && /^[0-9a-fA-F]+$/.test(rawKey)) {
+      this.secretKey = Buffer.from(rawKey, 'hex');
+    } else if (Buffer.from(rawKey, 'utf-8').length === 32) {
+      this.secretKey = Buffer.from(rawKey, 'utf-8');
+    } else {
+      this.secretKey = crypto.createHash('sha256').update(rawKey, 'utf-8').digest();
     }
-    this.secretKey = Buffer.from(key, 'utf-8');
   }
 
   public async encrypt(text: string): Promise<ServiceResponse<EncryptionData>> {
