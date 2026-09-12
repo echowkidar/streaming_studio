@@ -184,7 +184,7 @@ export const useStudioStore = create<StudioState>((set) => ({
   logoPosition: "top-right",
   logoUrl: "LiveStudio",
   activeOverlayUrl: null,
-  activeBackgroundUrl: null,
+  activeBackgroundUrl: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
   activeThemeColor: "#6366f1",
   activeBanner: null,
   tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",

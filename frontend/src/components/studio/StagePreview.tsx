@@ -341,6 +341,8 @@ export const StagePreview: React.FC = () => {
       style={{
         backgroundImage: activeBackgroundUrl ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
       }}
     >
       {/* Active Video Stage Content */}

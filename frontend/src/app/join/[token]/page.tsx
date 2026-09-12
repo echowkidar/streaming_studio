@@ -75,7 +75,14 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
     if (step === "setup") {
       navigator.mediaDevices
-        ?.getUserMedia({ video: true, audio: true })
+        ?.getUserMedia({
+          video: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
         .then((s) => {
           stream = s;
           setLocalStream(s);

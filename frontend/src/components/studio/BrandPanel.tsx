@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Palette,
   Check,
@@ -11,11 +11,23 @@ import {
   Image as ImageIcon,
   LayoutTemplate,
   Trash2,
+  Upload,
+  Plus,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { useAuthStore } from "@/stores/auth.store";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+
+const DEFAULT_CYBER_NEON_URL = "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80";
+
+interface CustomBgItem {
+  id: string;
+  name: string;
+  url: string;
+}
 
 export const BrandPanel: React.FC = () => {
   const { user } = useAuthStore();
@@ -44,6 +56,73 @@ export const BrandPanel: React.FC = () => {
   const [bannerSubtitle, setBannerSubtitle] = useState(activeBanner?.subtitle || "Live Presenter");
   const [tickerInput, setTickerInput] = useState(tickerText);
 
+  // File Upload State for Custom Virtual Backgrounds
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [customBgs, setCustomBgs] = useState<CustomBgItem[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("livestudio_custom_bgs");
+        if (saved) return JSON.parse(saved);
+      } catch (e) {
+        console.warn("Failed to parse custom backgrounds:", e);
+      }
+    }
+    return [];
+  });
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Please select an image file (PNG, JPG, WebP, SVG).");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("Image size must be under 10MB.");
+      return;
+    }
+
+    setUploadError(null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        const newItem: CustomBgItem = {
+          id: `custom-bg-${Date.now()}`,
+          name: file.name.replace(/\.[^/.]+$/, "").slice(0, 16),
+          url: dataUrl,
+        };
+        const updated = [newItem, ...customBgs.filter((b) => b.name !== newItem.name)];
+        setCustomBgs(updated);
+        try {
+          localStorage.setItem("livestudio_custom_bgs", JSON.stringify(updated.slice(0, 8)));
+        } catch {
+          // localStorage quota safety
+        }
+        setBackground(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const handleDeleteCustomBg = (e: React.MouseEvent, id: string, url: string) => {
+    e.stopPropagation();
+    const updated = customBgs.filter((b) => b.id !== id);
+    setCustomBgs(updated);
+    try {
+      localStorage.setItem("livestudio_custom_bgs", JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    if (activeBackgroundUrl === url) {
+      setBackground(DEFAULT_CYBER_NEON_URL);
+    }
+  };
+
   const colors = [
     "#6366f1", // Indigo
     "#06b6d4", // Cyan
@@ -55,15 +134,15 @@ export const BrandPanel: React.FC = () => {
 
   const backgroundPresets = [
     {
+      id: "cyberpunk",
+      name: "Cyber Neon (Default)",
+      url: DEFAULT_CYBER_NEON_URL,
+    },
+    {
       id: "midnight",
       name: "Midnight Studio",
       url: null,
       gradient: "from-[#050508] to-[#0c0c16]",
-    },
-    {
-      id: "cyberpunk",
-      name: "Cyber Neon",
-      url: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
     },
     {
       id: "minimal",
@@ -197,57 +276,148 @@ export const BrandPanel: React.FC = () => {
             <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
             Stage Virtual Background
           </h4>
-          {activeBackgroundUrl && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setBackground(null)}
-              className="text-[10px] text-rose-400 hover:underline flex items-center gap-1"
+              onClick={() => setBackground(DEFAULT_CYBER_NEON_URL)}
+              title="Reset to default Cyber Neon background"
+              className={cn(
+                "text-[10px] flex items-center gap-1 transition-colors px-1.5 py-0.5 rounded",
+                activeBackgroundUrl === DEFAULT_CYBER_NEON_URL
+                  ? "text-indigo-400 bg-indigo-500/15 font-semibold"
+                  : "text-slate-400 hover:text-white"
+              )}
             >
-              <Trash2 className="w-3 h-3" />
-              Reset
+              <RotateCcw className="w-2.5 h-2.5" />
+              Default
             </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2">
-          {backgroundPresets.map((bg) => {
-            const isSelected = activeBackgroundUrl === bg.url;
-            return (
+            {activeBackgroundUrl && (
               <button
-                key={bg.id}
-                onClick={() => setBackground(bg.url)}
-                className={cn(
-                  "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group",
-                  isSelected
-                    ? "border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg"
-                    : "border-white/10 hover:border-white/30"
-                )}
-                style={{
-                  backgroundImage: bg.url ? `url(${bg.url})` : undefined,
-                  backgroundSize: "cover",
-                }}
+                onClick={() => setBackground(null)}
+                title="Remove virtual background"
+                className="text-[10px] text-rose-400 hover:text-rose-300 flex items-center gap-1"
               >
-                {!bg.url && <div className={cn("absolute inset-0 bg-gradient-to-br", bg.gradient)} />}
-                <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
-                <span className="relative z-10 text-[10px] font-bold text-white drop-shadow">
-                  {bg.name}
-                </span>
-                {isSelected && (
-                  <span className="absolute top-1 right-1 z-10 p-0.5 rounded-full bg-indigo-500 text-white">
-                    <Check className="w-2.5 h-2.5" />
-                  </span>
-                )}
+                <Trash2 className="w-2.5 h-2.5" />
+                Clear
               </button>
-            );
-          })}
+            )}
+          </div>
         </div>
 
-        {/* Custom Image URL */}
-        <div className="flex items-center gap-1.5">
+        {/* Hidden File Input for Image Upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileUpload}
+        />
+
+        {/* Device Image Upload Button */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full py-2 px-3 rounded-xl border border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
+        >
+          <Upload className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
+          <span>Upload Image from Device (PNG / JPG)</span>
+        </button>
+
+        {uploadError && (
+          <p className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5">
+            {uploadError}
+          </p>
+        )}
+
+        {/* User's Uploaded Custom Backgrounds */}
+        {customBgs.length > 0 && (
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Backgrounds</span>
+            <div className="grid grid-cols-2 gap-2">
+              {customBgs.map((bg) => {
+                const isSelected = activeBackgroundUrl === bg.url;
+                return (
+                  <div
+                    key={bg.id}
+                    onClick={() => setBackground(bg.url)}
+                    className={cn(
+                      "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group cursor-pointer",
+                      isSelected
+                        ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg"
+                        : "border-white/10 hover:border-white/30"
+                    )}
+                    style={{
+                      backgroundImage: `url(${bg.url})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }}
+                  >
+                    <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                    <span className="relative z-10 text-[10px] font-bold text-white drop-shadow truncate">
+                      {bg.name}
+                    </span>
+                    {isSelected && (
+                      <span className="absolute top-1 left-1 z-10 p-0.5 rounded-full bg-emerald-500 text-white">
+                        <Check className="w-2.5 h-2.5" />
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => handleDeleteCustomBg(e, bg.id, bg.url)}
+                      title="Delete uploaded image"
+                      className="absolute top-1 right-1 z-20 p-1 rounded-full bg-black/70 hover:bg-rose-600 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Preset Backgrounds */}
+        <div className="space-y-1.5">
+          <span className="text-[10px] text-slate-400 font-medium">Studio Presets</span>
+          <div className="grid grid-cols-2 gap-2">
+            {backgroundPresets.map((bg) => {
+              const isSelected = activeBackgroundUrl === bg.url;
+              return (
+                <button
+                  key={bg.id}
+                  onClick={() => setBackground(bg.url)}
+                  className={cn(
+                    "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-2 flex flex-col justify-end group",
+                    isSelected
+                      ? "border-indigo-500 ring-2 ring-indigo-500/30 shadow-lg"
+                      : "border-white/10 hover:border-white/30"
+                  )}
+                  style={{
+                    backgroundImage: bg.url ? `url(${bg.url})` : undefined,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
+                >
+                  {!bg.url && <div className={cn("absolute inset-0 bg-gradient-to-br", bg.gradient)} />}
+                  <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                  <span className="relative z-10 text-[10px] font-bold text-white drop-shadow">
+                    {bg.name}
+                  </span>
+                  {isSelected && (
+                    <span className="absolute top-1 right-1 z-10 p-0.5 rounded-full bg-indigo-500 text-white">
+                      <Check className="w-2.5 h-2.5" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Custom Image URL fallback */}
+        <div className="flex items-center gap-1.5 pt-1">
           <input
             type="text"
             value={customBgInput}
             onChange={(e) => setCustomBgInput(e.target.value)}
-            placeholder="Custom Image URL..."
+            placeholder="Or enter Image URL..."
             className="flex-1 h-7 px-2.5 rounded-lg bg-surface border border-white/10 text-white text-[11px]"
           />
           <Button

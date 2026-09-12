@@ -32,9 +32,7 @@ export function VideoTrackView({
   className,
 }: VideoTrackViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const attachedTrackRef = useRef<any>(null);
-  const attachedAudioTrackRef = useRef<any>(null);
 
   // Play video track safely without flickering on re-renders
   useEffect(() => {
@@ -84,35 +82,6 @@ export function VideoTrackView({
     };
   }, []);
 
-  // Play remote audio safely without re-attaching on each render
-  useEffect(() => {
-    const audioEl = audioRef.current;
-    if (!audioEl || isLocal) return;
-
-    if (audioTrack && typeof audioTrack.attach === "function") {
-      if (attachedAudioTrackRef.current !== audioTrack) {
-        if (attachedAudioTrackRef.current && typeof attachedAudioTrackRef.current.detach === "function") {
-          try {
-            attachedAudioTrackRef.current.detach(audioEl);
-          } catch {
-            // ignore
-          }
-        }
-        audioTrack.attach(audioEl);
-        attachedAudioTrackRef.current = audioTrack;
-      }
-    } else {
-      if (attachedAudioTrackRef.current && typeof attachedAudioTrackRef.current.detach === "function") {
-        try {
-          attachedAudioTrackRef.current.detach(audioEl);
-        } catch {
-          // ignore
-        }
-        attachedAudioTrackRef.current = null;
-      }
-    }
-  }, [audioTrack, isLocal]);
-
   const initials = name
     .split(" ")
     .map((n) => n[0])
@@ -143,9 +112,6 @@ export function VideoTrackView({
           isLocal && !isScreen && "scale-x-[-1]" // Mirror local camera ONLY, never mirror screen share
         )}
       />
-
-      {/* Hidden Audio Element for Remote Participants */}
-      {!isLocal && <audio ref={audioRef} autoPlay playsInline className="hidden" />}
 
       {/* Camera Off / Screen Share Fallback State */}
       {!hasActiveVideo && (

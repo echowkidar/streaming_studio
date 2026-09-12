@@ -253,6 +253,17 @@ export function useLiveKit({
     isConnectedRef.current = false;
     if (roomRef.current) {
       try {
+        roomRef.current.remoteParticipants.forEach((p) => {
+          p.audioTrackPublications.forEach((pub) => {
+            if (pub.track && typeof (pub.track as RemoteAudioTrack).detach === "function") {
+              try {
+                (pub.track as RemoteAudioTrack).detach();
+              } catch {
+                // ignore
+              }
+            }
+          });
+        });
         roomRef.current.disconnect();
       } catch (e) {
         console.warn("Disconnect error:", e);
@@ -294,10 +305,15 @@ export function useLiveKit({
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const livekitWsUrl = `${protocol}//${window.location.host}/livekit/`;
 
-      // 3. Create LiveKit Room with resilient config
+      // 3. Create LiveKit Room with resilient config & echo cancellation
       const newRoom = new Room({
         adaptiveStream: true,
         dynacast: true,
+        audioCaptureDefaults: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         videoCaptureDefaults: {
           resolution: VideoPresets.h720.resolution,
         },
@@ -385,7 +401,11 @@ export function useLiveKit({
       // 5. Automatically enable Local Camera & Microphone
       try {
         await newRoom.localParticipant.setCameraEnabled(true);
-        await newRoom.localParticipant.setMicrophoneEnabled(true);
+        await newRoom.localParticipant.setMicrophoneEnabled(true, {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        });
         setCamEnabled(true);
         setMicEnabled(true);
       } catch (mediaErr) {
@@ -421,7 +441,11 @@ export function useLiveKit({
     if (!roomRef.current) return false;
     const nextState = !micEnabled;
     try {
-      await roomRef.current.localParticipant.setMicrophoneEnabled(nextState);
+      await roomRef.current.localParticipant.setMicrophoneEnabled(nextState, {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      });
       setMicEnabled(nextState);
       syncParticipants(roomRef.current);
       return nextState;
