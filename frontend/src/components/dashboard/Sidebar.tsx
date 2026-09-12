@@ -35,10 +35,15 @@ const secondaryNavigation = [
 
 export default function Sidebar() {
   const router = useRouter();
-  const { logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const { isMobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
+
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const filteredSecondaryNav = secondaryNavigation.filter(
+    (item) => item.href !== "/admin" || isSuperAdmin
+  );
 
   const handleLogout = () => {
     logout();
@@ -115,21 +120,29 @@ export default function Sidebar() {
 
         <div className="mt-4 mb-2 mx-4 h-px bg-white/10" />
 
-        {secondaryNavigation.map((item) => (
-          <Link
-            key={item.name}
-            href={item.href}
-            onClick={() => setMobileSidebarOpen(false)}
-            className={cn(
-              "group flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-              "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-            )}
-            title={isCollapsed ? item.name : undefined}
-          >
-            <item.icon className="shrink-0 h-5 w-5 text-slate-400 group-hover:text-slate-300" />
-            {!isCollapsed && <span className="ml-3 truncate">{item.name}</span>}
-          </Link>
-        ))}
+        {filteredSecondaryNav.map((item) => {
+          const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href));
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              onClick={() => setMobileSidebarOpen(false)}
+              className={cn(
+                "group flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-all relative overflow-hidden",
+                isActive
+                  ? "text-indigo-400 bg-indigo-500/10"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              )}
+              title={isCollapsed ? item.name : undefined}
+            >
+              {isActive && (
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-primary rounded-r" />
+              )}
+              <item.icon className={cn("shrink-0 h-5 w-5", isActive ? "text-indigo-400" : "text-slate-400 group-hover:text-slate-300")} />
+              {!isCollapsed && <span className="ml-3 truncate">{item.name}</span>}
+            </Link>
+          );
+        })}
       </div>
 
       <div className="p-3 border-t border-white/5 shrink-0 flex flex-col gap-1">

@@ -45,7 +45,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
     const data = LoginSchema.parse(req.body);
-    const mockId = 'usr_1';
+    const isSuperAdmin = data.email.toLowerCase().trim() === 'admin@livestudio.io';
+    const mockId = isSuperAdmin ? 'usr_1' : 'usr_' + Date.now().toString(36);
     res.status(200).json({
       success: true,
       data: {
@@ -53,7 +54,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
           id: mockId,
           email: data.email,
           name: data.email.split('@')[0] || 'User',
-          role: 'SUPER_ADMIN',
+          role: isSuperAdmin ? 'SUPER_ADMIN' : 'USER',
         },
         tokens: {
           accessToken: 'jwt_' + Math.random().toString(36).substring(2),

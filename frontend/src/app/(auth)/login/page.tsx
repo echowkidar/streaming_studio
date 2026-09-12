@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, Lock, Eye, EyeOff, AlertCircle, Sparkles } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, AlertCircle, Sparkles, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showDemoBox, setShowDemoBox] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,12 +56,13 @@ export default function LoginPage() {
         router.push("/");
       } else {
         // Fallback for standalone demo mode
+        const isSuper = email.toLowerCase().trim() === "admin@livestudio.io";
         setToken("mock-jwt-token");
         setUser({
-          id: "usr-admin",
+          id: isSuper ? "usr-admin" : `usr-${Date.now()}`,
           name: email.split("@")[0],
           email,
-          role: "SUPER_ADMIN",
+          role: isSuper ? "SUPER_ADMIN" : "USER",
           createdAt: new Date().toISOString(),
         });
         router.push("/");
@@ -77,23 +79,35 @@ export default function LoginPage() {
       <h2 className="text-2xl font-semibold text-white mb-2">Welcome back</h2>
       <p className="text-xs text-slate-400 mb-5">Sign in to your LiveStudio account</p>
 
-      {/* Demo Credentials Helper */}
-      <div className="mb-5 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs flex items-center justify-between">
-        <div>
-          <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            Demo Admin Credentials
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">admin@livestudio.io • AdminPassword123!</p>
+      {/* Demo Credentials Helper (Optional / Collapsible) */}
+      {showDemoBox && (
+        <div className="mb-5 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs flex items-center justify-between animate-in fade-in duration-200">
+          <div>
+            <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              Demo Admin Credentials
+            </p>
+            <p className="text-[11px] text-slate-400 mt-0.5 font-mono">admin@livestudio.io • AdminPassword123!</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleDemoFill}
+              className="px-2.5 py-1 text-[11px] font-medium text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg transition-colors"
+            >
+              Auto-fill
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDemoBox(false)}
+              className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+              title="Close demo credentials banner"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={handleDemoFill}
-          className="px-2.5 py-1 text-[11px] font-medium text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg transition-colors"
-        >
-          Auto-fill
-        </button>
-      </div>
+      )}
 
       {error && (
         <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
@@ -198,6 +212,19 @@ export default function LoginPage() {
           Sign up
         </Link>
       </p>
+
+      {!showDemoBox && (
+        <div className="mt-4 pt-4 border-t border-white/5 text-center">
+          <button
+            type="button"
+            onClick={() => setShowDemoBox(true)}
+            className="text-[11px] text-slate-500 hover:text-indigo-400 transition-colors inline-flex items-center gap-1.5"
+          >
+            <Sparkles className="w-3 h-3 text-indigo-400" />
+            Show Demo Credentials (Testing)
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,11 +1,37 @@
 "use client";
 
-import { Shield, Server, Cpu, HardDrive, Database, Activity, CheckCircle2, RefreshCw } from "lucide-react";
+import { Shield, Server, Cpu, HardDrive, Database, Activity, CheckCircle2, RefreshCw, ShieldAlert } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useAuthStore } from "@/stores/auth.store";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 
 export default function AdminPage() {
+  const router = useRouter();
+  const { user } = useAuthStore();
+
+  if (!user || user.role !== "SUPER_ADMIN") {
+    return (
+      <div className="max-w-md mx-auto mt-20 p-8 glass-strong rounded-2xl border border-rose-500/30 text-center space-y-4 animate-in fade-in duration-300">
+        <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 mx-auto flex items-center justify-center">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-white tracking-tight">Access Denied (403 Forbidden)</h2>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          System Administration and server infrastructure telemetry are restricted to <strong>SUPER_ADMIN</strong> accounts only.
+        </p>
+        <Button
+          variant="primary"
+          onClick={() => router.push("/")}
+          className="mt-2 w-full"
+        >
+          Return to Dashboard
+        </Button>
+      </div>
+    );
+  }
+
   const containers = [
     { name: "livestudio-frontend", status: "HEALTHY", port: "3000", uptime: "4 days, 12 hrs", memory: "128 MB" },
     { name: "livestudio-api", status: "HEALTHY", port: "4000", uptime: "4 days, 12 hrs", memory: "214 MB" },
