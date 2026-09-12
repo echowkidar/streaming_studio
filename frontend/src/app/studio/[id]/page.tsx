@@ -120,12 +120,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     publishStageSync(nextOnStage, activeLayout, layoutSplitRatio);
   };
 
-  // Sync layout changes to all guests
+  // Sync layout changes to all guests (debounced so mouse dragging never floods WebRTC channel)
   useEffect(() => {
-    const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
-    if (onStageIds.length > 0) {
-      publishStageSync(onStageIds, activeLayout, layoutSplitRatio);
-    }
+    const timer = setTimeout(() => {
+      const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      if (onStageIds.length > 0) {
+        publishStageSync(onStageIds, activeLayout, layoutSplitRatio);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
   }, [activeLayout, layoutSplitRatio]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>("chat");

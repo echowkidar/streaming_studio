@@ -368,6 +368,7 @@ export function useLiveKit({
                 if (newRoom.localParticipant) {
                   const payload = JSON.stringify({
                     type: "STAGE_SYNC",
+                    senderId: newRoom.localParticipant.identity,
                     stageParticipantIds: onStageIds.map(String),
                     activeLayout: currentStore.activeLayout,
                     layoutSplitRatio: currentStore.layoutSplitRatio,
@@ -386,8 +387,23 @@ export function useLiveKit({
             const str = new TextDecoder().decode(payload);
             const data = JSON.parse(str);
             if (data.type === "STAGE_SYNC") {
+              // Ignore loopback messages from self
+              if (data.senderId && newRoom.localParticipant && data.senderId === newRoom.localParticipant.identity) {
+                return;
+              }
+
               const stageSet = new Set((data.stageParticipantIds || []).map(String));
               setLiveParticipants((prev) => {
+                let hasChange = false;
+                for (const p of prev) {
+                  const expectedStatus = stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE";
+                  if (p.status !== expectedStatus) {
+                    hasChange = true;
+                    break;
+                  }
+                }
+                if (!hasChange) return prev;
+
                 const updated: Participant[] = prev.map((p) => ({
                   ...p,
                   status: (stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as Participant["status"],
@@ -396,7 +412,9 @@ export function useLiveKit({
                 return updated;
               });
 
-              if (typeof window !== "undefined") {
+              // HOST is the master controller of studio layout, split ratio, and stage.
+              // Only GUEST/CO_HOST/PRODUCER sync their local store from incoming host broadcasts!
+              if (role !== "HOST" && typeof window !== "undefined") {
                 try {
                   const { useStudioStore } = require("@/stores/studio.store");
                   if (data.activeLayout) {
@@ -593,6 +611,7 @@ export function useLiveKit({
         }
         const payload = JSON.stringify({
           type: "STAGE_SYNC",
+          senderId: roomRef.current.localParticipant.identity,
           stageParticipantIds: stageParticipantIds.map(String),
           activeLayout: activeL,
           layoutSplitRatio: splitR ?? 50,

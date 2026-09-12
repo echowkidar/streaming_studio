@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { Video, Volume2, VolumeX, EyeOff, X, Move, Maximize2, Crop } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
@@ -45,7 +45,8 @@ export const StagePreview: React.FC = () => {
   const isDraggingOverlayRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
-  // Stage Window Resizing Drag Handlers
+  // Stage Window Resizing Drag Handlers (Smooth 60fps, no jitter, no feedback lag)
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const isDraggingSplitRef = useRef(false);
 
   const handleSplitDividerMouseDown = (e: React.MouseEvent) => {
@@ -53,23 +54,33 @@ export const StagePreview: React.FC = () => {
     e.stopPropagation();
     if (!stageContainerRef.current) return;
     isDraggingSplitRef.current = true;
+    setIsDraggingSplit(true);
 
+    let rafId: number | null = null;
     const handleMouseMove = (moveEvt: MouseEvent) => {
       if (!isDraggingSplitRef.current || !stageContainerRef.current) return;
-      const rect = stageContainerRef.current.getBoundingClientRect();
-      const relativeX = moveEvt.clientX - rect.left;
-      const percentage = Math.round((relativeX / rect.width) * 100);
-      const clamped = Math.max(20, Math.min(80, percentage));
-      setLayoutSplitRatio(clamped);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (!stageContainerRef.current) return;
+        const rect = stageContainerRef.current.getBoundingClientRect();
+        // Container has p-3 (12px padding on each side = 24px)
+        const availableWidth = Math.max(10, rect.width - 24);
+        const relativeX = moveEvt.clientX - (rect.left + 12);
+        const percentage = Math.round((relativeX / availableWidth) * 100);
+        const clamped = Math.max(20, Math.min(80, percentage));
+        setLayoutSplitRatio(clamped);
+      });
     };
 
     const handleMouseUp = () => {
       isDraggingSplitRef.current = false;
+      setIsDraggingSplit(false);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
 
-    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mousemove", handleMouseMove, { passive: false });
     window.addEventListener("mouseup", handleMouseUp);
   };
 
@@ -77,23 +88,32 @@ export const StagePreview: React.FC = () => {
     e.stopPropagation();
     if (!stageContainerRef.current || e.touches.length === 0) return;
     isDraggingSplitRef.current = true;
+    setIsDraggingSplit(true);
 
+    let rafId: number | null = null;
     const handleTouchMove = (touchEvt: TouchEvent) => {
       if (!isDraggingSplitRef.current || !stageContainerRef.current || touchEvt.touches.length === 0) return;
-      const rect = stageContainerRef.current.getBoundingClientRect();
-      const relativeX = touchEvt.touches[0].clientX - rect.left;
-      const percentage = Math.round((relativeX / rect.width) * 100);
-      const clamped = Math.max(20, Math.min(80, percentage));
-      setLayoutSplitRatio(clamped);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (!stageContainerRef.current) return;
+        const rect = stageContainerRef.current.getBoundingClientRect();
+        const availableWidth = Math.max(10, rect.width - 24);
+        const relativeX = touchEvt.touches[0].clientX - (rect.left + 12);
+        const percentage = Math.round((relativeX / availableWidth) * 100);
+        const clamped = Math.max(20, Math.min(80, percentage));
+        setLayoutSplitRatio(clamped);
+      });
     };
 
     const handleTouchEnd = () => {
       isDraggingSplitRef.current = false;
+      setIsDraggingSplit(false);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       window.removeEventListener("touchmove", handleTouchMove);
       window.removeEventListener("touchend", handleTouchEnd);
     };
 
-    window.addEventListener("touchmove", handleTouchMove);
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
     window.addEventListener("touchend", handleTouchEnd);
   };
 
@@ -507,8 +527,11 @@ export const StagePreview: React.FC = () => {
           <div className="w-full h-full flex items-center p-3 relative group/split min-w-0 min-h-0">
             {/* Left Tile (Host / Speaker) */}
             <div
-              style={{ width: `${layoutSplitRatio}%` }}
-              className="h-full min-w-0 transition-[width] duration-75"
+              style={{
+                width: `${layoutSplitRatio}%`,
+                transition: isDraggingSplit ? "none" : "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+              }}
+              className="h-full min-w-0"
             >
               {renderTile(sorted[0], 0, "w-full h-full")}
             </div>
@@ -530,8 +553,11 @@ export const StagePreview: React.FC = () => {
 
             {/* Right Tile (Guest / Co-Host) */}
             <div
-              style={{ width: `${100 - layoutSplitRatio}%` }}
-              className="h-full min-w-0 transition-[width] duration-75"
+              style={{
+                width: `${100 - layoutSplitRatio}%`,
+                transition: isDraggingSplit ? "none" : "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+              }}
+              className="h-full min-w-0"
             >
               {renderTile(sorted[1], 1, "w-full h-full")}
             </div>
@@ -554,8 +580,11 @@ export const StagePreview: React.FC = () => {
           <div className="w-full h-full flex items-center p-3 relative group/split min-w-0 min-h-0">
             {/* Main Stage Window (Hero / Screen) */}
             <div
-              style={{ width: `${layoutSplitRatio}%` }}
-              className="h-full min-w-0 transition-[width] duration-75"
+              style={{
+                width: `${layoutSplitRatio}%`,
+                transition: isDraggingSplit ? "none" : "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+              }}
+              className="h-full min-w-0"
             >
               {renderTile(sorted[0], 0, "w-full h-full")}
             </div>
@@ -577,8 +606,11 @@ export const StagePreview: React.FC = () => {
 
             {/* Sidebar Guests Stack */}
             <div
-              style={{ width: `${100 - layoutSplitRatio}%` }}
-              className="flex-1 flex flex-col gap-2.5 h-full min-w-0 transition-[width] duration-75"
+              style={{
+                width: `${100 - layoutSplitRatio}%`,
+                transition: isDraggingSplit ? "none" : "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+              }}
+              className="flex-1 flex flex-col gap-2.5 h-full min-w-0"
             >
               {sorted.slice(1, 4).map((p, idx) => renderTile(p, idx + 1, "w-full flex-1"))}
             </div>
@@ -627,6 +659,11 @@ export const StagePreview: React.FC = () => {
     >
       {/* Active Video Stage Content */}
       <div className="flex-1 w-full relative">{renderLayoutContent()}</div>
+
+      {/* Global Transparent Drag Overlay (captures all pointer events anywhere on screen while dragging split) */}
+      {isDraggingSplit && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none bg-transparent pointer-events-auto" />
+      )}
 
       {/* StreamYard Stage Window Quick-Split Controller (appears on hover when 2+ on stage) */}
       {onStageParticipants.length >= 2 && (
