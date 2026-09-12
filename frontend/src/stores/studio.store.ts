@@ -88,7 +88,9 @@ interface StudioState {
   updateStageOverlay: (updates: Partial<StageOverlayAsset>) => void;
   toggleStageOverlayVisibility: () => void;
   saveToOverlayHistory: (overlay: StageOverlayAsset) => void;
+  updateOverlayInHistory: (id: string, updates: Partial<StageOverlayAsset>) => void;
   removeFromOverlayHistory: (id: string) => void;
+  restoreDefaultOverlays: () => void;
 
   // Media playback on stage
   activeMedia: {
@@ -208,18 +210,43 @@ export const useStudioStore = create<StudioState>((set) => ({
   setTicker: (text, show) => set({ tickerText: text, showTicker: show }),
 
   activeStageOverlay: null,
-  overlayHistory: [],
-  setStageOverlay: (overlay) =>
-    set((s) => {
-      if (overlay) {
-        const exists = s.overlayHistory.some((item) => item.id === overlay.id || item.url === overlay.url);
-        const newHistory = exists
-          ? s.overlayHistory.map((item) => (item.id === overlay.id ? overlay : item))
-          : [overlay, ...s.overlayHistory.slice(0, 15)];
-        return { activeStageOverlay: overlay, overlayHistory: newHistory };
+  overlayHistory: (() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("livestudio_custom_overlays");
+        if (saved) return JSON.parse(saved);
+      } catch (e) {
+        console.warn("Failed to load saved overlays:", e);
       }
-      return { activeStageOverlay: null };
-    }),
+    }
+    return [
+      {
+        id: "sample-sponsor-badge",
+        name: "Sponsor Brand Card",
+        type: "image" as const,
+        url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
+        position: "top-right" as const,
+        scale: 28,
+        cropMode: "cover" as const,
+        borderRadius: 16,
+        opacity: 100,
+        isShowing: true,
+      },
+      {
+        id: "sample-qa-graphic",
+        name: "Live Q&A Box",
+        type: "image" as const,
+        url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+        position: "bottom-left" as const,
+        scale: 32,
+        cropMode: "cover" as const,
+        borderRadius: 12,
+        opacity: 95,
+        isShowing: true,
+      },
+    ];
+  })(),
+  setStageOverlay: (overlay) => set({ activeStageOverlay: overlay }),
   updateStageOverlay: (updates) =>
     set((s) => {
       if (!s.activeStageOverlay) return {};
@@ -238,18 +265,84 @@ export const useStudioStore = create<StudioState>((set) => ({
     }),
   saveToOverlayHistory: (overlay) =>
     set((s) => {
-      const exists = s.overlayHistory.some((item) => item.id === overlay.id);
+      const filtered = s.overlayHistory.filter((item) => item.id !== overlay.id);
+      const newHistory = [overlay, ...filtered.slice(0, 15)];
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(newHistory));
+        } catch {
+          // ignore
+        }
+      }
+      return { overlayHistory: newHistory };
+    }),
+  updateOverlayInHistory: (id, updates) =>
+    set((s) => {
+      const newHistory = s.overlayHistory.map((item) => (item.id === id ? { ...item, ...updates } : item));
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(newHistory));
+        } catch {
+          // ignore
+        }
+      }
       return {
-        overlayHistory: exists
-          ? s.overlayHistory.map((item) => (item.id === overlay.id ? overlay : item))
-          : [overlay, ...s.overlayHistory.slice(0, 15)],
+        overlayHistory: newHistory,
+        activeStageOverlay: s.activeStageOverlay?.id === id ? { ...s.activeStageOverlay, ...updates } : s.activeStageOverlay,
       };
     }),
   removeFromOverlayHistory: (id) =>
-    set((s) => ({
-      overlayHistory: s.overlayHistory.filter((item) => item.id !== id),
-      activeStageOverlay: s.activeStageOverlay?.id === id ? null : s.activeStageOverlay,
-    })),
+    set((s) => {
+      const newHistory = s.overlayHistory.filter((item) => item.id !== id);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(newHistory));
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        overlayHistory: newHistory,
+        activeStageOverlay: s.activeStageOverlay?.id === id ? null : s.activeStageOverlay,
+      };
+    }),
+  restoreDefaultOverlays: () =>
+    set(() => {
+      const defaults: StageOverlayAsset[] = [
+        {
+          id: "sample-sponsor-badge",
+          name: "Sponsor Brand Card",
+          type: "image",
+          url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
+          position: "top-right",
+          scale: 28,
+          cropMode: "cover",
+          borderRadius: 16,
+          opacity: 100,
+          isShowing: true,
+        },
+        {
+          id: "sample-qa-graphic",
+          name: "Live Q&A Box",
+          type: "image",
+          url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+          position: "bottom-left",
+          scale: 32,
+          cropMode: "cover",
+          borderRadius: 12,
+          opacity: 95,
+          isShowing: true,
+        },
+      ];
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(defaults));
+        } catch {
+          // ignore
+        }
+      }
+      return { overlayHistory: defaults };
+    }),
 
   activeMedia: null,
   setActiveMedia: (media) => set({ activeMedia: media }),

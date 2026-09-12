@@ -23,6 +23,10 @@ import {
   Crop,
   Video,
   Maximize2,
+  Pencil,
+  RefreshCw,
+  Undo2,
+  ExternalLink,
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { useAuthStore } from "@/stores/auth.store";
@@ -58,7 +62,9 @@ export const BrandPanel: React.FC = () => {
     toggleStageOverlayVisibility,
     overlayHistory,
     saveToOverlayHistory,
+    updateOverlayInHistory,
     removeFromOverlayHistory,
+    restoreDefaultOverlays,
     activeThemeColor,
     setThemeColor,
     activeBanner,
@@ -76,7 +82,61 @@ export const BrandPanel: React.FC = () => {
 
   // Overlay File Upload & State
   const overlayFileInputRef = useRef<HTMLInputElement>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+  const [replacingOverlayId, setReplacingOverlayId] = useState<string | null>(null);
+  const [recentlyDeletedOverlay, setRecentlyDeletedOverlay] = useState<StageOverlayAsset | null>(null);
   const [overlayUploadError, setOverlayUploadError] = useState<string | null>(null);
+
+  const handleReplaceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !replacingOverlayId) return;
+
+    const isVideo = file.type.startsWith("video/");
+    const isImage = file.type.startsWith("image/");
+
+    if (!isImage && !isVideo) {
+      setOverlayUploadError("Please select a valid image (PNG, JPG, GIF) or video (MP4, WebM).");
+      return;
+    }
+
+    if (file.size > 30 * 1024 * 1024) {
+      setOverlayUploadError("File size must be under 30MB.");
+      return;
+    }
+
+    const fileUrl = URL.createObjectURL(file);
+    updateOverlayInHistory(replacingOverlayId, {
+      url: fileUrl,
+      name: file.name.replace(/\.[^/.]+$/, "").slice(0, 18),
+      type: isVideo ? "video" : "image",
+    });
+    setReplacingOverlayId(null);
+    e.target.value = "";
+  };
+
+  const handleDeleteWithUndo = (item: StageOverlayAsset, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentlyDeletedOverlay(item);
+    removeFromOverlayHistory(item.id);
+    setTimeout(() => {
+      setRecentlyDeletedOverlay((cur) => (cur?.id === item.id ? null : cur));
+    }, 8000);
+  };
+
+  const handleUndoDelete = () => {
+    if (recentlyDeletedOverlay) {
+      saveToOverlayHistory(recentlyDeletedOverlay);
+      setRecentlyDeletedOverlay(null);
+    }
+  };
+
+  const handleRename = (item: StageOverlayAsset, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newName = window.prompt("Enter new name for this overlay:", item.name);
+    if (newName && newName.trim()) {
+      updateOverlayInHistory(item.id, { name: newName.trim() });
+    }
+  };
 
   const overlayPresets: StageOverlayAsset[] = [
     {
@@ -598,6 +658,15 @@ export const BrandPanel: React.FC = () => {
           onChange={handleOverlayFileUpload}
         />
 
+        {/* Hidden File Input for Overlay Replacement */}
+        <input
+          ref={replaceFileInputRef}
+          type="file"
+          accept="image/*,video/mp4,video/webm"
+          className="hidden"
+          onChange={handleReplaceFile}
+        />
+
         {/* Upload Overlay Button */}
         <button
           onClick={() => overlayFileInputRef.current?.click()}
@@ -843,10 +912,64 @@ export const BrandPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* User's Recent Uploaded Overlays */}
-        {overlayHistory.length > 0 && (
-          <div className="space-y-1.5 pt-1">
-            <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Overlays</span>
+        {/* Undo banner if an overlay was recently deleted */}
+        {recentlyDeletedOverlay && (
+          <div className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 animate-in fade-in duration-200">
+            <span className="text-[11px] truncate mr-2">Removed <strong>{recentlyDeletedOverlay.name}</strong></span>
+            <button
+              onClick={handleUndoDelete}
+              className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[10px] flex items-center gap-1 transition-colors shrink-0"
+            >
+              <Undo2 className="w-3 h-3" />
+              Undo
+            </button>
+          </div>
+        )}
+
+        {/* User's Uploaded Overlays Management Section */}
+        <div className="space-y-1.5 pt-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Overlays</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-white/10 text-slate-400 font-mono">
+                {overlayHistory.length}
+              </span>
+            </div>
+            <button
+              onClick={restoreDefaultOverlays}
+              className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+              title="Restore sample overlay cards if accidentally deleted"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              Reset Samples
+            </button>
+          </div>
+
+          {overlayHistory.length === 0 ? (
+            <div className="p-3 rounded-xl border border-dashed border-white/10 text-center space-y-2 bg-white/[0.02]">
+              <p className="text-[11px] text-slate-400">No custom overlays left.</p>
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => overlayFileInputRef.current?.click()}
+                  className="h-6 text-[10px] px-2"
+                >
+                  <Upload className="w-2.5 h-2.5 mr-1" />
+                  Upload
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={restoreDefaultOverlays}
+                  className="h-6 text-[10px] px-2 text-indigo-300"
+                >
+                  <RotateCcw className="w-2.5 h-2.5 mr-1" />
+                  Restore Defaults
+                </Button>
+              </div>
+            </div>
+          ) : (
             <div className="grid grid-cols-2 gap-2">
               {overlayHistory.map((item) => {
                 const isSelected = activeStageOverlay?.id === item.id;
@@ -855,34 +978,87 @@ export const BrandPanel: React.FC = () => {
                     key={item.id}
                     onClick={() => setStageOverlay(item)}
                     className={cn(
-                      "p-2 rounded-xl border flex flex-col justify-between cursor-pointer transition-all group relative overflow-hidden h-16",
+                      "group relative rounded-xl border overflow-hidden cursor-pointer transition-all h-20 flex flex-col justify-between p-2 bg-surface",
                       isSelected
-                        ? "border-emerald-500 bg-emerald-500/15 shadow-md"
-                        : "border-white/5 bg-surface hover:border-white/15"
+                        ? "border-emerald-500 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-500/10"
+                        : "border-white/5 hover:border-white/20"
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] uppercase font-bold text-slate-400">
+                    {/* Background Preview Thumbnail */}
+                    <div
+                      className="absolute inset-0 pointer-events-none opacity-25 group-hover:opacity-40 transition-opacity bg-cover bg-center"
+                      style={{
+                        backgroundImage: item.type === "image" ? `url("${item.url}")` : undefined,
+                      }}
+                    >
+                      {item.type === "video" && (
+                        <video
+                          src={item.url}
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                    </div>
+
+                    {/* Top action row */}
+                    <div className="relative z-10 flex items-center justify-between">
+                      <span className="text-[9px] uppercase font-bold px-1 rounded bg-black/60 text-slate-300 backdrop-blur-sm">
                         {item.type}
                       </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeFromOverlayHistory(item.id);
-                        }}
-                        className="p-0.5 rounded text-slate-400 hover:text-rose-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Remove from history"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </button>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Change / Replace File */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReplacingOverlayId(item.id);
+                            replaceFileInputRef.current?.click();
+                          }}
+                          className="p-1 rounded bg-black/70 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors"
+                          title="Change / Replace image or video file"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                        {/* Rename */}
+                        <button
+                          onClick={(e) => handleRename(item, e)}
+                          className="p-1 rounded bg-black/70 hover:bg-white/20 text-slate-300 hover:text-white transition-colors"
+                          title="Rename overlay"
+                        >
+                          <Type className="w-2.5 h-2.5" />
+                        </button>
+                        {/* Delete with Undo */}
+                        <button
+                          onClick={(e) => handleDeleteWithUndo(item, e)}
+                          className="p-1 rounded bg-black/70 hover:bg-rose-600 text-slate-300 hover:text-white transition-colors"
+                          title="Remove overlay (Undo available)"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="font-medium text-white text-[11px] truncate">{item.name}</div>
+
+                    {/* Bottom Info */}
+                    <div className="relative z-10">
+                      <div className="font-semibold text-white text-[11px] truncate drop-shadow-sm">
+                        {item.name}
+                      </div>
+                      <div className="text-[9px] text-slate-300 truncate flex items-center gap-1">
+                        {isSelected && (
+                          <span className="text-emerald-400 font-bold flex items-center gap-0.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                            Live
+                          </span>
+                        )}
+                        <span>{item.cropMode} • {item.scale}%</span>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* 5. Lower-Third Banners */}

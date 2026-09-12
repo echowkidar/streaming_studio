@@ -533,6 +533,97 @@ export const StagePreview: React.FC = () => {
           onMouseDown={handleOverlayMouseDown}
           onTouchStart={handleOverlayTouchStart}
         >
+          {/* Quick-action Mini Dock: Placed outside cropped container so it NEVER gets clipped by circle or rounded corners! */}
+          <div
+            className={cn(
+              "absolute z-40 left-1/2 -translate-x-1/2 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/90 backdrop-blur-md rounded-xl px-2 py-1 flex items-center gap-1.5 border border-white/20 shadow-2xl pointer-events-auto whitespace-nowrap",
+              (activeStageOverlay.customCoords?.y ?? (activeStageOverlay.position.startsWith("top") ? 5 : 80)) < 16
+                ? "-bottom-10"
+                : "-top-10"
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            {/* Drag Handle Indicator */}
+            <span className="text-slate-400 p-0.5 mr-0.5 cursor-move" title="Drag to reposition">
+              <Move className="w-3 h-3" />
+            </span>
+
+            {/* Quick Size cycle */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextScale = activeStageOverlay.scale === 20 ? 35 : activeStageOverlay.scale === 35 ? 60 : activeStageOverlay.scale === 60 ? 100 : 20;
+                updateStageOverlay({ scale: nextScale });
+              }}
+              className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] font-mono"
+              title={`Current scale: ${activeStageOverlay.scale}%. Click to cycle scale.`}
+            >
+              {activeStageOverlay.scale}%
+            </button>
+
+            <span className="w-px h-3 bg-white/20" />
+
+            {/* Quick Crop toggle */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const modes: ("fit" | "cover" | "square" | "circle")[] = ["fit", "cover", "square", "circle"];
+                const nextIdx = (modes.indexOf(activeStageOverlay.cropMode) + 1) % modes.length;
+                updateStageOverlay({ cropMode: modes[nextIdx] });
+              }}
+              className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] uppercase font-semibold"
+              title={`Crop Mode: ${activeStageOverlay.cropMode}. Click to cycle.`}
+            >
+              {activeStageOverlay.cropMode}
+            </button>
+
+            {/* Mute toggle for video */}
+            {activeStageOverlay.type === "video" && (
+              <>
+                <span className="w-px h-3 bg-white/20" />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateStageOverlay({ isMuted: !activeStageOverlay.isMuted });
+                  }}
+                  className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+                  title={activeStageOverlay.isMuted ? "Unmute Audio" : "Mute Audio"}
+                >
+                  {activeStageOverlay.isMuted ? <VolumeX className="w-3 h-3 text-rose-400" /> : <Volume2 className="w-3 h-3 text-emerald-400" />}
+                </button>
+              </>
+            )}
+
+            <span className="w-px h-3 bg-white/20" />
+
+            {/* Hide Live */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleStageOverlayVisibility();
+              }}
+              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+              title="Hide overlay"
+            >
+              <EyeOff className="w-3 h-3" />
+            </button>
+
+            {/* Remove */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setStageOverlay(null);
+              }}
+              className="p-1 hover:bg-rose-600 rounded text-slate-300 hover:text-white"
+              title="Remove overlay from stage"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+
+          {/* Inner Cropped Content Container */}
           <div
             className={cn(
               "relative overflow-hidden transition-shadow shadow-2xl group-hover/overlay:ring-2 group-hover/overlay:ring-indigo-500/80 bg-black/40 backdrop-blur-[1px]",
@@ -559,79 +650,6 @@ export const StagePreview: React.FC = () => {
                 draggable={false}
               />
             )}
-
-            {/* Drag Handle Indicator */}
-            <div className="absolute top-1.5 left-1.5 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/70 rounded p-1 text-slate-300 pointer-events-none z-30">
-              <Move className="w-3 h-3" />
-            </div>
-
-            {/* Quick-action Mini Dock visible on hover */}
-            <div className="absolute top-2 right-2 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/85 backdrop-blur-md rounded-xl p-1 flex items-center gap-1 border border-white/20 shadow-xl z-30">
-              {/* Quick Size cycle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const nextScale = activeStageOverlay.scale === 20 ? 35 : activeStageOverlay.scale === 35 ? 60 : activeStageOverlay.scale === 60 ? 100 : 20;
-                  updateStageOverlay({ scale: nextScale });
-                }}
-                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] font-mono"
-                title={`Current scale: ${activeStageOverlay.scale}%. Click to cycle scale.`}
-              >
-                {activeStageOverlay.scale}%
-              </button>
-
-              {/* Quick Crop toggle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const modes: ("fit" | "cover" | "square" | "circle")[] = ["fit", "cover", "square", "circle"];
-                  const nextIdx = (modes.indexOf(activeStageOverlay.cropMode) + 1) % modes.length;
-                  updateStageOverlay({ cropMode: modes[nextIdx] });
-                }}
-                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] uppercase font-semibold"
-                title={`Crop Mode: ${activeStageOverlay.cropMode}. Click to cycle.`}
-              >
-                {activeStageOverlay.cropMode}
-              </button>
-
-              {/* Mute toggle for video */}
-              {activeStageOverlay.type === "video" && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    updateStageOverlay({ isMuted: !activeStageOverlay.isMuted });
-                  }}
-                  className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
-                  title={activeStageOverlay.isMuted ? "Unmute Audio" : "Mute Audio"}
-                >
-                  {activeStageOverlay.isMuted ? <VolumeX className="w-3 h-3 text-rose-400" /> : <Volume2 className="w-3 h-3 text-emerald-400" />}
-                </button>
-              )}
-
-              {/* Hide Live */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleStageOverlayVisibility();
-                }}
-                className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
-                title="Hide overlay"
-              >
-                <EyeOff className="w-3 h-3" />
-              </button>
-
-              {/* Remove */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setStageOverlay(null);
-                }}
-                className="p-1 hover:bg-rose-600 rounded text-slate-300 hover:text-white"
-                title="Remove overlay from stage"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
           </div>
         </div>
       )}
