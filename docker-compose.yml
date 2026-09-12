@@ -244,6 +244,26 @@ services:
       retries: 5
       start_period: 10s
 
+  # ─── LiveKit Egress (RTMP Streaming) ─────────────────────
+  egress:
+    image: livekit/egress:latest
+    container_name: livestudio-egress
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    shm_size: 2gb
+    environment:
+      - EGRESS_CONFIG_FILE=/etc/egress.yaml
+    volumes:
+      - ./livekit/egress.yaml:/etc/egress.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    networks:
+      - livestudio
+
   # ─── coturn (TURN Server) ───────────────────────────────
   coturn:
     build:

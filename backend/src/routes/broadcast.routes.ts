@@ -1,4 +1,4 @@
-import express, { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
@@ -204,42 +204,38 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { destinationIds, roomName, directDestinations } = req.body;
+    
+    // Resolve RTMP URLs (handles decryption of stored stream keys)
     const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
-
-    const result = await streamer.startBroadcastStream(
-      req.params.broadcastId,
-      roomName || `studio-${req.params.broadcastId}`,
-      destinationIds || [],
-      directDestinations
-    );
-
-    res.status(result.success ? 200 : 400).json(result);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// POST /api/broadcasts/:broadcastId/stream/chunk
-router.post('/:broadcastId/stream/chunk', express.raw({ type: '*/*', limit: '50mb' }), (req: Request, res: Response, next: NextFunction): void => {
-  try {
-    const broadcastId = req.params.broadcastId;
-    const { RtmpStreamerService } = require('../services/rtmp-streamer.service');
-    const streamer = RtmpStreamerService.getInstance();
-
-    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
-      streamer.pushChunk(broadcastId, req.body);
-      res.status(200).json({ success: true });
+    const rtmpUrls = await streamer.resolveDestinationUrls(destinationIds || [], directDestinations);
+    
+    if (rtmpUrls.length === 0) {
+      res.status(400).json({ success: false, error: 'No valid RTMP destinations found' });
       return;
     }
 
-    req.on('data', (chunk: Buffer) => {
-      streamer.pushChunk(broadcastId, chunk);
+    // Start LiveKit Egress instead of FFmpeg
+    const { EgressService } = await import('../services/egress.service');
+    const egress = EgressService.getInstance();
+    const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
+    
+    const result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+    
+    // Store egressId in broadcast
+    await prisma.broadcast.update({
+      where: { id: req.params.broadcastId },
+      data: {
+        status: 'LIVE',
+        startedAt: new Date(),
+        settings: {
+          egressId: result.egressId,
+          rtmpUrls,
+        },
+      },
     });
 
-    req.on('end', () => {
-      res.status(200).json({ success: true });
-    });
+    res.status(200).json({ success: true, egressId: result.egressId, activeDestinations: rtmpUrls.length });
   } catch (error) {
     next(error);
   }
@@ -248,10 +244,25 @@ router.post('/:broadcastId/stream/chunk', express.raw({ type: '*/*', limit: '50m
 // POST /api/broadcasts/:broadcastId/stream/stop
 router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
-    const streamer = RtmpStreamerService.getInstance();
-    const success = await streamer.stopBroadcastStream(req.params.broadcastId);
-    res.status(200).json({ success });
+    const broadcast = await prisma.broadcast.findUnique({
+      where: { id: req.params.broadcastId },
+    });
+    
+    const settings = (broadcast?.settings as Record<string, unknown>) || {};
+    const egressId = settings.egressId as string;
+    
+    if (egressId) {
+      const { EgressService } = await import('../services/egress.service');
+      const egress = EgressService.getInstance();
+      await egress.stopEgress(egressId);
+    }
+    
+    await prisma.broadcast.update({
+      where: { id: req.params.broadcastId },
+      data: { status: 'ENDED', endedAt: new Date() },
+    });
+    
+    res.status(200).json({ success: true });
   } catch (error) {
     next(error);
   }

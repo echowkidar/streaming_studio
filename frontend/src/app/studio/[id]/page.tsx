@@ -43,7 +43,6 @@ import { DeviceSettingsModal } from "@/components/studio/DeviceSettingsModal";
 import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager";
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { GoLiveModal } from "@/components/studio/GoLiveModal";
-import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
@@ -234,8 +233,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         }
       }
 
-      // 1. Tell backend to spawn FFmpeg RTMP streamers for YouTube / Facebook / Twitch
-      await fetch(`/api/broadcasts/${params.id}/stream/start`, {
+      // Tell backend to start LiveKit Egress RTMP streaming (server-side rendering + encoding)
+      const res = await fetch(`/api/broadcasts/${params.id}/stream/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -245,9 +244,10 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         }),
       });
 
-      // 2. Start capturing live stage canvas + mixed audio and streaming chunks to backend
-      const stageEl = document.getElementById("livestudio-stage-container");
-      await stageBroadcaster.start(stageEl, params.id);
+      const result = await res.json();
+      if (!result.success) {
+        console.error("Failed to start egress stream:", result.error);
+      }
 
       startLive();
     } catch (e) {
@@ -259,38 +259,24 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const handleEndBroadcast = async () => {
     if (!confirm("Are you sure you want to end this live broadcast?")) return;
     try {
-      stageBroadcaster.stop();
+      // Tell backend to stop LiveKit Egress RTMP streaming
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {
-      stageBroadcaster.stop();
       endLive();
     }
   };
 
-  // Sync LiveKit participants to studio store and refresh broadcast audio mix
+  // Sync LiveKit participants to studio store
   useEffect(() => {
     if (liveParticipants.length > 0) {
       useStudioStore.getState().setParticipants(liveParticipants);
-      if (stageBroadcaster.isStreaming()) {
-        stageBroadcaster.refreshAudioConnections();
-      }
     }
   }, [liveParticipants]);
 
-  // Refresh broadcast audio when active media (video/audio) is played or stopped
-  const activeMedia = useStudioStore((s) => s.activeMedia);
-  useEffect(() => {
-    if (stageBroadcaster.isStreaming()) {
-      const t = setTimeout(() => {
-        stageBroadcaster.refreshAudioConnections();
-      }, 600);
-      return () => clearTimeout(t);
-    }
-  }, [activeMedia]);
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
   const backstageParticipants = participants.filter((p) => p.status === "BACKSTAGE");
