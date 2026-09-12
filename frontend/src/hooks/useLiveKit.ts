@@ -355,8 +355,68 @@ export function useLiveKit({
           setIsConnecting(false);
           setLiveParticipants([]);
         })
-        .on(RoomEvent.ParticipantConnected, () => syncParticipants(newRoom))
+        .on(RoomEvent.ParticipantConnected, () => {
+          syncParticipants(newRoom);
+          if (role === "HOST" && typeof window !== "undefined") {
+            try {
+              const { useStudioStore } = require("@/stores/studio.store");
+              const currentStore = useStudioStore.getState();
+              const onStageIds = currentStore.participants
+                .filter((p: any) => p.status === "ON_STAGE")
+                .map((p: any) => p.id);
+              setTimeout(() => {
+                if (newRoom.localParticipant) {
+                  const payload = JSON.stringify({
+                    type: "STAGE_SYNC",
+                    stageParticipantIds: onStageIds.map(String),
+                    activeLayout: currentStore.activeLayout,
+                    layoutSplitRatio: currentStore.layoutSplitRatio,
+                  });
+                  newRoom.localParticipant.publishData(new TextEncoder().encode(payload), { reliable: true });
+                }
+              }, 600);
+            } catch {
+              // ignore
+            }
+          }
+        })
         .on(RoomEvent.ParticipantDisconnected, () => syncParticipants(newRoom))
+        .on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
+          try {
+            const str = new TextDecoder().decode(payload);
+            const data = JSON.parse(str);
+            if (data.type === "STAGE_SYNC") {
+              const stageSet = new Set((data.stageParticipantIds || []).map(String));
+              setLiveParticipants((prev) => {
+                const updated: Participant[] = prev.map((p) => ({
+                  ...p,
+                  status: (stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as Participant["status"],
+                }));
+                participantsRef.current = updated;
+                return updated;
+              });
+
+              if (typeof window !== "undefined") {
+                try {
+                  const { useStudioStore } = require("@/stores/studio.store");
+                  if (data.activeLayout) {
+                    useStudioStore.getState().setLayout(data.activeLayout);
+                  }
+                  if (typeof data.layoutSplitRatio === "number") {
+                    useStudioStore.getState().setLayoutSplitRatio(data.layoutSplitRatio);
+                  }
+                  if (Array.isArray(data.stageParticipantIds)) {
+                    useStudioStore.getState().setStageParticipants(data.stageParticipantIds);
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Failed to parse LiveKit data message:", e);
+          }
+        })
         .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
           // Auto-play remote audio through browser speaker
           if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).attach === "function") {
@@ -514,6 +574,39 @@ export function useLiveKit({
     };
   }, [roomName, participantName, role, autoConnect]);
 
+  // Broadcast stage sync across room
+  const publishStageSync = useCallback(
+    async (stageParticipantIds: (string | number)[], layout?: string, splitRatio?: number) => {
+      if (!roomRef.current?.localParticipant) return;
+      try {
+        let activeL = layout;
+        let splitR = splitRatio;
+        if (typeof window !== "undefined" && (!activeL || splitR === undefined)) {
+          try {
+            const { useStudioStore } = require("@/stores/studio.store");
+            const st = useStudioStore.getState();
+            if (!activeL) activeL = st.activeLayout;
+            if (splitR === undefined) splitR = st.layoutSplitRatio;
+          } catch {
+            // ignore
+          }
+        }
+        const payload = JSON.stringify({
+          type: "STAGE_SYNC",
+          stageParticipantIds: stageParticipantIds.map(String),
+          activeLayout: activeL,
+          layoutSplitRatio: splitR ?? 50,
+        });
+        await roomRef.current.localParticipant.publishData(new TextEncoder().encode(payload), {
+          reliable: true,
+        });
+      } catch (err) {
+        console.warn("Failed to broadcast stage sync:", err);
+      }
+    },
+    []
+  );
+
   return {
     room,
     isConnected,
@@ -535,6 +628,7 @@ export function useLiveKit({
     flipCamera,
     setAudioDevice,
     setVideoDevice,
+    publishStageSync,
     connect,
     disconnect,
   };

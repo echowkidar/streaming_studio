@@ -217,6 +217,7 @@ export const BrandPanel: React.FC = () => {
       isShowing: true,
       isMuted: true,
       isLooping: true,
+      showBackdrop: false,
     };
     saveToOverlayHistory(newOverlay);
     setStageOverlay(newOverlay);
@@ -305,6 +306,7 @@ export const BrandPanel: React.FC = () => {
       isShowing: true,
       isMuted: true,
       isLooping: true,
+      showBackdrop: false,
     };
 
     setStageOverlay(newOverlay);

@@ -144,6 +144,7 @@ export const MediaPanel: React.FC = () => {
         isShowing: true,
         isMuted: true,
         isLooping: true,
+        showBackdrop: false,
       };
       setStageOverlay(newOverlay);
       saveToOverlayHistory(newOverlay);

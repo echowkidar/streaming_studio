@@ -28,6 +28,8 @@ export const StagePreview: React.FC = () => {
     pinnedMessage,
     activeMedia,
     setActiveMedia,
+    layoutSplitRatio,
+    setLayoutSplitRatio,
   } = useStudioStore();
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
@@ -42,6 +44,58 @@ export const StagePreview: React.FC = () => {
   const stageContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingOverlayRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+
+  // Stage Window Resizing Drag Handlers
+  const isDraggingSplitRef = useRef(false);
+
+  const handleSplitDividerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!stageContainerRef.current) return;
+    isDraggingSplitRef.current = true;
+
+    const handleMouseMove = (moveEvt: MouseEvent) => {
+      if (!isDraggingSplitRef.current || !stageContainerRef.current) return;
+      const rect = stageContainerRef.current.getBoundingClientRect();
+      const relativeX = moveEvt.clientX - rect.left;
+      const percentage = Math.round((relativeX / rect.width) * 100);
+      const clamped = Math.max(20, Math.min(80, percentage));
+      setLayoutSplitRatio(clamped);
+    };
+
+    const handleMouseUp = () => {
+      isDraggingSplitRef.current = false;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const handleSplitDividerTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (!stageContainerRef.current || e.touches.length === 0) return;
+    isDraggingSplitRef.current = true;
+
+    const handleTouchMove = (touchEvt: TouchEvent) => {
+      if (!isDraggingSplitRef.current || !stageContainerRef.current || touchEvt.touches.length === 0) return;
+      const rect = stageContainerRef.current.getBoundingClientRect();
+      const relativeX = touchEvt.touches[0].clientX - rect.left;
+      const percentage = Math.round((relativeX / rect.width) * 100);
+      const clamped = Math.max(20, Math.min(80, percentage));
+      setLayoutSplitRatio(clamped);
+    };
+
+    const handleTouchEnd = () => {
+      isDraggingSplitRef.current = false;
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+
+    window.addEventListener("touchmove", handleTouchMove);
+    window.addEventListener("touchend", handleTouchEnd);
+  };
 
   const handleOverlayMouseDown = (e: React.MouseEvent) => {
     if (!stageContainerRef.current || !activeStageOverlay) return;
@@ -446,9 +500,41 @@ export const StagePreview: React.FC = () => {
           if (!a.isScreen && b.isScreen) return 1;
           return 0;
         });
+        if (sorted.length <= 1) {
+          return <div className="w-full h-full p-2">{renderTile(sorted[0] || onStageParticipants[0], 0, "w-full h-full")}</div>;
+        }
         return (
-          <div className="w-full h-full grid grid-cols-2 gap-3 p-3">
-            {sorted.slice(0, 2).map((p, idx) => renderTile(p, idx, "w-full h-full"))}
+          <div className="w-full h-full flex items-center p-3 relative group/split min-w-0 min-h-0">
+            {/* Left Tile (Host / Speaker) */}
+            <div
+              style={{ width: `${layoutSplitRatio}%` }}
+              className="h-full min-w-0 transition-[width] duration-75"
+            >
+              {renderTile(sorted[0], 0, "w-full h-full")}
+            </div>
+
+            {/* Draggable Divider Handle */}
+            <div
+              className="relative flex items-center justify-center w-4 cursor-col-resize select-none group/divider z-30 shrink-0 h-full -mx-1"
+              onMouseDown={handleSplitDividerMouseDown}
+              onTouchStart={handleSplitDividerTouchStart}
+              title="Drag to resize windows (Left: Host, Right: Guest)"
+            >
+              <div className="w-1 h-full rounded-full bg-white/10 group-hover/divider:bg-indigo-500 transition-colors" />
+              <div className="absolute w-5 h-8 rounded-full bg-black/90 border border-white/20 flex items-center justify-center shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 transition-all">
+                <div className="flex flex-col gap-0.5">
+                  <span className="w-0.5 h-2 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            </div>
+
+            {/* Right Tile (Guest / Co-Host) */}
+            <div
+              style={{ width: `${100 - layoutSplitRatio}%` }}
+              className="h-full min-w-0 transition-[width] duration-75"
+            >
+              {renderTile(sorted[1], 1, "w-full h-full")}
+            </div>
           </div>
         );
       }
@@ -461,16 +547,41 @@ export const StagePreview: React.FC = () => {
           if (!a.isScreen && b.isScreen) return 1;
           return 0;
         });
+        if (sorted.length <= 1) {
+          return <div className="w-full h-full p-2">{renderTile(sorted[0] || onStageParticipants[0], 0, "w-full h-full")}</div>;
+        }
         return (
-          <div className="w-full h-full flex gap-3 p-3">
-            <div className="flex-[3] h-full min-w-0">
+          <div className="w-full h-full flex items-center p-3 relative group/split min-w-0 min-h-0">
+            {/* Main Stage Window (Hero / Screen) */}
+            <div
+              style={{ width: `${layoutSplitRatio}%` }}
+              className="h-full min-w-0 transition-[width] duration-75"
+            >
               {renderTile(sorted[0], 0, "w-full h-full")}
             </div>
-            {sorted.length > 1 && (
-              <div className="flex-1 flex flex-col gap-3 h-full min-w-0">
-                {sorted.slice(1, 4).map((p, idx) => renderTile(p, idx + 1, "w-full flex-1"))}
+
+            {/* Draggable Divider Handle */}
+            <div
+              className="relative flex items-center justify-center w-4 cursor-col-resize select-none group/divider z-30 shrink-0 h-full -mx-1"
+              onMouseDown={handleSplitDividerMouseDown}
+              onTouchStart={handleSplitDividerTouchStart}
+              title="Drag to resize windows (Left: Main, Right: Guests)"
+            >
+              <div className="w-1 h-full rounded-full bg-white/10 group-hover/divider:bg-indigo-500 transition-colors" />
+              <div className="absolute w-5 h-8 rounded-full bg-black/90 border border-white/20 flex items-center justify-center shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 transition-all">
+                <div className="flex flex-col gap-0.5">
+                  <span className="w-0.5 h-2 bg-slate-300 rounded-full" />
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Sidebar Guests Stack */}
+            <div
+              style={{ width: `${100 - layoutSplitRatio}%` }}
+              className="flex-1 flex flex-col gap-2.5 h-full min-w-0 transition-[width] duration-75"
+            >
+              {sorted.slice(1, 4).map((p, idx) => renderTile(p, idx + 1, "w-full flex-1"))}
+            </div>
           </div>
         );
       }
@@ -506,7 +617,7 @@ export const StagePreview: React.FC = () => {
   return (
     <div
       ref={stageContainerRef}
-      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none"
+      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
       style={{
         backgroundImage: activeBackgroundUrl ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
@@ -516,6 +627,36 @@ export const StagePreview: React.FC = () => {
     >
       {/* Active Video Stage Content */}
       <div className="flex-1 w-full relative">{renderLayoutContent()}</div>
+
+      {/* StreamYard Stage Window Quick-Split Controller (appears on hover when 2+ on stage) */}
+      {onStageParticipants.length >= 2 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover/stage:opacity-100 hover:opacity-100 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto">
+          <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
+          {[
+            { label: "50:50", ratio: 50 },
+            { label: "65:35", ratio: 65 },
+            { label: "35:65", ratio: 35 },
+            { label: "75:25", ratio: 75 },
+          ].map((preset) => (
+            <button
+              key={preset.label}
+              onClick={() => setLayoutSplitRatio(preset.ratio)}
+              className={cn(
+                "px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold transition-all border",
+                Math.abs(layoutSplitRatio - preset.ratio) <= 2
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-md"
+                  : "bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10"
+              )}
+            >
+              {preset.label}
+            </button>
+          ))}
+          <span className="w-px h-3 bg-white/20 ml-0.5" />
+          <span className="text-[10px] font-mono text-cyan-300 font-bold px-1">
+            {layoutSplitRatio}% | {100 - layoutSplitRatio}%
+          </span>
+        </div>
+      )}
 
       {/* StreamYard Full-Frame Overlay (1920x1080 Transparent PNG/GIF/WebM) */}
       {activeOverlayUrl && (
@@ -599,6 +740,23 @@ export const StagePreview: React.FC = () => {
               </>
             )}
 
+            {/* Transparent PNG vs Card Backdrop Toggle */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                updateStageOverlay({ showBackdrop: !activeStageOverlay.showBackdrop });
+              }}
+              className={cn(
+                "px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                activeStageOverlay.showBackdrop
+                  ? "bg-white/20 border-white/30 text-white"
+                  : "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+              )}
+              title={activeStageOverlay.showBackdrop ? "Currently: Card Background (Click for 100% Transparent PNG)" : "Currently: 100% Transparent PNG (Click for Card Box)"}
+            >
+              {activeStageOverlay.showBackdrop ? "Card" : "PNG"}
+            </button>
+
             <span className="w-px h-3 bg-white/20" />
 
             {/* Hide Live */}
@@ -629,7 +787,10 @@ export const StagePreview: React.FC = () => {
           {/* Inner Cropped Content Container */}
           <div
             className={cn(
-              "relative overflow-hidden transition-shadow shadow-2xl group-hover/overlay:ring-2 group-hover/overlay:ring-indigo-500/80 bg-black/40 backdrop-blur-[1px]",
+              "relative overflow-hidden transition-shadow select-none",
+              activeStageOverlay.showBackdrop
+                ? "bg-black/75 backdrop-blur-md border border-white/10 shadow-2xl"
+                : "bg-transparent",
               activeStageOverlay.cropMode === "circle" ? "rounded-full" : "rounded-2xl"
             )}
             style={{
@@ -649,7 +810,10 @@ export const StagePreview: React.FC = () => {
               <img
                 src={activeStageOverlay.url}
                 alt={activeStageOverlay.name}
-                className={getCropClasses()}
+                className={cn(
+                  getCropClasses(),
+                  !activeStageOverlay.showBackdrop && "drop-shadow-md"
+                )}
                 draggable={false}
               />
             )}

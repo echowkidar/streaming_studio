@@ -351,7 +351,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
           )}
 
           {/* Main Stage & Layout Area */}
-          <div className="flex-1 p-2 sm:p-4 overflow-hidden flex items-center justify-center relative min-h-0">
+          <div className="flex-1 p-2 sm:p-4 overflow-hidden flex flex-col items-center justify-center relative min-h-0">
             {/* Fixed 16:9 Broadcast Stage Container */}
             <div className="w-full aspect-video max-w-6xl max-h-full rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl flex flex-col justify-center mx-auto my-auto">
               {liveParticipants.length === 0 ? (
@@ -359,60 +359,106 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   <p className="text-xs">Connecting to live studio stream...</p>
                 </div>
+              ) : onStageParticipants.length === 0 ? (
+                /* Green Room Standby: All connected participants see each other */
+                <div className="w-full h-full p-3 sm:p-4 flex flex-col justify-between">
+                  <div className="px-3 py-1.5 rounded-xl bg-indigo-950/70 border border-indigo-500/30 flex items-center justify-between shrink-0 mb-2">
+                    <div className="flex items-center gap-2 text-xs text-indigo-200">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>
+                        <strong className="text-white">Green Room Active:</strong> Host is preparing the live stage. You can see and talk with fellow speakers below.
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-mono text-indigo-300 font-bold hidden sm:inline">
+                      {liveParticipants.length} Connected
+                    </span>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "flex-1 grid gap-2.5 items-center justify-center min-h-0",
+                      liveParticipants.length === 1 && "grid-cols-1",
+                      liveParticipants.length === 2 && "grid-cols-2",
+                      liveParticipants.length >= 3 && "grid-cols-2 sm:grid-cols-3"
+                    )}
+                  >
+                    {liveParticipants.map((p) => (
+                      <div key={p.id} className="w-full h-full min-h-0 min-w-0">
+                        <VideoTrackView
+                          id={p.id}
+                          track={p.videoTrack}
+                          audioTrack={p.audioTrack}
+                          name={p.isLocal ? `${p.name} (You)` : p.name}
+                          isSpeaking={p.isSpeaking}
+                          micOn={p.micOn}
+                          camOn={p.camOn}
+                          isLocal={p.isLocal}
+                          role={p.role}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ) : (
-                <div className="w-full h-full p-2 grid gap-2 items-center justify-center h-full">
-                  {/* Render all on-stage participants in fixed slots */}
+                /* Live Broadcast Stage: On-stage participants */
+                <div className="w-full h-full p-2.5 flex items-center justify-center">
                   <div
                     className={cn(
                       "w-full h-full grid gap-2.5 items-center justify-center",
-                      onStageParticipants.length === 0 && "grid-cols-1",
                       onStageParticipants.length === 1 && "grid-cols-1",
                       onStageParticipants.length === 2 && "grid-cols-2",
                       onStageParticipants.length >= 3 && "grid-cols-2 sm:grid-cols-3"
                     )}
                   >
-                    {onStageParticipants.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center text-slate-500 gap-2 p-6 text-center">
-                        <Radio className="w-8 h-8 text-slate-600 animate-pulse" />
-                        <p className="text-sm font-semibold text-slate-400">Stage is Preparing</p>
-                        <p className="text-xs text-slate-600">The host has not brought any participants on stage yet.</p>
+                    {onStageParticipants.map((p) => (
+                      <div key={p.id} className="w-full h-full min-h-0 min-w-0">
+                        <VideoTrackView
+                          id={p.id}
+                          track={p.videoTrack}
+                          audioTrack={p.audioTrack}
+                          name={p.isLocal ? `${p.name} (You)` : p.name}
+                          isSpeaking={p.isSpeaking}
+                          micOn={p.micOn}
+                          camOn={p.camOn}
+                          isLocal={p.isLocal}
+                          role={p.role}
+                        />
                       </div>
-                    ) : (
-                      onStageParticipants.map((p) => (
-                        <div key={p.id} className="w-full h-full min-h-0 min-w-0">
-                          <VideoTrackView
-                            track={p.videoTrack}
-                            audioTrack={p.audioTrack}
-                            name={p.name}
-                            isSpeaking={p.isSpeaking}
-                            micOn={p.micOn}
-                            camOn={p.camOn}
-                            isLocal={p.isLocal}
-                            role={p.role}
-                          />
-                        </div>
-                      ))
-                    )}
+                    ))}
                   </div>
                 </div>
               )}
-
-              {/* Guest Self-View Picture-In-Picture when Backstage */}
-              {!isGuestOnStage && localParticipant && (
-                <div className="absolute bottom-2 right-2 sm:bottom-4 sm:right-4 z-20 w-28 xs:w-36 sm:w-52 aspect-video rounded-lg sm:rounded-xl overflow-hidden border-2 border-amber-500/50 shadow-2xl bg-black">
-                  <VideoTrackView
-                    track={localParticipant.videoTrack}
-                    audioTrack={localParticipant.audioTrack}
-                    name={`${displayName} (You)`}
-                    isSpeaking={localParticipant.isSpeaking}
-                    micOn={lkMic}
-                    camOn={lkCam}
-                    isLocal={true}
-                    role="Guest"
-                  />
-                </div>
-              )}
             </div>
+
+            {/* Backstage / Green Room Bar: Displays all backstage guests so they can see and talk to each other */}
+            {onStageParticipants.length > 0 && backstageParticipants.length > 0 && (
+              <div className="w-full max-w-6xl mt-2 px-3 py-1.5 rounded-xl bg-[#0c0c16]/95 border border-white/10 flex items-center gap-3 overflow-x-auto custom-scrollbar shrink-0 shadow-lg">
+                <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-bold shrink-0 pr-2.5 border-r border-white/10 uppercase tracking-wide">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Backstage ({backstageParticipants.length})</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {backstageParticipants.map((p) => (
+                    <div
+                      key={p.id}
+                      className="w-32 sm:w-40 aspect-video rounded-lg overflow-hidden border border-white/15 bg-black shrink-0 relative shadow-md"
+                    >
+                      <VideoTrackView
+                        id={p.id}
+                        track={p.videoTrack}
+                        audioTrack={p.audioTrack}
+                        name={p.isLocal ? `${p.name} (You)` : p.name}
+                        isSpeaking={p.isSpeaking}
+                        micOn={p.micOn}
+                        camOn={p.camOn}
+                        isLocal={p.isLocal}
+                        role={p.role}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Slide-out Private Chat Drawer */}
             {isChatOpen && (

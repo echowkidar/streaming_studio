@@ -77,6 +77,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     toggleScreenShare,
     setAudioDevice,
     setVideoDevice,
+    publishStageSync,
   } = useLiveKit({
     roomName,
     participantName: hostName,
@@ -89,6 +90,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setTitle,
     activeLayout,
     setLayout,
+    layoutSplitRatio,
     isLive,
     startLive,
     endLive,
@@ -101,6 +103,30 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     moveToBackstage,
     removeParticipant,
   } = useStudioStore();
+
+  const handleMoveToStage = (id: string | number) => {
+    moveToStage(id);
+    const nextOnStage = Array.from(
+      new Set([...participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id), id])
+    );
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio);
+  };
+
+  const handleMoveToBackstage = (id: string | number) => {
+    moveToBackstage(id);
+    const nextOnStage = participants
+      .filter((p) => p.status === "ON_STAGE" && String(p.id) !== String(id))
+      .map((p) => p.id);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio);
+  };
+
+  // Sync layout changes to all guests
+  useEffect(() => {
+    const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+    if (onStageIds.length > 0) {
+      publishStageSync(onStageIds, activeLayout, layoutSplitRatio);
+    }
+  }, [activeLayout, layoutSplitRatio]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>("chat");
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -272,7 +298,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                 <div className="flex items-center gap-1">
                   {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
                   <button
-                    onClick={() => moveToBackstage(p.id)}
+                    onClick={() => handleMoveToBackstage(p.id)}
                     className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
                     title="Remove to backstage"
                   >
@@ -308,7 +334,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                     variant="primary"
                     size="sm"
                     className="h-6 px-2 text-[10px]"
-                    onClick={() => moveToStage(p.id)}
+                    onClick={() => handleMoveToStage(p.id)}
                   >
                     Add to Stage
                   </Button>
@@ -343,7 +369,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                   variant="secondary"
                   size="sm"
                   className="h-6 px-2 text-[10px]"
-                  onClick={() => moveToStage(p.id)}
+                  onClick={() => handleMoveToStage(p.id)}
                 >
                   Admit
                 </Button>

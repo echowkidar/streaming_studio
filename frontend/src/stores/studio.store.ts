@@ -56,6 +56,8 @@ interface StudioState {
   // Layout
   activeLayout: StudioLayout;
   setLayout: (layout: StudioLayout) => void;
+  layoutSplitRatio: number; // 20 to 80 (default 50)
+  setLayoutSplitRatio: (ratio: number) => void;
   customLayoutConfig: CustomLayoutConfig;
   setCustomLayoutConfig: (config: Partial<CustomLayoutConfig>) => void;
 
@@ -75,6 +77,7 @@ interface StudioState {
   updateParticipant: (id: string | number, updates: Partial<Participant>) => void;
   moveToStage: (id: string | number) => void;
   moveToBackstage: (id: string | number) => void;
+  setStageParticipants: (stageIds: (string | number)[]) => void;
 
   // Branding & Overlays
   showLogo: boolean;
@@ -154,6 +157,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     isShowing: true,
     isMuted: true,
     isLooping: true,
+    showBackdrop: false,
   },
   {
     id: "preset-sponsor",
@@ -168,6 +172,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     isShowing: true,
     isMuted: true,
     isLooping: true,
+    showBackdrop: false,
   },
   {
     id: "sample-qa-graphic",
@@ -180,6 +185,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     borderRadius: 12,
     opacity: 95,
     isShowing: true,
+    showBackdrop: false,
   },
   {
     id: "preset-breaking",
@@ -194,6 +200,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     isShowing: true,
     isMuted: true,
     isLooping: true,
+    showBackdrop: false,
   },
   {
     id: "preset-video-clip",
@@ -208,6 +215,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     isShowing: true,
     isMuted: true,
     isLooping: true,
+    showBackdrop: false,
   },
   {
     id: "sample-sponsor-badge",
@@ -220,6 +228,7 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
     borderRadius: 16,
     opacity: 100,
     isShowing: true,
+    showBackdrop: false,
   },
 ];
 
@@ -234,6 +243,8 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   activeLayout: "speaker-large",
   setLayout: (layout) => set({ activeLayout: layout }),
+  layoutSplitRatio: 50,
+  setLayoutSplitRatio: (ratio) => set({ layoutSplitRatio: Math.max(20, Math.min(80, ratio)) }),
 
   customLayoutConfig: {
     mode: "hero-side",
@@ -287,6 +298,16 @@ export const useStudioStore = create<StudioState>((set) => ({
     set((s) => ({
       participants: s.participants.map((p) => (p.id === id ? { ...p, status: "BACKSTAGE" } : p)),
     })),
+  setStageParticipants: (stageIds) =>
+    set((s) => {
+      const stageSet = new Set(stageIds.map(String));
+      return {
+        participants: s.participants.map((p) => ({
+          ...p,
+          status: stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE",
+        })),
+      };
+    }),
 
   showLogo: true,
   logoPosition: "top-right",

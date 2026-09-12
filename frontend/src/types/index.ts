@@ -211,5 +211,6 @@ export interface StageOverlayAsset {
   isMuted?: boolean;
   isLooping?: boolean;
   isShowing: boolean;
+  showBackdrop?: boolean;
 }
 
