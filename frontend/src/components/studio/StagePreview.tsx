@@ -22,6 +22,8 @@ export const StagePreview: React.FC = () => {
     tickerText,
     showTicker,
     pinnedMessage,
+    activeMedia,
+    setActiveMedia,
   } = useStudioStore();
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
@@ -51,8 +53,58 @@ export const StagePreview: React.FC = () => {
     );
   };
 
+  // Helper to render active stage media (video/slides/image)
+  const renderMediaTile = () => {
+    if (!activeMedia) return null;
+    return (
+      <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group">
+        {activeMedia.type === "video" && (
+          <video
+            src={activeMedia.url}
+            autoPlay
+            controls
+            playsInline
+            className="w-full h-full object-contain"
+          />
+        )}
+        {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
+          <img
+            src={activeMedia.url}
+            alt={activeMedia.name}
+            className="w-full h-full object-contain"
+          />
+        )}
+        <div className="absolute top-3 left-3 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="truncate max-w-[180px]">{activeMedia.name}</span>
+        </div>
+        <button
+          onClick={() => setActiveMedia(null)}
+          className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white text-[10px] font-medium border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+        >
+          Remove Media
+        </button>
+      </div>
+    );
+  };
+
   // Layout Engine Grid Calculator
   const renderLayoutContent = () => {
+    // Stage Media Presentation Mode
+    if (activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")) {
+      if (onStageParticipants.length === 0) {
+        return <div className="w-full h-full p-3">{renderMediaTile()}</div>;
+      }
+      return (
+        <div className="w-full h-full flex gap-3 p-3">
+          <div className="flex-[3] h-full min-w-0 min-h-0">{renderMediaTile()}</div>
+          <div className="flex-1 flex flex-col gap-3 h-full min-w-0 min-h-0 overflow-y-auto">
+            {onStageParticipants.map((p, idx) => renderTile(p, idx, "w-full flex-1 min-h-[110px]"))}
+          </div>
+        </div>
+      );
+    }
+
     if (onStageParticipants.length === 0) {
       return (
         <div className="h-full w-full flex flex-col items-center justify-center text-slate-500 gap-3">
@@ -331,6 +383,28 @@ export const StagePreview: React.FC = () => {
             {tickerText}
           </div>
         </div>
+      )}
+
+      {/* Active Stage Background Audio Stream */}
+      {activeMedia && activeMedia.type === "audio" && (
+        <>
+          <audio src={activeMedia.url} autoPlay loop />
+          <div className="absolute top-6 left-6 z-30 animate-in fade-in">
+            <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-cyan-500/40 flex items-center gap-2.5 shadow-xl">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span className="text-[11px] font-medium text-cyan-200 truncate max-w-[160px]">
+                🎵 {activeMedia.name}
+              </span>
+              <button
+                onClick={() => setActiveMedia(null)}
+                className="text-[10px] text-slate-400 hover:text-rose-400 font-bold ml-1 transition-colors"
+                title="Stop Audio"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

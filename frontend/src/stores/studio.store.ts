@@ -74,11 +74,28 @@ interface StudioState {
   showTicker: boolean;
 
   setLogo: (url: string, show?: boolean) => void;
+  setLogoPosition: (pos: "top-left" | "top-right" | "bottom-left" | "bottom-right") => void;
   setOverlay: (url: string | null) => void;
   setBackground: (url: string | null) => void;
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
   setTicker: (text: string, show: boolean) => void;
+
+  // Media playback on stage
+  activeMedia: {
+    id: string;
+    name: string;
+    type: "video" | "audio" | "image" | "pdf";
+    url: string;
+  } | null;
+  setActiveMedia: (
+    media: {
+      id: string;
+      name: string;
+      type: "video" | "audio" | "image" | "pdf";
+      url: string;
+    } | null
+  ) => void;
 
   // Chat
   messages: ChatMessage[];
@@ -169,11 +186,15 @@ export const useStudioStore = create<StudioState>((set) => ({
   showTicker: false,
 
   setLogo: (url, show) => set((s) => ({ logoUrl: url, showLogo: show !== undefined ? show : s.showLogo })),
+  setLogoPosition: (pos) => set({ logoPosition: pos }),
   setOverlay: (url) => set({ activeOverlayUrl: url }),
   setBackground: (url) => set({ activeBackgroundUrl: url }),
   setThemeColor: (color) => set({ activeThemeColor: color }),
   setBanner: (banner) => set({ activeBanner: banner }),
   setTicker: (text, show) => set({ tickerText: text, showTicker: show }),
+
+  activeMedia: null,
+  setActiveMedia: (media) => set({ activeMedia: media }),
 
   messages: [
     {
