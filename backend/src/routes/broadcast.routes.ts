@@ -215,14 +215,17 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
       return;
     }
 
-    // Start LiveKit Egress instead of FFmpeg
+    // Start LiveKit Egress
     const { EgressService } = await import('../services/egress.service');
     const egress = EgressService.getInstance();
     const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
     
     const result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
     
-    // Store egressId in broadcast
+    // Track in memory
+    egress.setEgressForBroadcast(req.params.broadcastId, result.egressId);
+
+    // Store egressId in broadcast DB (non-blocking if record doesn't exist yet)
     await prisma.broadcast.update({
       where: { id: req.params.broadcastId },
       data: {
@@ -233,11 +236,17 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
           rtmpUrls,
         },
       },
+    }).catch((dbErr) => {
+      console.warn(`[Broadcast DB] Could not update broadcast ${req.params.broadcastId} status in DB:`, dbErr?.message);
     });
 
     res.status(200).json({ success: true, egressId: result.egressId, activeDestinations: rtmpUrls.length });
   } catch (error) {
-    next(error);
+    console.error(`[Broadcast API] /stream/start error:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to start RTMP egress stream' 
+    });
   }
 });
 
@@ -246,25 +255,29 @@ router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, nex
   try {
     const broadcast = await prisma.broadcast.findUnique({
       where: { id: req.params.broadcastId },
-    });
+    }).catch(() => null);
     
     const settings = (broadcast?.settings as Record<string, unknown>) || {};
-    const egressId = settings.egressId as string;
+    const { EgressService } = await import('../services/egress.service');
+    const egress = EgressService.getInstance();
+    const egressId = (settings.egressId as string) || egress.getEgressForBroadcast(req.params.broadcastId);
     
     if (egressId) {
-      const { EgressService } = await import('../services/egress.service');
-      const egress = EgressService.getInstance();
-      await egress.stopEgress(egressId);
+      await egress.stopEgress(egressId).catch((err) => {
+        console.warn(`[Egress] Error stopping egress ${egressId}:`, err?.message);
+      });
+      egress.removeEgressForBroadcast(req.params.broadcastId);
     }
     
     await prisma.broadcast.update({
       where: { id: req.params.broadcastId },
       data: { status: 'ENDED', endedAt: new Date() },
-    });
+    }).catch(() => null);
     
     res.status(200).json({ success: true });
   } catch (error) {
-    next(error);
+    console.error(`[Broadcast API] /stream/stop error:`, error);
+    res.status(200).json({ success: true }); // Always return success on stop to prevent UI lockup
   }
 });
 

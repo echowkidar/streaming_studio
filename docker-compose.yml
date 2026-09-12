@@ -253,9 +253,16 @@ services:
       - SYS_ADMIN
     shm_size: 2gb
     environment:
-      - EGRESS_CONFIG_FILE=/etc/egress.yaml
-    volumes:
-      - ./livekit/egress.yaml:/etc/egress.yaml:ro
+      EGRESS_CONFIG_BODY: |
+        api_key: ${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
+        api_secret: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
+        ws_url: ws://livekit:7880
+        insecure: true
+        log_level: info
+        redis:
+          address: redis:6379
+          db: 0
+        template_port: 7980
     depends_on:
       redis:
         condition: service_healthy
