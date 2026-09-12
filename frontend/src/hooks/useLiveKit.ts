@@ -485,6 +485,25 @@ export function useLiveKit({
     }
   }, [facingMode, syncParticipants]);
 
+  // Device switcher callbacks
+  const setAudioDevice = useCallback(async (deviceId: string) => {
+    if (!roomRef.current) return;
+    try {
+      await roomRef.current.switchActiveDevice("audioinput", deviceId);
+    } catch (e) {
+      console.warn("Failed to switch audio device:", e);
+    }
+  }, []);
+
+  const setVideoDevice = useCallback(async (deviceId: string) => {
+    if (!roomRef.current) return;
+    try {
+      await roomRef.current.switchActiveDevice("videoinput", deviceId);
+    } catch (e) {
+      console.warn("Failed to switch video device:", e);
+    }
+  }, []);
+
   // Connect on mount / when room parameters change
   useEffect(() => {
     if (autoConnect) {
@@ -501,6 +520,7 @@ export function useLiveKit({
     isConnecting,
     error,
     camEnabled,
+    cameraEnabled: camEnabled,
     micEnabled,
     screenEnabled,
     facingMode,
@@ -508,10 +528,13 @@ export function useLiveKit({
     localAudioTrack,
     screenTrack,
     liveParticipants,
+    participants: liveParticipants,
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
     flipCamera,
+    setAudioDevice,
+    setVideoDevice,
     connect,
     disconnect,
   };

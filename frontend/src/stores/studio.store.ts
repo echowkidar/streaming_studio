@@ -30,9 +30,22 @@ export interface CustomLayoutConfig {
   showSpeakerBorder: boolean;
 }
 
+export interface TileTransform {
+  fitMode: "contain" | "cover";
+  zoom: number; // 1 to 2.5
+  panX: number; // % offset (-50 to 50)
+  panY: number; // % offset (-50 to 50)
+  rotation: number; // 0, 90, 180, 270
+  flipH: boolean;
+  flipV: boolean;
+}
+
 interface StudioState {
   broadcastTitle: string;
   setTitle: (title: string) => void;
+  tileTransforms: Record<string, TileTransform>;
+  setTileTransform: (id: string | number, updates: Partial<TileTransform>) => void;
+  resetTileTransform: (id: string | number) => void;
   isLive: boolean;
   isRecording: boolean;
   recordDuration: number;
@@ -285,11 +298,60 @@ export const useStudioStore = create<StudioState>((set) => ({
   tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
   showTicker: false,
 
+  tileTransforms: {},
+  setTileTransform: (id, updates) =>
+    set((s) => {
+      const key = String(id);
+      const isScreen = key.includes("screen");
+      const current = s.tileTransforms[key] || {
+        fitMode: isScreen ? "contain" : "cover",
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        rotation: 0,
+        flipH: false,
+        flipV: false,
+      };
+      return {
+        tileTransforms: {
+          ...s.tileTransforms,
+          [key]: { ...current, ...updates },
+        },
+      };
+    }),
+  resetTileTransform: (id) =>
+    set((s) => {
+      const key = String(id);
+      const isScreen = key.includes("screen");
+      return {
+        tileTransforms: {
+          ...s.tileTransforms,
+          [key]: {
+            fitMode: isScreen ? "contain" : "cover",
+            zoom: 1,
+            panX: 0,
+            panY: 0,
+            rotation: 0,
+            flipH: false,
+            flipV: false,
+          },
+        },
+      };
+    }),
+
   setLogo: (url, show) => set((s) => ({ logoUrl: url, showLogo: show !== undefined ? show : s.showLogo })),
   setLogoPosition: (pos) => set({ logoPosition: pos }),
   setOverlay: (url) => set({ activeOverlayUrl: url }),
   setBackground: (url) => set({ activeBackgroundUrl: url }),
-  setThemeColor: (color) => set({ activeThemeColor: color }),
+  setThemeColor: (color) =>
+    set((s) => ({
+      activeThemeColor: color,
+      activeBanner: s.activeBanner ? { ...s.activeBanner, themeColor: color } : null,
+      customLayoutConfig: {
+        ...s.customLayoutConfig,
+        highlightColor: color,
+      },
+    })),
   setBanner: (banner) => set({ activeBanner: banner }),
   setTicker: (text, show) => set({ tickerText: text, showTicker: show }),
 

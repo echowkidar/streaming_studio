@@ -380,12 +380,16 @@ export const BrandPanel: React.FC = () => {
   };
 
   const colors = [
-    "#6366f1", // Indigo
-    "#06b6d4", // Cyan
-    "#10b981", // Emerald
-    "#f43f5e", // Rose
-    "#8b5cf6", // Purple
-    "#f59e0b", // Amber
+    { label: "Indigo", hex: "#6366f1" },
+    { label: "Cyan", hex: "#06b6d4" },
+    { label: "Emerald", hex: "#10b981" },
+    { label: "Rose", hex: "#f43f5e" },
+    { label: "Purple", hex: "#8b5cf6" },
+    { label: "Amber", hex: "#f59e0b" },
+    { label: "Ruby Red", hex: "#e11d48" },
+    { label: "Electric Blue", hex: "#2563eb" },
+    { label: "Lime Neon", hex: "#84cc16" },
+    { label: "Sunset Orange", hex: "#ea580c" },
   ];
 
   const backgroundPresets = [
@@ -449,22 +453,96 @@ export const BrandPanel: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto p-4 space-y-6 custom-scrollbar text-xs">
       {/* 1. Brand Color Theme */}
-      <div className="space-y-2">
-        <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-          <Palette className="w-3.5 h-3.5 text-indigo-400" />
-          Brand Theme Accent
-        </h4>
-        <div className="flex items-center gap-2">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <Palette className="w-3.5 h-3.5 text-indigo-400" />
+            Brand Theme Accent
+          </h4>
+          <span className="text-[10px] font-mono text-slate-400 uppercase">{activeThemeColor}</span>
+        </div>
+
+        {/* Color Swatches Grid */}
+        <div className="grid grid-cols-5 gap-2">
           {colors.map((c) => (
             <button
-              key={c}
-              onClick={() => setThemeColor(c)}
-              style={{ backgroundColor: c }}
-              className="w-7 h-7 rounded-full flex items-center justify-center transition-transform hover:scale-110 shadow-md relative"
+              key={c.hex}
+              onClick={() => setThemeColor(c.hex)}
+              title={`${c.label} (${c.hex})`}
+              style={{ backgroundColor: c.hex }}
+              className={cn(
+                "h-7 rounded-lg flex items-center justify-center transition-all hover:scale-105 shadow-md relative group",
+                activeThemeColor.toLowerCase() === c.hex.toLowerCase() && "ring-2 ring-white ring-offset-2 ring-offset-[#0b0b12]"
+              )}
             >
-              {activeThemeColor === c && <Check className="w-3.5 h-3.5 text-white" />}
+              {activeThemeColor.toLowerCase() === c.hex.toLowerCase() && (
+                <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+              )}
             </button>
           ))}
+        </div>
+
+        {/* Custom Hex Color Picker */}
+        <div className="flex items-center gap-2 pt-1">
+          <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-white/20 shrink-0 shadow-inner cursor-pointer">
+            <input
+              type="color"
+              value={activeThemeColor}
+              onChange={(e) => setThemeColor(e.target.value)}
+              className="absolute -inset-2 w-12 h-12 cursor-pointer opacity-100 border-0 p-0"
+              title="Pick custom color"
+            />
+          </div>
+          <div className="flex-1 flex items-center bg-white/5 border border-white/10 rounded-lg px-2 h-8">
+            <span className="text-slate-500 font-mono text-xs mr-1">#</span>
+            <input
+              type="text"
+              value={activeThemeColor.replace("#", "")}
+              onChange={(e) => {
+                const cleanHex = `#${e.target.value.replace(/[^0-9A-Fa-f]/g, "").slice(0, 6)}`;
+                setThemeColor(cleanHex);
+              }}
+              placeholder="6366f1"
+              maxLength={6}
+              className="bg-transparent text-white font-mono text-xs uppercase w-full outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Live Accent Preview Box */}
+        <div 
+          className="p-2.5 rounded-xl border bg-black/40 space-y-1.5 transition-colors"
+          style={{ borderColor: `${activeThemeColor}50` }}
+        >
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-slate-400 font-medium">Live Accent Preview</span>
+            <span className="font-bold uppercase tracking-wider" style={{ color: activeThemeColor }}>
+              ● Active on Stage
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <span 
+              className="text-[9px] font-bold px-2 py-0.5 rounded-full border shadow-sm"
+              style={{ backgroundColor: `${activeThemeColor}20`, borderColor: activeThemeColor, color: activeThemeColor }}
+            >
+              🎤 Speaker Glow
+            </span>
+            <span 
+              className="text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-wide text-white"
+              style={{ backgroundColor: activeThemeColor }}
+            >
+              HOST
+            </span>
+            <span 
+              className="text-[9px] font-medium px-2 py-0.5 rounded bg-white/10 border"
+              style={{ borderColor: `${activeThemeColor}60`, color: "#ffffff" }}
+            >
+              Ticker / Banners
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-400 leading-tight">
+            Changing this accent instantly updates speaker active borders, name tags, lower-thirds, logo watermark, and news tickers.
+          </p>
         </div>
       </div>
 

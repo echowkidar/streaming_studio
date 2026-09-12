@@ -202,9 +202,11 @@ export const StagePreview: React.FC = () => {
 
   // Helper to render individual participant tile using real WebRTC VideoTrackView
   const renderTile = (p: Participant, index: number, extraClasses = "") => {
+    const isScreen = p.role === "screen" || p.isScreen === true;
     return (
       <div key={p.id} className={cn("relative w-full h-full", extraClasses)}>
         <VideoTrackView
+          id={p.id}
           track={p.videoTrack}
           audioTrack={p.audioTrack}
           name={p.name}
@@ -212,6 +214,7 @@ export const StagePreview: React.FC = () => {
           micOn={p.micOn}
           camOn={p.camOn}
           isLocal={p.isLocal}
+          isScreen={isScreen}
           role={p.role}
         />
       </div>
@@ -657,8 +660,14 @@ export const StagePreview: React.FC = () => {
       {/* Watermark Logo Overlay */}
       {showLogo && (
         <div className={cn("absolute z-30 pointer-events-none transition-all", logoPositionClasses[logoPosition])}>
-          <div className="px-3.5 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+          <div 
+            className="px-3.5 py-1.5 rounded-xl bg-black/75 backdrop-blur-md border flex items-center gap-2 shadow-xl"
+            style={{ borderColor: `${activeThemeColor}50` }}
+          >
+            <span 
+              className="w-2 h-2 rounded-full animate-pulse shadow-sm" 
+              style={{ backgroundColor: activeThemeColor }} 
+            />
             <span className="text-xs font-bold tracking-wider text-white font-mono uppercase">{logoUrl}</span>
           </div>
         </div>
@@ -667,12 +676,12 @@ export const StagePreview: React.FC = () => {
       {/* Lower-Third Banner */}
       {activeBanner && activeBanner.isShowing && (
         <div className="absolute bottom-10 left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/75">
-            <div className="w-2" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
+          <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
+            <div className="w-2.5" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
             <div className="px-5 py-2.5">
               <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
               {activeBanner.subtitle && (
-                <p className="text-xs text-slate-300 font-medium">{activeBanner.subtitle}</p>
+                <p className="text-xs font-medium" style={{ color: activeThemeColor }}>{activeBanner.subtitle}</p>
               )}
             </div>
           </div>
@@ -682,8 +691,14 @@ export const StagePreview: React.FC = () => {
       {/* Pinned Stream Message Overlay */}
       {pinnedMessage && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 max-w-lg w-full px-4 animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="rounded-2xl p-4 bg-black/80 backdrop-blur-md border border-indigo-500/50 shadow-2xl flex items-start gap-3">
-            <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold text-xs shrink-0">
+          <div 
+            className="rounded-2xl p-4 bg-black/85 backdrop-blur-md border shadow-2xl flex items-start gap-3"
+            style={{ borderColor: `${activeThemeColor}60` }}
+          >
+            <div 
+              className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 text-white shadow-md"
+              style={{ backgroundColor: activeThemeColor }}
+            >
               {pinnedMessage.author[0]}
             </div>
             <div className="flex-1 min-w-0">
@@ -701,8 +716,17 @@ export const StagePreview: React.FC = () => {
 
       {/* Animated News Ticker Crawl */}
       {showTicker && (
-        <div className="absolute bottom-0 inset-x-0 h-8 bg-indigo-950/90 border-t border-indigo-500/30 backdrop-blur-md z-30 flex items-center overflow-hidden">
-          <div className="px-3 bg-indigo-600 text-[10px] font-bold tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg">
+        <div 
+          className="absolute bottom-0 inset-x-0 h-8 bg-black/90 border-t backdrop-blur-md z-30 flex items-center overflow-hidden"
+          style={{ 
+            borderColor: `${activeThemeColor}40`,
+            borderBottom: `2px solid ${activeThemeColor}`
+          }}
+        >
+          <div 
+            className="px-3 text-[10px] font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
+            style={{ backgroundColor: activeThemeColor }}
+          >
             LIVE UPDATES
           </div>
           <div className="flex-1 overflow-hidden relative">

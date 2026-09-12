@@ -27,7 +27,8 @@ import {
   Shield,
   Layers,
   X,
-  RefreshCw
+  RefreshCw,
+  PictureInPicture
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -61,19 +62,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const cleanStudioId = params.id.replace(/^studio-/, "");
   const roomName = `studio-${cleanStudioId}`;
-
   const {
+    room,
     isConnected,
     isConnecting,
     error: livekitError,
-    camEnabled: lkCam,
-    micEnabled: lkMic,
-    screenEnabled: lkScreen,
     liveParticipants,
-    toggleCamera,
+    micEnabled: lkMic,
+    cameraEnabled: lkCam,
+    screenEnabled: lkScreen,
     toggleMicrophone,
-    toggleScreenShare,
+    toggleCamera,
     flipCamera,
+    toggleScreenShare,
+    setAudioDevice,
+    setVideoDevice,
   } = useLiveKit({
     roomName,
     participantName: hostName,
@@ -84,6 +87,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const {
     broadcastTitle,
     setTitle,
+    activeLayout,
+    setLayout,
     isLive,
     startLive,
     endLive,
@@ -135,6 +140,40 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
     return () => clearInterval(interval);
   }, [isLive]);
+
+  // Picture-in-Picture Floating Mini Studio
+  const [isPiPActive, setIsPiPActive] = useState(false);
+
+  const handleTogglePiP = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        setIsPiPActive(false);
+        return;
+      }
+
+      const videos = Array.from(document.querySelectorAll("video"));
+      const stageVideo = videos.find((v) => (v.srcObject || v.src) && v.videoWidth > 0) || videos[0];
+      if (stageVideo && "requestPictureInPicture" in stageVideo) {
+        await stageVideo.requestPictureInPicture();
+        setIsPiPActive(true);
+        stageVideo.addEventListener("leavepictureinpicture", () => setIsPiPActive(false), { once: true });
+      } else {
+        alert("Picture-in-Picture is not supported in this browser or no active video stream.");
+      }
+    } catch (err) {
+      console.warn("PiP toggle error:", err);
+    }
+  };
+
+  // Auto-switch to presentation layout when screen sharing starts
+  useEffect(() => {
+    if (lkScreen) {
+      if (activeLayout === "four-grid" || activeLayout === "custom") {
+        setLayout("presentation");
+      }
+    }
+  }, [lkScreen]);
 
   const handleGoLive = async (destinationIds: string[]) => {
     try {
@@ -537,6 +576,27 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
         {/* Center Main Stage + Bottom Control Bar */}
         <div className="flex-1 flex flex-col bg-[#050508] p-2 sm:p-3 overflow-hidden min-w-0">
+          {/* Screen Share Active Notice / PiP helper banner */}
+          {lkScreen && (
+            <div className="mb-2 px-3 py-1.5 rounded-xl bg-indigo-950/80 border border-indigo-500/40 backdrop-blur-md flex items-center justify-between gap-2 shadow-lg animate-in fade-in slide-in-from-top-2 shrink-0">
+              <div className="flex items-center gap-2 text-xs text-indigo-200 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                <span className="truncate">
+                  <strong className="text-white">Screen sharing active.</strong> Presenting in another tab? Keep studio visible with Mini Studio:
+                </span>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleTogglePiP}
+                className="h-7 px-2.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white shrink-0 border-0 font-medium"
+              >
+                <PictureInPicture className="w-3.5 h-3.5 mr-1" />
+                {isPiPActive ? "Docked" : "Float Mini Studio"}
+              </Button>
+            </div>
+          )}
+
           {/* Video Stage Canvas */}
           <div className="flex-1 min-h-0 relative flex items-center justify-center">
             <StagePreview />
@@ -586,6 +646,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
               >
                 <MonitorUp className="w-4 h-4 mr-2" />
                 {lkScreen ? "Stop Sharing" : "Share Screen"}
+              </Button>
+
+              {/* Picture-in-Picture Floating Mini Studio Button */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleTogglePiP}
+                className={cn(
+                  "h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs sm:text-sm transition-all hidden sm:inline-flex",
+                  isPiPActive ? "border-cyan-500 bg-cyan-500/20 text-cyan-300 shadow-md shadow-cyan-500/20" : "text-slate-300 hover:text-white"
+                )}
+                title="Float Mini Studio (always-on-top window while presenting)"
+              >
+                <PictureInPicture className="w-4 h-4 sm:mr-1.5 text-cyan-400" />
+                <span className="hidden lg:inline">{isPiPActive ? "Close Mini" : "Mini Studio"}</span>
               </Button>
             </div>
 
