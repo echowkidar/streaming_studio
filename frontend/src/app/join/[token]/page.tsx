@@ -303,50 +303,50 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
             {/* Stage Status Pill (Backstage vs On Stage) */}
             <div className="flex items-center gap-2">
               {isGuestOnStage ? (
-                <div className="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold flex items-center gap-1.5 animate-pulse">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  YOU ARE LIVE ON STAGE
+                <div className="px-2.5 sm:px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-[10px] sm:text-xs font-semibold flex items-center gap-1.5 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span className="hidden xs:inline">YOU ARE </span>LIVE ON STAGE
                 </div>
               ) : (
-                <div className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-medium flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                  YOU ARE IN BACKSTAGE
+                <div className="px-2.5 sm:px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] sm:text-xs font-medium flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  BACKSTAGE
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsChatOpen(!isChatOpen)}
                 className="h-8 text-xs text-slate-300 relative"
               >
-                <MessageSquare className="w-3.5 h-3.5 mr-1 text-indigo-400" />
-                Chat
+                <MessageSquare className="w-3.5 h-3.5 sm:mr-1 text-indigo-400" />
+                <span className="hidden xs:inline">Chat</span>
               </Button>
 
-              <Button variant="danger" size="sm" onClick={handleLeave} className="h-8 text-xs">
-                <PhoneOff className="w-3.5 h-3.5 mr-1" />
-                Leave
+              <Button variant="danger" size="sm" onClick={handleLeave} className="h-8 px-2 sm:px-3 text-xs">
+                <PhoneOff className="w-3.5 h-3.5 sm:mr-1" />
+                <span className="hidden xs:inline">Leave</span>
               </Button>
             </div>
           </header>
 
           {/* Backstage Advisory Banner if guest is not on stage */}
           {!isGuestOnStage && (
-            <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-center text-xs text-amber-300/90 flex items-center justify-center gap-2 shrink-0">
+            <div className="bg-amber-500/10 border-b border-amber-500/20 px-3 py-1.5 sm:py-2 text-center text-[11px] sm:text-xs text-amber-300/90 flex items-center justify-center gap-2 shrink-0">
               <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>
-                You are currently in the <strong>Backstage</strong>. The host will bring you onto the live broadcast stage shortly.
+                You are in <strong>Backstage</strong>. The host will bring you onto the live stage shortly.
               </span>
             </div>
           )}
 
           {/* Main Stage & Layout Area */}
-          <div className="flex-1 p-3 sm:p-4 overflow-hidden flex items-center justify-center relative min-h-0">
+          <div className="flex-1 p-2 sm:p-4 overflow-hidden flex items-center justify-center relative min-h-0">
             {/* Fixed 16:9 Broadcast Stage Container */}
-            <div className="w-full h-full max-w-6xl max-h-[85vh] aspect-video rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl flex flex-col justify-center">
+            <div className="w-full aspect-video max-w-6xl max-h-full rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl flex flex-col justify-center mx-auto my-auto">
               {liveParticipants.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-slate-400 gap-3">
                   <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -392,11 +392,11 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
               {/* Guest Self-View Picture-In-Picture when Backstage */}
               {!isGuestOnStage && localParticipant && (
-                <div className="absolute bottom-4 right-4 z-20 w-44 sm:w-56 aspect-video rounded-xl overflow-hidden border-2 border-amber-500/50 shadow-2xl bg-black">
+                <div className="absolute bottom-2 right-2 sm:bottom-4 sm:right-4 z-20 w-28 xs:w-36 sm:w-52 aspect-video rounded-lg sm:rounded-xl overflow-hidden border-2 border-amber-500/50 shadow-2xl bg-black">
                   <VideoTrackView
                     track={localParticipant.videoTrack}
                     audioTrack={localParticipant.audioTrack}
-                    name={`${displayName} (You - Backstage)`}
+                    name={`${displayName} (You)`}
                     isSpeaking={localParticipant.isSpeaking}
                     micOn={lkMic}
                     camOn={lkCam}
@@ -409,53 +409,59 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
             {/* Slide-out Private Chat Drawer */}
             {isChatOpen && (
-              <div className="absolute top-0 right-0 bottom-0 w-80 bg-[#0c0c16]/98 border-l border-white/10 z-40 flex flex-col shadow-2xl backdrop-blur-xl">
-                <div className="p-3 border-b border-white/10 flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
-                    Studio Private Chat
-                  </h3>
-                  <button onClick={() => setIsChatOpen(false)} className="text-slate-400 hover:text-white">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+              <>
+                <div
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 sm:hidden"
+                  onClick={() => setIsChatOpen(false)}
+                />
+                <div className="absolute top-0 right-0 bottom-0 w-80 max-w-[85vw] bg-[#0c0c16]/98 border-l border-white/10 z-40 flex flex-col shadow-2xl backdrop-blur-xl">
+                  <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
+                      Studio Private Chat
+                    </h3>
+                    <button onClick={() => setIsChatOpen(false)} className="text-slate-400 hover:text-white p-1">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs custom-scrollbar">
-                  {chatMessages.map((msg, i) => (
-                    <div key={i} className="p-2.5 rounded-xl bg-surface border border-white/5 space-y-1">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="font-semibold text-indigo-300">{msg.sender}</span>
-                        <span className="text-slate-500 font-mono">{msg.time}</span>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs custom-scrollbar">
+                    {chatMessages.map((msg, i) => (
+                      <div key={i} className="p-2.5 rounded-xl bg-surface border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="font-semibold text-indigo-300">{msg.sender}</span>
+                          <span className="text-slate-500 font-mono">{msg.time}</span>
+                        </div>
+                        <p className="text-slate-200">{msg.text}</p>
                       </div>
-                      <p className="text-slate-200">{msg.text}</p>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
 
-                <form onSubmit={handleSendChat} className="p-2.5 border-t border-white/10 flex items-center gap-2 bg-[#09090f]">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Message host & backstage..."
-                    className="flex-1 h-8 px-3 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500"
-                  />
-                  <Button type="submit" variant="primary" size="icon" className="h-8 w-8 shrink-0 rounded-xl">
-                    <Send className="w-3.5 h-3.5" />
-                  </Button>
-                </form>
-              </div>
+                  <form onSubmit={handleSendChat} className="p-2.5 border-t border-white/10 flex items-center gap-2 bg-[#09090f]">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Message host & backstage..."
+                      className="flex-1 h-8 px-3 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <Button type="submit" variant="primary" size="icon" className="h-8 w-8 shrink-0 rounded-xl">
+                      <Send className="w-3.5 h-3.5" />
+                    </Button>
+                  </form>
+                </div>
+              </>
             )}
           </div>
 
           {/* Guest Bottom Floating Control Bar */}
-          <footer className="h-16 border-t border-white/5 bg-[#0c0c14]/95 backdrop-blur-md flex items-center justify-center gap-2 sm:gap-3 px-4 shrink-0 z-30">
+          <footer className="h-14 sm:h-16 border-t border-white/5 bg-[#0c0c14]/95 backdrop-blur-md flex items-center justify-center gap-1.5 sm:gap-3 px-3 sm:px-4 shrink-0 z-30">
             {/* Mic Toggle */}
             <Button
               variant={lkMic ? "secondary" : "danger"}
               size="sm"
               onClick={toggleMicrophone}
-              className="h-10 px-3 sm:px-4 rounded-xl font-medium"
+              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl font-medium text-xs sm:text-sm"
             >
               {lkMic ? <Mic className="w-4 h-4 sm:mr-2 text-emerald-400" /> : <MicOff className="w-4 h-4 sm:mr-2" />}
               <span className="hidden sm:inline">{lkMic ? "Mute" : "Unmute"}</span>
@@ -466,7 +472,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               variant={lkCam ? "secondary" : "danger"}
               size="sm"
               onClick={toggleCamera}
-              className="h-10 px-3 sm:px-4 rounded-xl font-medium"
+              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl font-medium text-xs sm:text-sm"
             >
               {lkCam ? <Video className="w-4 h-4 sm:mr-2 text-indigo-400" /> : <VideoOff className="w-4 h-4 sm:mr-2" />}
               <span className="hidden sm:inline">{lkCam ? "Stop Cam" : "Start Cam"}</span>
@@ -477,10 +483,10 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               variant="secondary"
               size="sm"
               onClick={flipCamera}
-              className="h-10 px-3 sm:px-4 rounded-xl font-medium text-slate-300 hover:text-white"
+              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl font-medium text-xs text-slate-300 hover:text-white"
               title="Flip Front/Rear Camera (for mobile devices)"
             >
-              <RefreshCw className="w-4 h-4 sm:mr-2 text-cyan-400" />
+              <RefreshCw className="w-4 h-4 sm:mr-1.5 text-cyan-400" />
               <span className="hidden sm:inline">Flip Cam</span>
             </Button>
 
@@ -489,7 +495,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               variant="secondary"
               size="sm"
               onClick={toggleScreenShare}
-              className={cn("h-10 px-3 sm:px-4 rounded-xl font-medium hidden md:inline-flex", lkScreen && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
+              className={cn("h-9 sm:h-10 px-3 sm:px-4 rounded-xl font-medium hidden md:inline-flex", lkScreen && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
             >
               <MonitorUp className="w-4 h-4 mr-2" />
               {lkScreen ? "Stop Sharing" : "Share Screen"}
@@ -500,7 +506,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               variant="danger"
               size="sm"
               onClick={handleLeave}
-              className="h-10 px-3 sm:px-4 rounded-xl ml-2 font-medium"
+              className="h-9 sm:h-10 px-2.5 sm:px-4 rounded-xl ml-1 sm:ml-2 font-medium text-xs sm:text-sm"
             >
               <PhoneOff className="w-4 h-4 sm:mr-1.5" />
               <span>Leave</span>

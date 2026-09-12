@@ -25,7 +25,9 @@ import {
   ArrowLeft,
   Volume2,
   Shield,
-  Layers
+  Layers,
+  X,
+  RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -71,6 +73,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
+    flipCamera,
   } = useLiveKit({
     roomName,
     participantName: hostName,
@@ -95,6 +98,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   } = useStudioStore();
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>("chat");
+  const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIsoModalOpen, setIsIsoModalOpen] = useState(false);
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
@@ -180,43 +184,179 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
+  const renderParticipantsList = () => (
+    <>
+      <div className="p-3 border-b border-white/5 flex items-center justify-between shrink-0 bg-[#0c0c14]">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5 text-indigo-400" />
+          Participants ({participants.length})
+        </h3>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" onClick={handleCopyInvite} className="h-7 px-2 text-xs text-indigo-400 hover:text-indigo-300">
+            <Share2 className="w-3 h-3 mr-1" />
+            {copiedLink ? "Copied!" : "Invite"}
+          </Button>
+          {isParticipantsOpen && (
+            <button
+              onClick={() => setIsParticipantsOpen(false)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 lg:hidden"
+              title="Close panel"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
+        {/* Section: On Stage */}
+        <div>
+          <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+            <span>On Stage ({onStageParticipants.length})</span>
+          </div>
+          <div className="space-y-1.5">
+            {onStageParticipants.map((p) => (
+              <div
+                key={p.id}
+                className="p-2 rounded-xl bg-surface border border-white/5 flex items-center justify-between group hover:border-white/15 transition-all"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold text-xs shrink-0">
+                    {p.isScreen ? <MonitorUp className="w-4 h-4" /> : p.name[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{p.name}</div>
+                    <div className="text-[10px] text-slate-500 capitalize">{p.role}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
+                  <button
+                    onClick={() => moveToBackstage(p.id)}
+                    className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
+                    title="Remove to backstage"
+                  >
+                    Down
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Section: Backstage */}
+        <div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+            Backstage ({backstageParticipants.length})
+          </div>
+          <div className="space-y-1.5">
+            {backstageParticipants.length === 0 ? (
+              <p className="text-[11px] text-slate-500 italic">No one backstage</p>
+            ) : (
+              backstageParticipants.map((p) => (
+                <div
+                  key={p.id}
+                  className="p-2 rounded-xl bg-surface/50 border border-white/5 flex items-center justify-between group hover:border-white/10"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 flex items-center justify-center font-bold text-xs shrink-0">
+                      {p.name[0]}
+                    </div>
+                    <span className="text-xs text-slate-300 truncate">{p.name}</span>
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => moveToStage(p.id)}
+                  >
+                    Add to Stage
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Section: Green Room */}
+        <div>
+          <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+            <span>Green Room ({greenRoomParticipants.length})</span>
+            <span className="text-[9px] text-slate-500">Device Checks</span>
+          </div>
+          <div className="space-y-1.5">
+            {greenRoomParticipants.map((p) => (
+              <div
+                key={p.id}
+                className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold text-xs shrink-0">
+                    {p.name[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-white truncate">{p.name}</div>
+                    <div className="text-[9px] text-emerald-400">Ready to admit</div>
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => moveToStage(p.id)}
+                >
+                  Admit
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="h-screen w-screen flex flex-col bg-[#07070b] overflow-hidden text-slate-200 select-none">
       {/* ─── Top Bar ────────────────────────────────────────── */}
-      <header className="h-14 border-b border-white/5 flex items-center justify-between px-4 bg-[#0c0c14]/90 backdrop-blur-md z-30">
-        <div className="flex items-center gap-3">
+      <header className="h-14 border-b border-white/5 flex items-center justify-between px-3 sm:px-4 bg-[#0c0c14]/90 backdrop-blur-md z-30 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Button
             variant="ghost"
             size="icon"
             onClick={handleBack}
-            className="h-8 w-8 rounded-xl text-slate-400 hover:text-white hover:bg-white/10"
+            className="h-8 w-8 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 shrink-0"
             title="Go Back"
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
             <input
               type="text"
               value={broadcastTitle}
               onChange={(e) => setTitle(e.target.value)}
-              className="text-xs font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-indigo-500 focus:outline-none px-1 py-0.5 max-w-[240px] truncate"
+              className="text-xs font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-indigo-500 focus:outline-none px-1 py-0.5 max-w-[100px] xs:max-w-[160px] sm:max-w-[220px] truncate"
             />
             {isLive ? (
-              <Badge variant="live" size="sm" className="font-mono flex items-center gap-1.5">
+              <Badge variant="live" size="sm" className="font-mono flex items-center gap-1.5 shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                LIVE {Math.floor(liveDurationSec / 60).toString().padStart(2, '0')}:{(liveDurationSec % 60).toString().padStart(2, '0')}
+                <span className="hidden xs:inline">LIVE </span>{Math.floor(liveDurationSec / 60).toString().padStart(2, '0')}:{(liveDurationSec % 60).toString().padStart(2, '0')}
               </Badge>
             ) : (
-              <Badge variant="neutral" size="sm">STUDIO READY</Badge>
+              <Badge variant="neutral" size="sm" className="shrink-0 text-[10px] sm:text-xs">READY</Badge>
             )}
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400 pl-2 border-l border-white/10">
-            <span className="flex items-center gap-1">
+          <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400 pl-2 border-l border-white/10 shrink-0">
+            <button
+              onClick={() => setIsParticipantsOpen(true)}
+              className="flex items-center gap-1 hover:text-white transition-colors"
+              title="Click to view participants"
+            >
               <Users className="w-3 h-3 text-slate-400" />
               {isLive ? `${viewerCount.toLocaleString()} Viewers` : `${participants.length} in Studio`}
-            </span>
+            </button>
             <span>•</span>
             {isConnected ? (
               <span className="flex items-center gap-1 text-emerald-400">
@@ -226,7 +366,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             ) : isConnecting ? (
               <span className="flex items-center gap-1 text-amber-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
-                Connecting WebRTC...
+                Connecting...
               </span>
             ) : (
               <span className="flex items-center gap-1 text-rose-400" title={livekitError || undefined}>
@@ -237,13 +377,13 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Pre-record Live Stream Scheduler Button */}
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setIsSchedulerOpen(true)}
-            className="h-8 rounded-full text-xs text-slate-300 hidden sm:flex items-center"
+            className="h-8 rounded-full text-xs text-slate-300 hidden md:flex items-center"
           >
             <Calendar className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
             Pre-record
@@ -254,10 +394,10 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             variant="secondary"
             size="sm"
             onClick={() => setIsIsoModalOpen(true)}
-            className="h-8 rounded-full text-xs font-medium"
+            className="h-8 rounded-full text-xs font-medium hidden sm:flex items-center"
           >
             <HardDrive className="w-3.5 h-3.5 mr-1.5 text-indigo-400" />
-            ISO Tracks
+            ISO
           </Button>
 
           {/* Cloud Record Button */}
@@ -265,26 +405,37 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             variant="secondary"
             size="sm"
             onClick={() => (isRecording ? stopRecord() : startRecord())}
-            className={cn("h-8 rounded-full text-xs font-medium transition-all", isRecording && "text-rose-400 border-rose-500/40 bg-rose-500/10")}
+            className={cn("h-8 px-2.5 sm:px-3 rounded-full text-xs font-medium transition-all", isRecording && "text-rose-400 border-rose-500/40 bg-rose-500/10")}
           >
-            <CircleDot className={cn("w-3.5 h-3.5 mr-1.5", isRecording && "animate-pulse fill-rose-500")} />
-            {isRecording ? "REC 00:14:32" : "Record"}
+            <CircleDot className={cn("w-3.5 h-3.5 sm:mr-1.5", isRecording && "animate-pulse fill-rose-500")} />
+            <span className="hidden sm:inline">{isRecording ? "REC 00:14:32" : "Record"}</span>
           </Button>
 
+          {/* Mobile Participants Trigger Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsParticipantsOpen(!isParticipantsOpen)}
+            className="h-8 px-2 rounded-xl text-slate-300 hover:text-white lg:hidden"
+            title="Participants & Green Room"
+          >
+            <Users className="w-4 h-4 text-indigo-400" />
+            <span className="ml-1 text-[11px] font-bold text-indigo-300">{participants.length}</span>
+          </Button>
 
           {/* Go Live Button */}
           <Button
             variant={isLive ? "danger" : "primary"}
             size="sm"
             onClick={() => (isLive ? handleEndBroadcast() : setIsGoLiveModalOpen(true))}
-            className={cn("h-8 px-5 rounded-full font-bold text-xs tracking-wider", !isLive && "shadow-lg shadow-indigo-500/20")}
+            className={cn("h-8 px-3 sm:px-5 rounded-full font-bold text-xs tracking-wider shrink-0", !isLive && "shadow-lg shadow-indigo-500/20")}
           >
             {isLive ? (
-              "END BROADCAST"
+              "END"
             ) : (
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1">
                 <Radio className="w-3.5 h-3.5" />
-                GO LIVE
+                <span className="hidden xs:inline">GO </span>LIVE
               </span>
             )}
           </Button>
@@ -292,9 +443,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       </header>
 
       {/* ─── Main Workspace ─────────────────────────────────── */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Left Vertical Icon Bar */}
-        <div className="w-14 border-r border-white/5 bg-[#090910] flex flex-col items-center py-3 gap-2 z-20 shrink-0">
+        <div className="w-12 sm:w-14 border-r border-white/5 bg-[#090910] flex flex-col items-center py-2 sm:py-3 gap-1.5 sm:gap-2 z-30 shrink-0">
           {[
             { id: "chat" as const, icon: MessageSquare, label: "Chat" },
             { id: "brand" as const, icon: Palette, label: "Brand" },
@@ -332,16 +483,46 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        {/* Tab Slide-Out Drawer Panel */}
+        {/* Tab Slide-Out Drawer Panel (Desktop Docked / Mobile Overlay) */}
+        {activeTab && (
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-sm z-40 lg:hidden animate-in fade-in duration-200"
+            onClick={() => setActiveTab(null)}
+          />
+        )}
+
         <AnimatePresence>
           {activeTab && (
             <motion.div
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 340, opacity: 1 }}
+              animate={{ width: "auto", opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="border-r border-white/5 bg-[#0b0b12] overflow-hidden flex flex-col z-10 shrink-0 shadow-2xl"
+              className={cn(
+                "bg-[#0b0b12] overflow-hidden flex flex-col shadow-2xl shrink-0",
+                // Desktop: Docked side-by-side
+                "lg:relative lg:w-80 lg:border-r lg:border-white/5 lg:z-10",
+                // Mobile: Slide-over overlay modal next to the 48/56px icon bar
+                "fixed inset-y-0 left-12 sm:left-14 z-50 w-80 max-w-[calc(100vw-3.25rem)] border-r border-white/10"
+              )}
             >
+              {/* Mobile Close Bar */}
+              <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/10 lg:hidden bg-[#090910] shrink-0">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  {activeTab === "chat" && "Studio Chat"}
+                  {activeTab === "brand" && "Brand Kit"}
+                  {activeTab === "media" && "Media Library"}
+                  {activeTab === "layout" && "Studio Layouts"}
+                </span>
+                <button
+                  onClick={() => setActiveTab(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+                  title="Close drawer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
               {activeTab === "chat" && <ChatPanel />}
               {activeTab === "brand" && <BrandPanel />}
               {activeTab === "media" && <MediaPanel />}
@@ -355,202 +536,125 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         </AnimatePresence>
 
         {/* Center Main Stage + Bottom Control Bar */}
-        <div className="flex-1 flex flex-col bg-[#050508] p-3 overflow-hidden min-w-0">
+        <div className="flex-1 flex flex-col bg-[#050508] p-2 sm:p-3 overflow-hidden min-w-0">
           {/* Video Stage Canvas */}
-          <div className="flex-1 min-h-0 relative">
+          <div className="flex-1 min-h-0 relative flex items-center justify-center">
             <StagePreview />
           </div>
 
           {/* Bottom Floating Control Bar */}
-          <div className="h-16 mt-3 rounded-2xl bg-[#0c0c14]/95 border border-white/10 backdrop-blur-xl flex items-center justify-between px-6 shrink-0 shadow-2xl">
+          <div className="h-14 sm:h-16 mt-2 sm:mt-3 rounded-xl sm:rounded-2xl bg-[#0c0c14]/95 border border-white/10 backdrop-blur-xl flex items-center justify-between px-2 sm:px-6 shrink-0 shadow-2xl overflow-x-auto custom-scrollbar">
             {/* Device Toggles */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <Button
                 variant={lkMic ? "secondary" : "danger"}
                 size="sm"
                 onClick={toggleMicrophone}
-                className="h-10 px-3.5 rounded-xl font-medium"
+                className="h-9 sm:h-10 px-2.5 sm:px-3.5 rounded-xl font-medium text-xs sm:text-sm"
               >
-                {lkMic ? <Mic className="w-4 h-4 mr-2 text-emerald-400" /> : <MicOff className="w-4 h-4 mr-2" />}
-                {lkMic ? "Mute" : "Unmute"}
+                {lkMic ? <Mic className="w-4 h-4 sm:mr-2 text-emerald-400" /> : <MicOff className="w-4 h-4 sm:mr-2" />}
+                <span className="hidden sm:inline">{lkMic ? "Mute" : "Unmute"}</span>
               </Button>
 
               <Button
                 variant={lkCam ? "secondary" : "danger"}
                 size="sm"
                 onClick={toggleCamera}
-                className="h-10 px-3.5 rounded-xl font-medium"
+                className="h-9 sm:h-10 px-2.5 sm:px-3.5 rounded-xl font-medium text-xs sm:text-sm"
               >
-                {lkCam ? <Video className="w-4 h-4 mr-2 text-indigo-400" /> : <VideoOff className="w-4 h-4 mr-2" />}
-                {lkCam ? "Stop Cam" : "Start Cam"}
+                {lkCam ? <Video className="w-4 h-4 sm:mr-2 text-indigo-400" /> : <VideoOff className="w-4 h-4 sm:mr-2" />}
+                <span className="hidden sm:inline">{lkCam ? "Stop Cam" : "Start Cam"}</span>
+              </Button>
+
+              {/* Mobile Phone Front / Rear Camera Flip */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={flipCamera}
+                className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs text-slate-300 hover:text-white"
+                title="Flip Front/Rear Camera (for smartphones)"
+              >
+                <RefreshCw className="w-4 h-4 sm:mr-1.5 text-cyan-400" />
+                <span className="hidden md:inline">Flip Cam</span>
               </Button>
 
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={toggleScreenShare}
-                className={cn("h-10 px-3.5 rounded-xl font-medium transition-all", lkScreen && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
+                className={cn("h-9 sm:h-10 px-2.5 sm:px-3.5 rounded-xl font-medium text-xs sm:text-sm transition-all hidden md:inline-flex", lkScreen && "border-indigo-500 bg-indigo-500/20 text-indigo-300")}
               >
                 <MonitorUp className="w-4 h-4 mr-2" />
                 {lkScreen ? "Stop Sharing" : "Share Screen"}
               </Button>
             </div>
 
-            {/* Quick Layout & Settings */}
-            <div className="flex items-center gap-2">
+            {/* Quick Layout, Guests & Settings */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Mobile Guests Drawer Trigger */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsParticipantsOpen(!isParticipantsOpen)}
+                className="h-9 sm:h-10 px-2.5 rounded-xl text-xs text-slate-300 hover:text-white lg:hidden"
+                title="View Participants"
+              >
+                <Users className="w-4 h-4 text-indigo-400 sm:mr-1.5" />
+                <span className="hidden sm:inline">Guests</span>
+                <span className="text-[10px] font-bold text-indigo-300 ml-1">({participants.length})</span>
+              </Button>
+
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setActiveTab(activeTab === "layout" ? null : "layout")}
-                className="h-10 rounded-xl text-xs text-slate-300"
+                className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs text-slate-300"
               >
-                <LayoutGrid className="w-4 h-4 mr-1.5" />
-                Layouts
+                <LayoutGrid className="w-4 h-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Layouts</span>
               </Button>
 
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsSettingsOpen(true)}
-                className="h-10 rounded-xl text-xs text-slate-300"
+                className="h-9 sm:h-10 px-2 sm:px-3 rounded-xl text-xs text-slate-300"
               >
-                <Settings2 className="w-4 h-4 mr-1.5" />
-                Cam/Mic Test
+                <Settings2 className="w-4 h-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Cam/Mic</span>
               </Button>
 
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleBack}
-                className="h-10 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
                 title="Exit Studio"
               >
-                <PhoneOff className="w-4 h-4 mr-1.5" />
-                Exit
+                <PhoneOff className="w-4 h-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Exit</span>
               </Button>
             </div>
           </div>
         </div>
 
-        {/* ─── Right Sidebar: Participants & Green Room ───────── */}
-        <div className="w-72 border-l border-white/5 bg-[#0a0a10] flex flex-col z-20 shrink-0">
-          <div className="p-3 border-b border-white/5 flex items-center justify-between">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-400" />
-              Participants ({participants.length})
-            </h3>
-            <Button variant="ghost" size="sm" onClick={handleCopyInvite} className="h-7 text-xs text-indigo-400 hover:text-indigo-300">
-              <Share2 className="w-3 h-3 mr-1" />
-              {copiedLink ? "Copied!" : "Invite"}
-            </Button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
-            {/* Section: On Stage */}
-            <div>
-              <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                <span>On Stage ({onStageParticipants.length})</span>
-              </div>
-              <div className="space-y-1.5">
-                {onStageParticipants.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-2 rounded-xl bg-surface border border-white/5 flex items-center justify-between group hover:border-white/15 transition-all"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold text-xs shrink-0">
-                        {p.isScreen ? <MonitorUp className="w-4 h-4" /> : p.name[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-white truncate">{p.name}</div>
-                        <div className="text-[10px] text-slate-500 capitalize">{p.role}</div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
-                      <button
-                        onClick={() => moveToBackstage(p.id)}
-                        className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
-                        title="Remove to backstage"
-                      >
-                        Down
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section: Backstage */}
-            <div>
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-                Backstage ({backstageParticipants.length})
-              </div>
-              <div className="space-y-1.5">
-                {backstageParticipants.length === 0 ? (
-                  <p className="text-[11px] text-slate-500 italic">No one backstage</p>
-                ) : (
-                  backstageParticipants.map((p) => (
-                    <div
-                      key={p.id}
-                      className="p-2 rounded-xl bg-surface/50 border border-white/5 flex items-center justify-between group hover:border-white/10"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 flex items-center justify-center font-bold text-xs shrink-0">
-                          {p.name[0]}
-                        </div>
-                        <span className="text-xs text-slate-300 truncate">{p.name}</span>
-                      </div>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="h-6 px-2 text-[10px]"
-                        onClick={() => moveToStage(p.id)}
-                      >
-                        Add to Stage
-                      </Button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Section: Green Room */}
-            <div>
-              <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                <span>Green Room ({greenRoomParticipants.length})</span>
-                <span className="text-[9px] text-slate-500">Device Checks</span>
-              </div>
-              <div className="space-y-1.5">
-                {greenRoomParticipants.map((p) => (
-                  <div
-                    key={p.id}
-                    className="p-2 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-bold text-xs shrink-0">
-                        {p.name[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium text-white truncate">{p.name}</div>
-                        <div className="text-[9px] text-emerald-400">Ready to admit</div>
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="h-6 px-2 text-[10px]"
-                      onClick={() => moveToStage(p.id)}
-                    >
-                      Admit
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+        {/* ─── Right Sidebar: Participants & Green Room (Desktop Docked) ───────── */}
+        <div className="hidden lg:flex w-72 border-l border-white/5 bg-[#0a0a10] flex-col z-20 shrink-0">
+          {renderParticipantsList()}
         </div>
+
+        {/* ─── Right Sidebar: Participants & Green Room (Mobile Slide-Over Modal) ───────── */}
+        {isParticipantsOpen && (
+          <div
+            className="fixed inset-0 bg-black/75 backdrop-blur-sm z-40 lg:hidden animate-in fade-in duration-200"
+            onClick={() => setIsParticipantsOpen(false)}
+          />
+        )}
+        {isParticipantsOpen && (
+          <div className="fixed inset-y-0 right-0 z-50 w-80 max-w-[85vw] bg-[#0c0c14] border-l border-white/10 shadow-2xl flex flex-col lg:hidden animate-in slide-in-from-right duration-200">
+            {renderParticipantsList()}
+          </div>
+        )}
       </div>
 
       {/* Device Settings Modal */}

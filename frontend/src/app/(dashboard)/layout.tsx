@@ -50,7 +50,7 @@ export default function DashboardLayout({
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none -z-10" />
         
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-6 lg:p-8 custom-scrollbar">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 custom-scrollbar">
           {children}
         </main>
       </div>

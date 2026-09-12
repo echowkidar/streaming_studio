@@ -5,11 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
+import { useUIStore } from "@/stores/ui.store";
 import { cn } from "@/lib/utils";
 import { 
   Home, Video, Radio, Film, Send, Palette, 
   FolderOpen, Users, Sparkles, FileText, BarChart3,
-  UserPlus, Settings, Shield, ChevronLeft, ChevronRight, LogOut
+  UserPlus, Settings, Shield, ChevronLeft, ChevronRight, LogOut, X
 } from "lucide-react";
 
 const navigation = [
@@ -35,6 +36,7 @@ const secondaryNavigation = [
 export default function Sidebar() {
   const router = useRouter();
   const { logout } = useAuthStore();
+  const { isMobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const pathname = usePathname();
 
@@ -44,22 +46,47 @@ export default function Sidebar() {
   };
 
   return (
-    <div 
-      className={cn(
-        "flex flex-col h-screen glass-panel border-r border-white/5 transition-all duration-300 relative z-20",
-        isCollapsed ? "w-[72px]" : "w-[260px]"
+    <>
+      {/* Mobile Drawer Backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/75 backdrop-blur-sm z-40 md:hidden animate-in fade-in duration-200"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
       )}
-    >
-      <div className="h-16 flex items-center px-4 border-b border-white/5 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-gradient-primary flex items-center justify-center shrink-0">
-          <span className="text-white font-bold text-xl">L</span>
-        </div>
-        {!isCollapsed && (
-          <span className="ml-3 font-bold text-lg text-white tracking-tight truncate">
-            LiveStudio
-          </span>
+
+      <div 
+        className={cn(
+          "flex flex-col h-screen glass-panel border-r border-white/5 transition-all duration-300 z-50",
+          // On Desktop
+          "hidden md:flex relative shrink-0",
+          isCollapsed ? "w-[72px]" : "w-[260px]",
+          // On Mobile
+          isMobileSidebarOpen && "fixed inset-y-0 left-0 flex w-[280px] bg-[#0c0c14] shadow-2xl"
         )}
-      </div>
+      >
+        <div className="h-16 flex items-center justify-between px-4 border-b border-white/5 shrink-0">
+          <div className="flex items-center">
+            <div className="w-8 h-8 rounded-lg bg-gradient-primary flex items-center justify-center shrink-0">
+              <span className="text-white font-bold text-xl">L</span>
+            </div>
+            {(!isCollapsed || isMobileSidebarOpen) && (
+              <span className="ml-3 font-bold text-lg text-white tracking-tight truncate">
+                LiveStudio
+              </span>
+            )}
+          </div>
+
+          {/* Close button on mobile */}
+          {isMobileSidebarOpen && (
+            <button
+              onClick={() => setMobileSidebarOpen(false)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 md:hidden"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
 
       <div className="flex-1 overflow-y-auto py-4 custom-scrollbar flex flex-col gap-1 px-3">
         {navigation.map((item) => {
@@ -68,6 +95,7 @@ export default function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
+              onClick={() => setMobileSidebarOpen(false)}
               className={cn(
                 "group flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-all relative overflow-hidden",
                 isActive 
@@ -91,6 +119,7 @@ export default function Sidebar() {
           <Link
             key={item.name}
             href={item.href}
+            onClick={() => setMobileSidebarOpen(false)}
             className={cn(
               "group flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
               "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -117,12 +146,13 @@ export default function Sidebar() {
         </button>
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full flex items-center justify-center p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+          className="w-full hidden md:flex items-center justify-center p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {isCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
         </button>
       </div>
     </div>
+    </>
   );
 }

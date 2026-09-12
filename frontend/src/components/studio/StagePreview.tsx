@@ -319,7 +319,7 @@ export const StagePreview: React.FC = () => {
 
   return (
     <div
-      className="relative w-full h-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center"
+      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto"
       style={{
         backgroundImage: activeBackgroundUrl ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
