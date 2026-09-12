@@ -8,13 +8,17 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
+import { useAuthStore } from "@/stores/auth.store";
 
 export default function StudiosPage() {
+  const { user } = useAuthStore();
+  const userSlug = user?.name ? user.name.toLowerCase().replace(/[^a-z0-9]/g, "") : (user?.email ? user.email.split("@")[0].replace(/[^a-z0-9]/g, "") : "live");
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newStudioName, setNewStudioName] = useState("");
   const [studios, setStudios] = useState([
     {
-      id: "studio-main",
+      id: `studio-${userSlug}-main`,
       name: "Main Keynote & Townhall Studio",
       description: "Default studio configured for 1080p60 production with multi-guest layout.",
       layout: "Speaker + Large Grid",
@@ -24,7 +28,7 @@ export default function StudiosPage() {
       isDefault: true,
     },
     {
-      id: "studio-podcast",
+      id: `studio-${userSlug}-podcast`,
       name: "Weekly Video Podcast",
       description: "Optimized side-by-side layout with lower-third templates and intro clips.",
       layout: "Podcast Split Screen",
@@ -34,7 +38,7 @@ export default function StudiosPage() {
       isDefault: false,
     },
     {
-      id: "studio-qna",
+      id: `studio-${userSlug}-qna`,
       name: "Community AMA & Live Q&A",
       description: "Screen share + unified social chat overlay for viewer engagement.",
       layout: "Presentation + Chat",
@@ -51,7 +55,7 @@ export default function StudiosPage() {
     setStudios([
       ...studios,
       {
-        id: `studio-${Date.now()}`,
+        id: `studio-${userSlug}-${Date.now().toString(36)}`,
         name: newStudioName,
         description: "Custom reusable production studio.",
         layout: "Two Equal Participants",

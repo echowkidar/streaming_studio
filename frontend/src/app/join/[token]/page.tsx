@@ -43,10 +43,9 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
   const previewVideoRef = useRef<HTMLVideoElement>(null);
 
-  // Normalize room name from token parameter
-  const roomName = params.token.startsWith("studio-")
-    ? params.token
-    : `studio-${params.token.replace("guest-invite-token-", "")}`;
+  // Normalize room name cleanly (strips any redundant repeated studio- prefixes)
+  const cleanTokenId = params.token.replace(/^(studio-)+/, "").replace(/^guest-invite-token-/, "");
+  const roomName = `studio-${cleanTokenId}`;
 
   // LiveKit hook activated when guest enters stage
   const {

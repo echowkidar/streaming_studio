@@ -47,6 +47,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const { user } = useAuthStore();
   const hostName = user?.name || "Host";
 
+  const cleanStudioId = params.id.replace(/^studio-/, "");
+  const roomName = `studio-${cleanStudioId}`;
+
   const {
     isConnected,
     isConnecting,
@@ -59,7 +62,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     toggleMicrophone,
     toggleScreenShare,
   } = useLiveKit({
-    roomName: `studio-${params.id}`,
+    roomName,
     participantName: hostName,
     role: "HOST",
     autoConnect: true,
@@ -127,7 +130,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           destinationIds,
-          roomName: `studio-${params.id}`,
+          roomName,
         }),
       });
       startLive();
@@ -162,7 +165,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const greenRoomParticipants = participants.filter((p) => p.status === "GREEN_ROOM");
 
   const handleCopyInvite = () => {
-    const inviteUrl = `${window.location.origin}/join/studio-${params.id}`;
+    const inviteUrl = `${window.location.origin}/join/${roomName}`;
     navigator.clipboard.writeText(inviteUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);

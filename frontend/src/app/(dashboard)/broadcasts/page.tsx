@@ -7,8 +7,14 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Tabs } from "@/components/ui/Tabs";
 
+import { useAuthStore } from "@/stores/auth.store";
+
 export default function BroadcastsPage() {
+  const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState("all");
+
+  const userSlug = user?.name ? user.name.toLowerCase().replace(/[^a-z0-9]/g, "") : (user?.email ? user.email.split("@")[0].replace(/[^a-z0-9]/g, "") : "live");
+  const userStudioId = `studio-${userSlug}`;
 
   const broadcasts = [
     {
@@ -69,7 +75,7 @@ export default function BroadcastsPage() {
             Track active live streams, view scheduled events, and review previous broadcast archives.
           </p>
         </div>
-        <Link href="/studio/studio-main">
+        <Link href={`/studio/${userStudioId}`}>
           <Button variant="primary">
             <Radio className="w-4 h-4 mr-2" />
             Go Live Now
@@ -124,7 +130,7 @@ export default function BroadcastsPage() {
 
               <div className="flex items-center gap-3 self-end md:self-center">
                 {b.status === "LIVE" || b.status === "RECORDING" ? (
-                  <Link href={`/studio/studio-main`}>
+                  <Link href={`/studio/broadcast-${b.id}-${userSlug}`}>
                     <Button variant="primary" size="sm">
                       Enter Studio
                       <ArrowRight className="w-4 h-4 ml-1.5" />

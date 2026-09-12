@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { formatDate } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth.store";
@@ -11,6 +12,8 @@ import {
 export default function DashboardHome() {
   const { user } = useAuthStore();
   const displayName = user?.name ? user.name.split(" ")[0] : "Creator";
+  const userSlug = user?.name ? user.name.toLowerCase().replace(/[^a-z0-9]/g, "") : (user?.email ? user.email.split("@")[0].replace(/[^a-z0-9]/g, "") : "live");
+  const userStudioId = `studio-${userSlug}`;
 
   const stats = [
     { label: "Broadcasts", value: "24", icon: Radio, color: "text-indigo-400", bg: "bg-indigo-500/10" },
@@ -29,14 +32,18 @@ export default function DashboardHome() {
           <p className="text-slate-400">{formatDate(new Date())}</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary">
-            <Plus className="w-4 h-4 mr-2" />
-            New Studio
-          </Button>
-          <Button variant="primary">
-            <Radio className="w-4 h-4 mr-2" />
-            Go Live Now
-          </Button>
+          <Link href="/studios">
+            <Button variant="secondary">
+              <Plus className="w-4 h-4 mr-2" />
+              New Studio
+            </Button>
+          </Link>
+          <Link href={`/studio/${userStudioId}`}>
+            <Button variant="primary">
+              <Radio className="w-4 h-4 mr-2" />
+              Go Live Now
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -80,7 +87,9 @@ export default function DashboardHome() {
                   <h3 className="text-lg font-semibold text-white mb-1">Product Launch Keynote</h3>
                   <p className="text-sm text-slate-400 mb-3">Started 45 mins ago • 1,204 viewers</p>
                   <div className="flex gap-2">
-                    <Button variant="primary" size="sm">Enter Studio</Button>
+                    <Link href={`/studio/${userStudioId}`}>
+                      <Button variant="primary" size="sm">Enter Studio</Button>
+                    </Link>
                     <Button variant="secondary" size="sm">View Stats</Button>
                   </div>
                 </div>
@@ -130,7 +139,9 @@ export default function DashboardHome() {
                 <div>
                   <h4 className="font-medium text-white">Marketing Webinar</h4>
                   <p className="text-xs text-slate-400 mb-2">2:00 PM • YouTube, LinkedIn</p>
-                  <Button variant="secondary" size="sm" className="w-full text-xs h-7">Enter Studio</Button>
+                  <Link href={`/studio/${userStudioId}-webinar`}>
+                    <Button variant="secondary" size="sm" className="w-full text-xs h-7">Enter Studio</Button>
+                  </Link>
                 </div>
               </div>
               <div className="flex gap-4 items-start opacity-75">
