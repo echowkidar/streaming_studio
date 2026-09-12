@@ -14,6 +14,7 @@ import participantRoutes from './routes/participant.routes';
 import brandRoutes from './routes/brand.routes';
 import adminRoutes from './routes/admin.routes';
 import livekitRoutes from './routes/livekit.routes';
+import webinarRoutes from './routes/webinar.routes';
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use('/api/participants', participantRoutes);
 app.use('/api/brand', brandRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/livekit', livekitRoutes);
+app.use('/api/webinars', webinarRoutes);
 
 // Global Error Handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {

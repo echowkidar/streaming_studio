@@ -40,3 +40,7 @@ transcodingWorker.on('failed', (job: Job<TranscodingJobData> | undefined, err: E
     console.error(`Job failed with ${err.message}`);
   }
 });
+
+export * from './transcription.worker';
+export * from './ai-clip.worker';
+

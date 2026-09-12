@@ -37,6 +37,7 @@ import { MediaPanel } from "@/components/studio/MediaPanel";
 import { DeviceSettingsModal } from "@/components/studio/DeviceSettingsModal";
 import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager";
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
+import { GoLiveModal } from "@/components/studio/GoLiveModal";
 import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
@@ -84,7 +85,50 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isIsoModalOpen, setIsIsoModalOpen] = useState(false);
   const [isSchedulerOpen, setIsSchedulerOpen] = useState(false);
+  const [isGoLiveModalOpen, setIsGoLiveModalOpen] = useState(false);
+  const [liveDurationSec, setLiveDurationSec] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Live timer effect
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isLive) {
+      interval = setInterval(() => setLiveDurationSec((s) => s + 1), 1000);
+    } else {
+      setLiveDurationSec(0);
+    }
+    return () => clearInterval(interval);
+  }, [isLive]);
+
+  const handleGoLive = async (destinationIds: string[]) => {
+    try {
+      await fetch(`/api/broadcasts/${params.id}/stream/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destinationIds,
+          roomName: `studio-${params.id}`,
+        }),
+      });
+      startLive();
+    } catch (e) {
+      console.error("Failed to start RTMP stream:", e);
+      startLive();
+    }
+  };
+
+  const handleEndBroadcast = async () => {
+    if (!confirm("Are you sure you want to end this live broadcast?")) return;
+    try {
+      await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
+        method: "POST",
+      });
+    } catch (e) {
+      console.error("Failed to stop stream:", e);
+    } finally {
+      endLive();
+    }
+  };
 
   // Sync LiveKit participants to studio store
   useEffect(() => {
@@ -123,7 +167,10 @@ export default function StudioPage({ params }: { params: { id: string } }) {
               className="text-xs font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-indigo-500 focus:outline-none px-1 py-0.5 max-w-[240px] truncate"
             />
             {isLive ? (
-              <Badge variant="live" size="sm">LIVE</Badge>
+              <Badge variant="live" size="sm" className="font-mono flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                LIVE {Math.floor(liveDurationSec / 60).toString().padStart(2, '0')}:{(liveDurationSec % 60).toString().padStart(2, '0')}
+              </Badge>
             ) : (
               <Badge variant="neutral" size="sm">STUDIO READY</Badge>
             )}
@@ -193,7 +240,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           <Button
             variant={isLive ? "danger" : "primary"}
             size="sm"
-            onClick={() => (isLive ? endLive() : startLive())}
+            onClick={() => (isLive ? handleEndBroadcast() : setIsGoLiveModalOpen(true))}
             className={cn("h-8 px-5 rounded-full font-bold text-xs tracking-wider", !isLive && "shadow-lg shadow-indigo-500/20")}
           >
             {isLive ? (
@@ -478,6 +525,14 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
       {/* Pre-recorded Live Broadcast Scheduler Modal */}
       <PreRecordedSchedulerModal isOpen={isSchedulerOpen} onClose={() => setIsSchedulerOpen(false)} />
+
+      {/* Go Live Streaming Destinations Modal */}
+      <GoLiveModal
+        isOpen={isGoLiveModalOpen}
+        onClose={() => setIsGoLiveModalOpen(false)}
+        broadcastTitle={broadcastTitle}
+        onGoLive={handleGoLive}
+      />
     </div>
   );
 }
