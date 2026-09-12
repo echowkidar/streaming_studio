@@ -217,24 +217,24 @@ export function VideoTrackView({
       } : {}}
       className={cn(
         "relative w-full h-full rounded-2xl overflow-hidden flex items-center justify-center border transition-all duration-300 group",
-        isChromaActive ? "bg-transparent" : "bg-[#0c0c14]",
+        chromaKeyConfig?.enabled && !isScreen ? "bg-transparent" : "bg-[#0c0c14]",
         isSpeaking ? "border-2" : "border-white/10 hover:border-white/25",
         zoom > 1 && "cursor-grab active:cursor-grabbing",
         className
       )}
     >
-      {/* Virtual Backdrop Layer (Shown behind keyed subject when Chroma Key is active) */}
-      {isChromaActive && (
+      {/* Virtual Backdrop Layer (Shown behind keyed subject or avatar when Chroma Key is active) */}
+      {chromaKeyConfig?.enabled && !isScreen && (
         <>
-          {chromaKeyConfig.backdropType === "image" && chromaKeyConfig.backdropUrl && (
+          {chromaKeyConfig.backdropType === "image" && (chromaKeyConfig.backdropUrl || "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80") && (
             <img
-              src={chromaKeyConfig.backdropUrl}
-              alt="Chroma Backdrop"
-              className="absolute inset-0 w-full h-full object-cover pointer-events-none -z-10"
+              src={chromaKeyConfig.backdropUrl || "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80"}
+              alt="Virtual Backdrop"
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
             />
           )}
           {chromaKeyConfig.backdropType === "blur" && (
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl pointer-events-none -z-10" />
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl pointer-events-none z-0" />
           )}
           {/* Active Chroma Indicator Badge */}
           <div className="absolute top-2.5 right-2.5 z-30 px-2 py-0.5 rounded-lg bg-black/80 backdrop-blur-md border border-emerald-500/40 text-[9px] font-mono text-emerald-400 flex items-center gap-1.5 shadow-md">

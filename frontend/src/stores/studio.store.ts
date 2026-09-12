@@ -530,8 +530,8 @@ export const useStudioStore = create<StudioState>((set) => ({
     tolerance: 0.38,
     smoothness: 0.12,
     spill: 0.35,
-    backdropType: "stage",
-    backdropUrl: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
+    backdropType: "image",
+    backdropUrl: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80",
   },
   setChromaKeyConfig: (updates) =>
     set((s) => ({

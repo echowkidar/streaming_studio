@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Mic, Video, Volume2, ShieldCheck, Sparkles, Sliders, Check, Settings2, Image as ImageIcon } from "lucide-react";
+import { Mic, Video, Volume2, ShieldCheck, Sparkles, Sliders, Check, Settings2, Image as ImageIcon, Upload, X, RotateCcw } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -9,6 +9,7 @@ import { AudioMeter } from "./AudioMeter";
 import { useStudioStore } from "@/stores/studio.store";
 import { ChromaKeyCanvas } from "./ChromaKeyCanvas";
 import { cn } from "@/lib/utils";
+import { VIRTUAL_BACKGROUND_PRESETS } from "@/lib/virtualBackgrounds";
 
 interface DeviceSettingsModalProps {
   isOpen: boolean;
@@ -32,6 +33,60 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({ isOpen
   // Local camera stream for Green Screen preview inside modal
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const virtualBgFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [customVirtualBgs, setCustomVirtualBgs] = useState<{ id: string; name: string; url: string }[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("livestudio_custom_virtual_bgs");
+        if (saved) return JSON.parse(saved);
+      } catch (e) {
+        console.warn("Failed to parse custom virtual backgrounds:", e);
+      }
+    }
+    return [];
+  });
+
+  const handleVirtualBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        const newItem = {
+          id: `virtual-bg-${Date.now()}`,
+          name: file.name.replace(/\.[^/.]+$/, "").slice(0, 16),
+          url: dataUrl,
+        };
+        const updated = [newItem, ...customVirtualBgs.filter((b) => b.name !== newItem.name)];
+        setCustomVirtualBgs(updated);
+        try {
+          localStorage.setItem("livestudio_custom_virtual_bgs", JSON.stringify(updated.slice(0, 8)));
+        } catch {
+          // ignore
+        }
+        setChromaKeyConfig({ backdropType: "image", backdropUrl: dataUrl, enabled: true });
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const handleDeleteCustomVirtualBg = (e: React.MouseEvent, id: string, url: string) => {
+    e.stopPropagation();
+    const updated = customVirtualBgs.filter((b) => b.id !== id);
+    setCustomVirtualBgs(updated);
+    try {
+      localStorage.setItem("livestudio_custom_virtual_bgs", JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+    if (chromaKeyConfig.backdropUrl === url) {
+      setChromaKeyConfig({ backdropUrl: VIRTUAL_BACKGROUND_PRESETS[0].url });
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined" && navigator?.mediaDevices?.enumerateDevices) {
@@ -282,9 +337,9 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({ isOpen
                 <>
                   {chromaKeyConfig.backdropType === "image" && (
                     <img
-                      src={chromaKeyConfig.backdropUrl || activeBackgroundUrl || "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80"}
+                      src={chromaKeyConfig.backdropUrl || VIRTUAL_BACKGROUND_PRESETS[0].url}
                       alt="Virtual Backdrop"
-                      className="absolute inset-0 w-full h-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover z-0"
                     />
                   )}
                   {chromaKeyConfig.backdropType === "blur" && (
@@ -459,21 +514,21 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({ isOpen
                 </div>
 
                 {/* Keyed Backdrop Layer */}
-                <div className="space-y-1 pt-2 border-t border-white/5">
-                  <span className="text-slate-300 font-semibold block">Keyed Backdrop Layer</span>
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <span className="text-slate-300 font-semibold block text-xs">Keyed Backdrop Layer</span>
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { id: "stage" as const, label: "Stage Canvas", desc: "Reveals Stage Underneath" },
+                      { id: "image" as const, label: "Virtual Backdrop", desc: "Selected Office/Studio" },
+                      { id: "stage" as const, label: "Stage Canvas", desc: "100% Transparent" },
                       { id: "blur" as const, label: "Studio Blur", desc: "Blurred Background" },
-                      { id: "image" as const, label: "Virtual Backdrop", desc: "Selected Studio Image" },
                     ].map((b) => (
                       <button
                         key={b.id}
                         onClick={() => setChromaKeyConfig({ backdropType: b.id })}
                         className={cn(
                           "p-2 rounded-xl border text-left transition-all",
-                          (chromaKeyConfig?.backdropType || "stage") === b.id
-                            ? "bg-emerald-600/20 border-emerald-500 text-white ring-1 ring-emerald-500"
+                          (chromaKeyConfig?.backdropType || "image") === b.id
+                            ? "bg-emerald-600/20 border-emerald-500 text-white ring-1 ring-emerald-500 shadow-md"
                             : "bg-surface border-white/5 text-slate-400 hover:border-white/10"
                         )}
                       >
@@ -482,6 +537,125 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({ isOpen
                       </button>
                     ))}
                   </div>
+
+                  {/* Virtual Background Gallery when "image" is selected */}
+                  {(chromaKeyConfig?.backdropType === "image" || !chromaKeyConfig?.backdropType) && (
+                    <div className="space-y-2.5 pt-2 border-t border-white/5 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-300 font-semibold flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                          Virtual Background Gallery
+                        </span>
+                        <span className="text-[10px] text-emerald-400 font-mono">
+                          {VIRTUAL_BACKGROUND_PRESETS.length + customVirtualBgs.length} Backdrops
+                        </span>
+                      </div>
+
+                      {/* Hidden file input */}
+                      <input
+                        ref={virtualBgFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleVirtualBgUpload}
+                      />
+
+                      {/* Upload Button */}
+                      <button
+                        onClick={() => virtualBgFileInputRef.current?.click()}
+                        className="w-full py-2 px-3 rounded-xl border border-dashed border-emerald-500/40 hover:border-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium cursor-pointer shadow-sm"
+                      >
+                        <Upload className="w-4 h-4 text-emerald-400" />
+                        <span>Upload Custom Background Photo from Device</span>
+                      </button>
+
+                      {/* Custom Uploads */}
+                      {customVirtualBgs.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[11px] text-slate-400 font-medium">Your Uploaded Photos</span>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {customVirtualBgs.map((bg) => {
+                              const isSelected = chromaKeyConfig?.backdropUrl === bg.url;
+                              return (
+                                <div
+                                  key={bg.id}
+                                  onClick={() => setChromaKeyConfig({ backdropType: "image", backdropUrl: bg.url, enabled: true })}
+                                  className={cn(
+                                    "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-1.5 flex flex-col justify-end group cursor-pointer",
+                                    isSelected
+                                      ? "border-emerald-400 ring-2 ring-emerald-500/40 shadow-md"
+                                      : "border-white/10 hover:border-white/30"
+                                  )}
+                                  style={{
+                                    backgroundImage: `url(${bg.url})`,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: "center",
+                                  }}
+                                >
+                                  <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                                  <span className="relative z-10 text-[10px] font-bold text-white drop-shadow truncate">
+                                    {bg.name}
+                                  </span>
+                                  {isSelected && (
+                                    <span className="absolute top-1 left-1 z-10 p-0.5 rounded-full bg-emerald-500 text-white">
+                                      <Check className="w-2.5 h-2.5" />
+                                    </span>
+                                  )}
+                                  <button
+                                    onClick={(e) => handleDeleteCustomVirtualBg(e, bg.id, bg.url)}
+                                    title="Delete photo"
+                                    className="absolute top-1 right-1 z-20 p-1 rounded bg-black/70 hover:bg-rose-600 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Presets Grid */}
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] text-slate-400 font-medium">Broadcast Studios & Modern Offices</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {VIRTUAL_BACKGROUND_PRESETS.map((bg) => {
+                            const isSelected = (chromaKeyConfig?.backdropUrl || VIRTUAL_BACKGROUND_PRESETS[0].url) === bg.url;
+                            return (
+                              <button
+                                key={bg.id}
+                                onClick={() => setChromaKeyConfig({ backdropType: "image", backdropUrl: bg.url, enabled: true })}
+                                className={cn(
+                                  "h-16 rounded-xl border relative overflow-hidden transition-all text-left p-1.5 flex flex-col justify-end group cursor-pointer",
+                                  isSelected
+                                    ? "border-emerald-400 ring-2 ring-emerald-500/40 shadow-md"
+                                    : "border-white/10 hover:border-white/30"
+                                )}
+                                style={{
+                                  backgroundImage: `url(${bg.thumb})`,
+                                  backgroundSize: "cover",
+                                  backgroundPosition: "center",
+                                }}
+                              >
+                                <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors" />
+                                <span className="relative z-10 text-[10px] font-bold text-white drop-shadow truncate">
+                                  {bg.name}
+                                </span>
+                                <span className="absolute top-1 left-1 text-[8px] uppercase font-bold px-1 rounded bg-black/60 text-slate-300 backdrop-blur-sm">
+                                  {bg.category}
+                                </span>
+                                {isSelected && (
+                                  <span className="absolute top-1 right-1 z-10 p-0.5 rounded-full bg-emerald-500 text-white">
+                                    <Check className="w-2.5 h-2.5" />
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
