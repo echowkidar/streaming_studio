@@ -89,6 +89,26 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [liveDurationSec, setLiveDurationSec] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // StreamYard Security Check: Ensure only authenticated host can access studio console.
+  // Guests who open the studio URL directly are seamlessly redirected to their guest join page.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const authRaw = localStorage.getItem("livestudio_auth");
+      if (!authRaw) {
+        window.location.replace(`/join/studio-${params.id}`);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(authRaw);
+        if (!parsed?.state?.user) {
+          window.location.replace(`/join/studio-${params.id}`);
+        }
+      } catch {
+        window.location.replace(`/join/studio-${params.id}`);
+      }
+    }
+  }, [params.id]);
+
   // Live timer effect
   useEffect(() => {
     let interval: NodeJS.Timeout;

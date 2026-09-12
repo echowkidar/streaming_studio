@@ -151,7 +151,18 @@ export const useStudioStore = create<StudioState>((set) => ({
   toggleScreenShare: () => set((s) => ({ screenShareEnabled: !s.screenShareEnabled })),
 
   participants: [],
-  setParticipants: (participants) => set({ participants }),
+  setParticipants: (newParticipants) =>
+    set((s) => {
+      const existingStatusMap = new Map(s.participants.map((p) => [String(p.id), p.status]));
+      const merged = newParticipants.map((p) => {
+        const existingStatus = existingStatusMap.get(String(p.id));
+        return {
+          ...p,
+          status: existingStatus || p.status || (p.role === "host" || p.isLocal ? "ON_STAGE" : "BACKSTAGE"),
+        };
+      });
+      return { participants: merged };
+    }),
   addParticipant: (participant) =>
     set((s) => ({ participants: [...s.participants, participant] })),
   removeParticipant: (id) =>

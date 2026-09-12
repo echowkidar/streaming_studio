@@ -31,42 +31,83 @@ export function VideoTrackView({
 }: VideoTrackViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const attachedTrackRef = useRef<any>(null);
+  const attachedAudioTrackRef = useRef<any>(null);
 
+  // Play video track safely without flickering on re-renders
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl) return;
 
     if (track && typeof track.attach === "function") {
-      track.attach(videoEl);
-      return () => {
+      if (attachedTrackRef.current !== track) {
+        if (attachedTrackRef.current && typeof attachedTrackRef.current.detach === "function") {
+          try {
+            attachedTrackRef.current.detach(videoEl);
+          } catch {
+            // ignore
+          }
+        }
+        track.attach(videoEl);
+        attachedTrackRef.current = track;
+      }
+    } else if (mediaStream) {
+      if (videoEl.srcObject !== mediaStream) {
+        videoEl.srcObject = mediaStream;
+      }
+    } else {
+      if (attachedTrackRef.current && typeof attachedTrackRef.current.detach === "function") {
         try {
-          track.detach(videoEl);
+          attachedTrackRef.current.detach(videoEl);
         } catch {
           // ignore
         }
-      };
-    } else if (mediaStream) {
-      videoEl.srcObject = mediaStream;
-      return () => {
-        videoEl.srcObject = null;
-      };
+        attachedTrackRef.current = null;
+      }
+      videoEl.srcObject = null;
     }
   }, [track, mediaStream]);
 
-  // Play remote audio safely
+  // Unmount cleanup for video
+  useEffect(() => {
+    return () => {
+      const videoEl = videoRef.current;
+      if (videoEl && attachedTrackRef.current && typeof attachedTrackRef.current.detach === "function") {
+        try {
+          attachedTrackRef.current.detach(videoEl);
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
+
+  // Play remote audio safely without re-attaching on each render
   useEffect(() => {
     const audioEl = audioRef.current;
     if (!audioEl || isLocal) return;
 
     if (audioTrack && typeof audioTrack.attach === "function") {
-      audioTrack.attach(audioEl);
-      return () => {
+      if (attachedAudioTrackRef.current !== audioTrack) {
+        if (attachedAudioTrackRef.current && typeof attachedAudioTrackRef.current.detach === "function") {
+          try {
+            attachedAudioTrackRef.current.detach(audioEl);
+          } catch {
+            // ignore
+          }
+        }
+        audioTrack.attach(audioEl);
+        attachedAudioTrackRef.current = audioTrack;
+      }
+    } else {
+      if (attachedAudioTrackRef.current && typeof attachedAudioTrackRef.current.detach === "function") {
         try {
-          audioTrack.detach(audioEl);
+          attachedAudioTrackRef.current.detach(audioEl);
         } catch {
           // ignore
         }
-      };
+        attachedAudioTrackRef.current = null;
+      }
     }
   }, [audioTrack, isLocal]);
 

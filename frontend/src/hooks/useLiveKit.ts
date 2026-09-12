@@ -42,12 +42,14 @@ export function useLiveKit({
   const [screenTrack, setScreenTrack] = useState<LocalVideoTrack | null>(null);
 
   const [liveParticipants, setLiveParticipants] = useState<Participant[]>([]);
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   
   const roomRef = useRef<Room | null>(null);
   const isConnectingRef = useRef(false);
   const isConnectedRef = useRef(false);
+  const participantsRef = useRef<Participant[]>([]);
 
-  // Helper to re-map all LiveKit participants into our Participant state
+  // Helper to re-map all LiveKit participants into a stable, deterministic order
   const syncParticipants = useCallback((currentRoom: Room) => {
     if (!currentRoom) return;
     const list: Participant[] = [];
@@ -91,11 +93,15 @@ export function useLiveKit({
       const isCamActive = local.isCameraEnabled || !!localCamTrack;
       const isMicActive = local.isMicrophoneEnabled || !!localMicTrack;
 
+      // Local participant stage status: HOST starts on stage, GUEST starts in Green Room / Backstage
+      const existingLocal = participantsRef.current.find((p) => p.id === local.identity);
+      const localStatus = existingLocal ? existingLocal.status : (role === "HOST" ? "ON_STAGE" : "BACKSTAGE");
+
       list.push({
         id: local.identity,
         name: local.name || participantName,
         role: role.toLowerCase() as any,
-        status: "ON_STAGE",
+        status: localStatus,
         micOn: isMicActive,
         camOn: isCamActive,
         isSpeaking: local.isSpeaking,
@@ -106,8 +112,12 @@ export function useLiveKit({
       });
     }
 
-    // Remote Participants
-    currentRoom.remoteParticipants.forEach((remote: RemoteParticipant) => {
+    // Remote Participants sorted stably by identity so their tiles NEVER swap
+    const sortedRemotes = Array.from(currentRoom.remoteParticipants.values()).sort((a, b) =>
+      a.identity.localeCompare(b.identity)
+    );
+
+    sortedRemotes.forEach((remote: RemoteParticipant) => {
       let remoteVideo: any = null;
       let remoteAudio: any = null;
 
@@ -136,11 +146,17 @@ export function useLiveKit({
       const isRemoteCamActive = remote.isCameraEnabled || !!remoteVideo;
       const isRemoteMicActive = remote.isMicrophoneEnabled || !!remoteAudio;
 
+      // StreamYard rule: preserve existing status if host placed them ON_STAGE/BACKSTAGE,
+      // otherwise new guests default to BACKSTAGE!
+      const existing = participantsRef.current.find((p) => p.id === remote.identity);
+      const isHostRole = parsedRole === "host" || parsedRole === "co_host";
+      const remoteStatus = existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE");
+
       list.push({
         id: remote.identity,
         name: remote.name || `Guest (${remote.identity.slice(0, 5)})`,
         role: parsedRole as any,
-        status: "ON_STAGE",
+        status: remoteStatus,
         micOn: isRemoteMicActive,
         camOn: isRemoteCamActive,
         isSpeaking: remote.isSpeaking,
@@ -151,6 +167,7 @@ export function useLiveKit({
       });
     });
 
+    participantsRef.current = list;
     setLiveParticipants(list);
   }, [participantName, role]);
 
@@ -270,7 +287,18 @@ export function useLiveKit({
         })
         .on(RoomEvent.TrackMuted, () => syncParticipants(newRoom))
         .on(RoomEvent.TrackUnmuted, () => syncParticipants(newRoom))
-        .on(RoomEvent.ActiveSpeakersChanged, () => syncParticipants(newRoom))
+        .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+          const speakerIds = new Set(speakers.map((s) => s.identity));
+          setLiveParticipants((prev) => {
+            const updated = prev.map((p) => {
+              const isSp = speakerIds.has(String(p.id));
+              if (p.isSpeaking === isSp) return p;
+              return { ...p, isSpeaking: isSp };
+            });
+            participantsRef.current = updated;
+            return updated;
+          });
+        })
         .on(RoomEvent.LocalTrackPublished, () => syncParticipants(newRoom))
         .on(RoomEvent.LocalTrackUnpublished, () => syncParticipants(newRoom));
 
@@ -340,6 +368,22 @@ export function useLiveKit({
     }
   }, [screenEnabled, syncParticipants]);
 
+  // Mobile front/back camera switch
+  const flipCamera = useCallback(async () => {
+    if (!roomRef.current) return;
+    const nextFacing = facingMode === "user" ? "environment" : "user";
+    try {
+      await roomRef.current.localParticipant.setCameraEnabled(false);
+      await roomRef.current.localParticipant.setCameraEnabled(true, {
+        facingMode: nextFacing,
+      });
+      setFacingMode(nextFacing);
+      syncParticipants(roomRef.current);
+    } catch (err) {
+      console.warn("Failed to switch camera:", err);
+    }
+  }, [facingMode, syncParticipants]);
+
   // Connect on mount / when room parameters change
   useEffect(() => {
     if (autoConnect) {
@@ -358,6 +402,7 @@ export function useLiveKit({
     camEnabled,
     micEnabled,
     screenEnabled,
+    facingMode,
     localVideoTrack,
     localAudioTrack,
     screenTrack,
@@ -365,6 +410,7 @@ export function useLiveKit({
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
+    flipCamera,
     connect,
     disconnect,
   };
