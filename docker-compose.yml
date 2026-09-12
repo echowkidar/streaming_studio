@@ -23,7 +23,6 @@ services:
         condition: service_healthy
     networks:
       - livestudio
-      - proxy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000 || exit 1"]
       interval: 10s
@@ -222,7 +221,6 @@ services:
         condition: service_healthy
     networks:
       - livestudio
-      - proxy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:7880"]
       interval: 15s
