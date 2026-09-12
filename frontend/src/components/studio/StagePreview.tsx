@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Video } from "lucide-react";
+import React, { useRef } from "react";
+import { Video, Volume2, VolumeX, EyeOff, X, Move, Maximize2, Crop } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
@@ -16,6 +16,10 @@ export const StagePreview: React.FC = () => {
     logoPosition,
     logoUrl,
     activeOverlayUrl,
+    activeStageOverlay,
+    updateStageOverlay,
+    setStageOverlay,
+    toggleStageOverlayVisibility,
     activeBackgroundUrl,
     activeThemeColor,
     activeBanner,
@@ -33,6 +37,167 @@ export const StagePreview: React.FC = () => {
     "top-right": "top-6 right-6",
     "bottom-left": "bottom-14 left-6",
     "bottom-right": "bottom-14 right-6",
+  };
+
+  const stageContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingOverlayRef = useRef(false);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
+
+  const handleOverlayMouseDown = (e: React.MouseEvent) => {
+    if (!stageContainerRef.current || !activeStageOverlay) return;
+    const stageRect = stageContainerRef.current.getBoundingClientRect();
+    isDraggingOverlayRef.current = true;
+
+    const currentX = activeStageOverlay.customCoords?.x ?? (
+      activeStageOverlay.position === "top-right" || activeStageOverlay.position === "bottom-right"
+        ? Math.max(0, 100 - activeStageOverlay.scale - 4)
+        : 4
+    );
+    const currentY = activeStageOverlay.customCoords?.y ?? (
+      activeStageOverlay.position === "bottom-left" || activeStageOverlay.position === "bottom-right"
+        ? Math.max(0, 100 - (activeStageOverlay.scale * 0.5625) - 6)
+        : 4
+    );
+
+    const mouseXPercent = ((e.clientX - stageRect.left) / stageRect.width) * 100;
+    const mouseYPercent = ((e.clientY - stageRect.top) / stageRect.height) * 100;
+
+    dragOffsetRef.current = {
+      x: mouseXPercent - currentX,
+      y: mouseYPercent - currentY,
+    };
+
+    const handleMouseMove = (moveEvt: MouseEvent) => {
+      if (!isDraggingOverlayRef.current || !stageContainerRef.current) return;
+      const rect = stageContainerRef.current.getBoundingClientRect();
+      const curX = ((moveEvt.clientX - rect.left) / rect.width) * 100;
+      const curY = ((moveEvt.clientY - rect.top) / rect.height) * 100;
+
+      const newX = Math.max(0, Math.min(100 - activeStageOverlay.scale, curX - dragOffsetRef.current.x));
+      const newY = Math.max(0, Math.min(85, curY - dragOffsetRef.current.y));
+
+      updateStageOverlay({
+        position: "custom",
+        customCoords: { x: Number(newX.toFixed(1)), y: Number(newY.toFixed(1)) },
+      });
+    };
+
+    const handleMouseUp = () => {
+      isDraggingOverlayRef.current = false;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const handleOverlayTouchStart = (e: React.TouchEvent) => {
+    if (!stageContainerRef.current || !activeStageOverlay || e.touches.length === 0) return;
+    const touch = e.touches[0];
+    const stageRect = stageContainerRef.current.getBoundingClientRect();
+    isDraggingOverlayRef.current = true;
+
+    const currentX = activeStageOverlay.customCoords?.x ?? (
+      activeStageOverlay.position === "top-right" || activeStageOverlay.position === "bottom-right"
+        ? Math.max(0, 100 - activeStageOverlay.scale - 4)
+        : 4
+    );
+    const currentY = activeStageOverlay.customCoords?.y ?? (
+      activeStageOverlay.position === "bottom-left" || activeStageOverlay.position === "bottom-right"
+        ? Math.max(0, 100 - (activeStageOverlay.scale * 0.5625) - 6)
+        : 4
+    );
+
+    const touchXPercent = ((touch.clientX - stageRect.left) / stageRect.width) * 100;
+    const touchYPercent = ((touch.clientY - stageRect.top) / stageRect.height) * 100;
+
+    const offset = {
+      x: touchXPercent - currentX,
+      y: touchYPercent - currentY,
+    };
+
+    const handleTouchMove = (moveEvt: TouchEvent) => {
+      if (moveEvt.touches.length === 0 || !stageContainerRef.current) return;
+      const t = moveEvt.touches[0];
+      const rect = stageContainerRef.current.getBoundingClientRect();
+      const curX = ((t.clientX - rect.left) / rect.width) * 100;
+      const curY = ((t.clientY - rect.top) / rect.height) * 100;
+
+      const newX = Math.max(0, Math.min(100 - activeStageOverlay.scale, curX - offset.x));
+      const newY = Math.max(0, Math.min(85, curY - offset.y));
+
+      updateStageOverlay({
+        position: "custom",
+        customCoords: { x: Number(newX.toFixed(1)), y: Number(newY.toFixed(1)) },
+      });
+    };
+
+    const handleTouchEnd = () => {
+      isDraggingOverlayRef.current = false;
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+    };
+
+    window.addEventListener("touchmove", handleTouchMove);
+    window.addEventListener("touchend", handleTouchEnd);
+  };
+
+  const getOverlayStyle = (): React.CSSProperties => {
+    if (!activeStageOverlay) return {};
+    const scale = activeStageOverlay.scale || 35;
+    const opacity = (activeStageOverlay.opacity ?? 100) / 100;
+
+    const baseStyle: React.CSSProperties = {
+      width: `${scale}%`,
+      opacity,
+      zIndex: 25,
+      transition: isDraggingOverlayRef.current ? "none" : "all 0.15s ease-out",
+    };
+
+    if (activeStageOverlay.position === "custom" && activeStageOverlay.customCoords) {
+      return {
+        ...baseStyle,
+        position: "absolute",
+        left: `${activeStageOverlay.customCoords.x}%`,
+        top: `${activeStageOverlay.customCoords.y}%`,
+      };
+    }
+
+    switch (activeStageOverlay.position) {
+      case "top-left":
+        return { ...baseStyle, position: "absolute", top: "4%", left: "4%" };
+      case "top-right":
+        return { ...baseStyle, position: "absolute", top: "4%", right: "4%" };
+      case "bottom-left":
+        return { ...baseStyle, position: "absolute", bottom: "7%", left: "4%" };
+      case "bottom-right":
+        return { ...baseStyle, position: "absolute", bottom: "7%", right: "4%" };
+      case "center":
+      default:
+        return {
+          ...baseStyle,
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+        };
+    }
+  };
+
+  const getCropClasses = () => {
+    if (!activeStageOverlay) return "object-contain";
+    switch (activeStageOverlay.cropMode) {
+      case "cover":
+        return "w-full aspect-video object-cover";
+      case "square":
+        return "w-full aspect-square object-cover";
+      case "circle":
+        return "w-full aspect-square object-cover rounded-full";
+      case "fit":
+      default:
+        return "w-full h-auto object-contain";
+    }
   };
 
   // Helper to render individual participant tile using real WebRTC VideoTrackView
@@ -337,7 +502,8 @@ export const StagePreview: React.FC = () => {
 
   return (
     <div
-      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto"
+      ref={stageContainerRef}
+      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none"
       style={{
         backgroundImage: activeBackgroundUrl ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
@@ -347,6 +513,128 @@ export const StagePreview: React.FC = () => {
     >
       {/* Active Video Stage Content */}
       <div className="flex-1 w-full relative">{renderLayoutContent()}</div>
+
+      {/* StreamYard Full-Frame Overlay (1920x1080 Transparent PNG/GIF/WebM) */}
+      {activeOverlayUrl && (
+        <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
+          <img
+            src={activeOverlayUrl}
+            alt="Full Frame Overlay"
+            className="w-full h-full object-contain pointer-events-none"
+          />
+        </div>
+      )}
+
+      {/* Real-time Interactive Stage Overlay Layer (Images / Videos / Graphics) */}
+      {activeStageOverlay && activeStageOverlay.isShowing && (
+        <div
+          style={getOverlayStyle()}
+          className="group/overlay cursor-move select-none"
+          onMouseDown={handleOverlayMouseDown}
+          onTouchStart={handleOverlayTouchStart}
+        >
+          <div
+            className={cn(
+              "relative overflow-hidden transition-shadow shadow-2xl group-hover/overlay:ring-2 group-hover/overlay:ring-indigo-500/80 bg-black/40 backdrop-blur-[1px]",
+              activeStageOverlay.cropMode === "circle" ? "rounded-full" : "rounded-2xl"
+            )}
+            style={{
+              borderRadius: activeStageOverlay.cropMode === "circle" ? "9999px" : `${activeStageOverlay.borderRadius || 16}px`,
+            }}
+          >
+            {activeStageOverlay.type === "video" ? (
+              <video
+                src={activeStageOverlay.url}
+                autoPlay
+                playsInline
+                loop={activeStageOverlay.isLooping !== false}
+                muted={activeStageOverlay.isMuted !== false}
+                className={getCropClasses()}
+              />
+            ) : (
+              <img
+                src={activeStageOverlay.url}
+                alt={activeStageOverlay.name}
+                className={getCropClasses()}
+                draggable={false}
+              />
+            )}
+
+            {/* Drag Handle Indicator */}
+            <div className="absolute top-1.5 left-1.5 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/70 rounded p-1 text-slate-300 pointer-events-none z-30">
+              <Move className="w-3 h-3" />
+            </div>
+
+            {/* Quick-action Mini Dock visible on hover */}
+            <div className="absolute top-2 right-2 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/85 backdrop-blur-md rounded-xl p-1 flex items-center gap-1 border border-white/20 shadow-xl z-30">
+              {/* Quick Size cycle */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextScale = activeStageOverlay.scale === 20 ? 35 : activeStageOverlay.scale === 35 ? 60 : activeStageOverlay.scale === 60 ? 100 : 20;
+                  updateStageOverlay({ scale: nextScale });
+                }}
+                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] font-mono"
+                title={`Current scale: ${activeStageOverlay.scale}%. Click to cycle scale.`}
+              >
+                {activeStageOverlay.scale}%
+              </button>
+
+              {/* Quick Crop toggle */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const modes: ("fit" | "cover" | "square" | "circle")[] = ["fit", "cover", "square", "circle"];
+                  const nextIdx = (modes.indexOf(activeStageOverlay.cropMode) + 1) % modes.length;
+                  updateStageOverlay({ cropMode: modes[nextIdx] });
+                }}
+                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] uppercase font-semibold"
+                title={`Crop Mode: ${activeStageOverlay.cropMode}. Click to cycle.`}
+              >
+                {activeStageOverlay.cropMode}
+              </button>
+
+              {/* Mute toggle for video */}
+              {activeStageOverlay.type === "video" && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateStageOverlay({ isMuted: !activeStageOverlay.isMuted });
+                  }}
+                  className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+                  title={activeStageOverlay.isMuted ? "Unmute Audio" : "Mute Audio"}
+                >
+                  {activeStageOverlay.isMuted ? <VolumeX className="w-3 h-3 text-rose-400" /> : <Volume2 className="w-3 h-3 text-emerald-400" />}
+                </button>
+              )}
+
+              {/* Hide Live */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStageOverlayVisibility();
+                }}
+                className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+                title="Hide overlay"
+              >
+                <EyeOff className="w-3 h-3" />
+              </button>
+
+              {/* Remove */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setStageOverlay(null);
+                }}
+                className="p-1 hover:bg-rose-600 rounded text-slate-300 hover:text-white"
+                title="Remove overlay from stage"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Watermark Logo Overlay */}
       {showLogo && (

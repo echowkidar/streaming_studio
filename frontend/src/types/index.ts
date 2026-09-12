@@ -196,3 +196,20 @@ export interface TranscriptItem {
     timestamp: string;
   }[];
 }
+
+export interface StageOverlayAsset {
+  id: string;
+  name: string;
+  type: "image" | "video";
+  url: string;
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center" | "custom";
+  customCoords?: { x: number; y: number }; // percentages 0-100 on stage canvas
+  scale: number; // percentage 15 to 100
+  cropMode: "fit" | "cover" | "square" | "circle";
+  borderRadius: number; // 0, 8, 16, 24, 9999
+  opacity: number; // 10 to 100
+  isMuted?: boolean;
+  isLooping?: boolean;
+  isShowing: boolean;
+}
+

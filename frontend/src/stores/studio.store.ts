@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Participant, LowerThirdBanner, ChatMessage, Destination } from "@/types";
+import { Participant, LowerThirdBanner, ChatMessage, Destination, StageOverlayAsset } from "@/types";
 
 export type StudioLayout = 
   | "solo" 
@@ -80,6 +80,15 @@ interface StudioState {
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
   setTicker: (text: string, show: boolean) => void;
+
+  // Stage Live Overlay & Floating Assets (StreamYard parity)
+  activeStageOverlay: StageOverlayAsset | null;
+  overlayHistory: StageOverlayAsset[];
+  setStageOverlay: (overlay: StageOverlayAsset | null) => void;
+  updateStageOverlay: (updates: Partial<StageOverlayAsset>) => void;
+  toggleStageOverlayVisibility: () => void;
+  saveToOverlayHistory: (overlay: StageOverlayAsset) => void;
+  removeFromOverlayHistory: (id: string) => void;
 
   // Media playback on stage
   activeMedia: {
@@ -197,6 +206,50 @@ export const useStudioStore = create<StudioState>((set) => ({
   setThemeColor: (color) => set({ activeThemeColor: color }),
   setBanner: (banner) => set({ activeBanner: banner }),
   setTicker: (text, show) => set({ tickerText: text, showTicker: show }),
+
+  activeStageOverlay: null,
+  overlayHistory: [],
+  setStageOverlay: (overlay) =>
+    set((s) => {
+      if (overlay) {
+        const exists = s.overlayHistory.some((item) => item.id === overlay.id || item.url === overlay.url);
+        const newHistory = exists
+          ? s.overlayHistory.map((item) => (item.id === overlay.id ? overlay : item))
+          : [overlay, ...s.overlayHistory.slice(0, 15)];
+        return { activeStageOverlay: overlay, overlayHistory: newHistory };
+      }
+      return { activeStageOverlay: null };
+    }),
+  updateStageOverlay: (updates) =>
+    set((s) => {
+      if (!s.activeStageOverlay) return {};
+      const updated = { ...s.activeStageOverlay, ...updates };
+      return {
+        activeStageOverlay: updated,
+        overlayHistory: s.overlayHistory.map((item) => (item.id === updated.id ? updated : item)),
+      };
+    }),
+  toggleStageOverlayVisibility: () =>
+    set((s) => {
+      if (!s.activeStageOverlay) return {};
+      return {
+        activeStageOverlay: { ...s.activeStageOverlay, isShowing: !s.activeStageOverlay.isShowing },
+      };
+    }),
+  saveToOverlayHistory: (overlay) =>
+    set((s) => {
+      const exists = s.overlayHistory.some((item) => item.id === overlay.id);
+      return {
+        overlayHistory: exists
+          ? s.overlayHistory.map((item) => (item.id === overlay.id ? overlay : item))
+          : [overlay, ...s.overlayHistory.slice(0, 15)],
+      };
+    }),
+  removeFromOverlayHistory: (id) =>
+    set((s) => ({
+      overlayHistory: s.overlayHistory.filter((item) => item.id !== id),
+      activeStageOverlay: s.activeStageOverlay?.id === id ? null : s.activeStageOverlay,
+    })),
 
   activeMedia: null,
   setActiveMedia: (media) => set({ activeMedia: media }),
