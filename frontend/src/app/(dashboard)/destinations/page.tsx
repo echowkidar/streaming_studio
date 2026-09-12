@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Send, Plus, Globe, Youtube, Twitch, Facebook, Linkedin, Shield, Trash2 } from "lucide-react";
+import { Send, Plus, Globe, Youtube, Twitch, Facebook, Linkedin, Shield, Trash2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -31,6 +31,7 @@ const LOCAL_STORAGE_KEY = "livestudio_custom_destinations";
 
 export default function DestinationsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -89,20 +90,93 @@ export default function DestinationsPage() {
     fetchDestinations();
   }, []);
 
+  const handleOpenCreate = () => {
+    setEditingDestination(null);
+    setName("");
+    setPlatform("YOUTUBE");
+    setRtmpUrl(DEFAULT_URLS.YOUTUBE);
+    setStreamKey("");
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEdit = (dest: Destination) => {
+    setEditingDestination(dest);
+    setName(dest.name);
+    setPlatform(dest.platform);
+    setRtmpUrl(dest.rtmpUrl);
+    setStreamKey("");
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
   const handlePlatformChange = (p: string) => {
     setPlatform(p);
     setRtmpUrl(DEFAULT_URLS[p] || "rtmp://");
     setFormError(null);
   };
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !streamKey.trim()) {
-      setFormError("Destination Name and Stream Key are required");
+    if (!name.trim()) {
+      setFormError("Destination Name is required");
+      return;
+    }
+    if (!editingDestination && !streamKey.trim()) {
+      setFormError("Stream Key is required");
       return;
     }
     setFormError(null);
 
+    if (editingDestination) {
+      // Edit existing destination
+      const updatedItem: Destination = {
+        ...editingDestination,
+        name: name.trim(),
+        platform,
+        rtmpUrl: rtmpUrl.trim(),
+      };
+
+      try {
+        setSubmitting(true);
+        const payload: Record<string, string> = {
+          name: name.trim(),
+          platform,
+          rtmpUrl: rtmpUrl.trim(),
+        };
+        if (streamKey.trim()) {
+          payload.streamKey = streamKey.trim();
+        }
+
+        const res = await fetch(`/api/destinations/${editingDestination.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          const next = destinations.map((d) => (d.id === editingDestination.id ? { ...d, ...json.data } : d));
+          setDestinations(next);
+          saveLocalDestinations(next);
+        } else {
+          const next = destinations.map((d) => (d.id === editingDestination.id ? updatedItem : d));
+          setDestinations(next);
+          saveLocalDestinations(next);
+        }
+      } catch (err) {
+        console.warn("Edit destination fallback update:", err);
+        const next = destinations.map((d) => (d.id === editingDestination.id ? updatedItem : d));
+        setDestinations(next);
+        saveLocalDestinations(next);
+      } finally {
+        setSubmitting(false);
+        setIsModalOpen(false);
+        setEditingDestination(null);
+      }
+      return;
+    }
+
+    // Create new destination
     const newDestItem: Destination = {
       id: `dest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name: name.trim(),
@@ -128,8 +202,6 @@ export default function DestinationsPage() {
         setIsModalOpen(false);
         fetchDestinations();
       } else {
-        // Fallback: save to local state and local storage so user is not blocked
-        console.warn("API destination error, saving locally:", json.error);
         const updated = [newDestItem, ...destinations.filter((d) => d.id !== newDestItem.id)];
         setDestinations(updated);
         saveLocalDestinations(updated);
@@ -181,7 +253,7 @@ export default function DestinationsPage() {
             Multistream your live studio production to YouTube, Twitch, Facebook, and Custom RTMP servers simultaneously.
           </p>
         </div>
-        <Button variant="primary" onClick={() => setIsModalOpen(true)}>
+        <Button variant="primary" onClick={handleOpenCreate}>
           <Plus className="w-4 h-4 mr-2" />
           Add Destination
         </Button>
@@ -196,7 +268,7 @@ export default function DestinationsPage() {
           <p className="text-sm text-slate-400 max-w-md mx-auto mt-1 mb-6">
             Connect your YouTube channel or custom RTMP server to start broadcasting your live studio show.
           </p>
-          <Button variant="primary" onClick={() => setIsModalOpen(true)}>
+          <Button variant="primary" onClick={handleOpenCreate}>
             <Plus className="w-4 h-4 mr-2" />
             Connect Your First Destination
           </Button>
@@ -239,13 +311,22 @@ export default function DestinationsPage() {
 
                 <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs text-slate-400">
                   <span>{dest.lastUsedAt ? `Used: ${new Date(dest.lastUsedAt).toLocaleDateString()}` : "Ready"}</span>
-                  <button
-                    onClick={() => handleDelete(dest.id)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                    title="Remove destination"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleOpenEdit(dest)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                      title="Edit destination"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(dest.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                      title="Remove destination"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -253,9 +334,16 @@ export default function DestinationsPage() {
         </div>
       )}
 
-      {/* Add Destination Modal */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add Streaming Destination">
-        <form onSubmit={handleAdd} className="space-y-5">
+      {/* Add / Edit Destination Modal */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingDestination(null);
+        }}
+        title={editingDestination ? "Edit Streaming Destination" : "Add Streaming Destination"}
+      >
+        <form onSubmit={handleSave} className="space-y-5">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
               Select Platform
@@ -305,12 +393,16 @@ export default function DestinationsPage() {
           />
 
           <Input
-            label="Stream Key"
+            label={editingDestination ? "Stream Key (Leave blank to keep unchanged)" : "Stream Key"}
             type="password"
-            placeholder="Paste stream key here (stored with AES-256 encryption)"
+            placeholder={
+              editingDestination
+                ? "Leave blank to keep current key, or paste new key"
+                : "Paste stream key here (stored with AES-256 encryption)"
+            }
             value={streamKey}
             onChange={(e) => setStreamKey(e.target.value)}
-            required
+            required={!editingDestination}
           />
 
           <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/10 flex items-start gap-2.5 text-xs text-indigo-300">
@@ -327,11 +419,18 @@ export default function DestinationsPage() {
           )}
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="ghost" type="button" onClick={() => setIsModalOpen(false)}>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingDestination(null);
+              }}
+            >
               Cancel
             </Button>
             <Button variant="primary" type="submit" isLoading={submitting}>
-              Connect Destination
+              {editingDestination ? "Update Destination" : "Connect Destination"}
             </Button>
           </div>
         </form>

@@ -32,37 +32,58 @@ export class RtmpStreamerService extends EventEmitter {
   /**
    * Resolve and decrypt RTMP destination URLs for a broadcast
    */
-  public async resolveDestinationUrls(destinationIds: string[]): Promise<string[]> {
-    const destinations = await prisma.destination.findMany({
-      where: { id: { in: destinationIds } },
-    });
-
+  public async resolveDestinationUrls(
+    destinationIds: string[],
+    directDestinations?: Array<{ rtmpUrl: string; streamKey?: string }>
+  ): Promise<string[]> {
     const urls: string[] = [];
 
-    for (const dest of destinations) {
-      try {
-        const decRes = await this.encryptionService.decrypt({
-          iv: dest.streamKeyIv,
-          authTag: dest.streamKeyTag,
-          encryptedData: dest.streamKeyEncrypted,
-        });
-
-        if (decRes.success && decRes.data) {
-          const cleanUrl = dest.rtmpUrl.replace(/\/+$/, '');
-          const streamKey = decRes.data.trim();
-          // Standard RTMP format: rtmp://a.rtmp.youtube.com/live2/key
-          const fullRtmp = `${cleanUrl}/${streamKey}`;
-          urls.push(fullRtmp);
-
-          // Update destination status and last used
-          await prisma.destination.update({
-            where: { id: dest.id },
-            data: { status: 'LIVE', lastUsedAt: new Date() },
-          });
+    // 1. Direct destinations provided by client (e.g. from studio modal)
+    if (directDestinations && Array.isArray(directDestinations)) {
+      for (const d of directDestinations) {
+        if (d.rtmpUrl && d.streamKey && !d.streamKey.includes('••••')) {
+          const cleanUrl = d.rtmpUrl.replace(/\/+$/, '');
+          const streamKey = d.streamKey.trim();
+          urls.push(`${cleanUrl}/${streamKey}`);
         }
-      } catch (err) {
-        console.error(`Failed to decrypt stream key for destination ${dest.name}:`, err);
       }
+    }
+
+    // 2. Query database for saved destinations
+    try {
+      const destinations = await prisma.destination.findMany({
+        where: { id: { in: destinationIds } },
+      });
+
+      for (const dest of destinations) {
+        try {
+          const decRes = await this.encryptionService.decrypt({
+            iv: dest.streamKeyIv,
+            authTag: dest.streamKeyTag,
+            encryptedData: dest.streamKeyEncrypted,
+          });
+
+          if (decRes.success && decRes.data) {
+            const cleanUrl = dest.rtmpUrl.replace(/\/+$/, '');
+            const streamKey = decRes.data.trim();
+            // Standard RTMP format: rtmp://a.rtmp.youtube.com/live2/key
+            const fullRtmp = `${cleanUrl}/${streamKey}`;
+            if (!urls.includes(fullRtmp)) {
+              urls.push(fullRtmp);
+            }
+
+            // Update destination status and last used
+            await prisma.destination.update({
+              where: { id: dest.id },
+              data: { status: 'LIVE', lastUsedAt: new Date() },
+            }).catch(() => {});
+          }
+        } catch (err) {
+          console.error(`Failed to decrypt stream key for destination ${dest.name}:`, err);
+        }
+      }
+    } catch (dbErr) {
+      console.warn('[RTMP] Database query skipped in resolveDestinationUrls:', dbErr);
     }
 
     return urls;
@@ -74,14 +95,15 @@ export class RtmpStreamerService extends EventEmitter {
   public async startBroadcastStream(
     broadcastId: string,
     roomName: string,
-    destinationIds: string[]
+    destinationIds: string[],
+    directDestinations?: Array<{ rtmpUrl: string; streamKey?: string }>
   ): Promise<{ success: boolean; activeDestinations: number; error?: string }> {
     try {
       if (this.activeSessions.has(broadcastId)) {
         return { success: true, activeDestinations: this.activeSessions.get(broadcastId)!.destinationUrls.length };
       }
 
-      const rtmpUrls = await this.resolveDestinationUrls(destinationIds);
+      const rtmpUrls = await this.resolveDestinationUrls(destinationIds, directDestinations);
       if (rtmpUrls.length === 0) {
         return { success: false, activeDestinations: 0, error: 'No valid RTMP destinations found or failed to decrypt stream keys' };
       }
@@ -89,17 +111,16 @@ export class RtmpStreamerService extends EventEmitter {
       const ffmpegProcesses: ChildProcess[] = [];
 
       for (const targetUrl of rtmpUrls) {
-        // High quality broadcast configuration matching YouTube Live specs (720p/1080p, H.264, AAC, 60fps/30fps, 4500k bitrate)
+        // High quality broadcast configuration matching YouTube Live specs (720p/1080p, H.264, AAC, 30fps, zero latency)
         const args = [
-          '-re',
           '-f', 'webm',
           '-i', 'pipe:0',
           '-c:v', 'libx264',
           '-preset', 'veryfast',
           '-tune', 'zerolatency',
-          '-b:v', '4000k',
-          '-maxrate', '4500k',
-          '-bufsize', '9000k',
+          '-b:v', '3500k',
+          '-maxrate', '4000k',
+          '-bufsize', '7000k',
           '-pix_fmt', 'yuv420p',
           '-g', '60',
           '-r', '30',
@@ -107,10 +128,12 @@ export class RtmpStreamerService extends EventEmitter {
           '-b:a', '128k',
           '-ar', '44100',
           '-f', 'flv',
+          '-flvflags', 'no_duration_filesize',
           targetUrl,
         ];
 
         try {
+          console.log(`[FFmpeg RTMP]: Spawning stream process for broadcast ${broadcastId}`);
           const proc = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
           proc.stderr?.on('data', (data) => {
             const msg = data.toString();

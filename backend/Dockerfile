@@ -16,6 +16,9 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
+# Install FFmpeg for RTMP streaming to YouTube, Twitch, Facebook, and custom endpoints
+RUN apk add --no-cache ffmpeg
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json

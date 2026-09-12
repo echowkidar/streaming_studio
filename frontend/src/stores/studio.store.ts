@@ -294,6 +294,49 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
   },
 ];
 
+const STUDIO_LAYOUT_STORAGE_KEY = "livestudio_saved_studio_layout";
+
+interface SavedStudioLayoutState {
+  activeLayout?: StudioLayout;
+  layoutSplitRatio?: number;
+  participantBounds?: Record<string, ParticipantBounds>;
+  customLayoutConfig?: CustomLayoutConfig;
+  isFreeformMode?: boolean;
+  tileTransforms?: Record<string, TileTransform>;
+  activeBackgroundUrl?: string | null;
+  activeBackgroundType?: "image" | "video";
+  activeThemeColor?: string;
+  tickerText?: string;
+  showTicker?: boolean;
+  tickerConfig?: TickerConfig;
+  logoConfig?: LogoConfig;
+  showLogo?: boolean;
+  logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+}
+
+function loadSavedStudioLayout(): SavedStudioLayoutState {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(STUDIO_LAYOUT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
+  if (typeof window === "undefined") return;
+  try {
+    const current = loadSavedStudioLayout();
+    const next = { ...current, ...updates };
+    localStorage.setItem(STUDIO_LAYOUT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+const savedLayout = loadSavedStudioLayout();
+
 export const useStudioStore = create<StudioState>((set) => ({
   broadcastTitle: "Product Launch & Live Q&A Keynote",
   isLive: false,
@@ -303,17 +346,27 @@ export const useStudioStore = create<StudioState>((set) => ({
   viewerCount: 1420,
   connectionQuality: "EXCELLENT",
 
-  activeLayout: "speaker-large",
-  setLayout: (layout) => set({ activeLayout: layout }),
-  layoutSplitRatio: 50,
-  setLayoutSplitRatio: (ratio) => set({ layoutSplitRatio: Math.max(20, Math.min(80, ratio)) }),
+  activeLayout: savedLayout.activeLayout || "speaker-large",
+  setLayout: (layout) => {
+    persistStudioLayout({ activeLayout: layout });
+    set({ activeLayout: layout });
+  },
+  layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
+  setLayoutSplitRatio: (ratio) => {
+    const clamped = Math.max(20, Math.min(80, ratio));
+    persistStudioLayout({ layoutSplitRatio: clamped });
+    set({ layoutSplitRatio: clamped });
+  },
 
   // Freeform Window Bounds & Selection Tool (StreamYard parity)
-  participantBounds: {},
+  participantBounds: savedLayout.participantBounds || {},
   selectedParticipantId: null,
-  isFreeformMode: false,
+  isFreeformMode: savedLayout.isFreeformMode !== undefined ? savedLayout.isFreeformMode : false,
   setSelectedParticipantId: (id) => set({ selectedParticipantId: id !== null ? String(id) : null }),
-  setIsFreeformMode: (enabled) => set({ isFreeformMode: enabled }),
+  setIsFreeformMode: (enabled) => {
+    persistStudioLayout({ isFreeformMode: enabled });
+    set({ isFreeformMode: enabled });
+  },
   setParticipantBounds: (id, updates) =>
     set((s) => {
       const key = String(id);
@@ -331,11 +384,13 @@ export const useStudioStore = create<StudioState>((set) => ({
       merged.height = Math.max(8, Math.min(100, merged.height));
       merged.x = Math.max(0, Math.min(100 - merged.width, merged.x));
       merged.y = Math.max(0, Math.min(100 - merged.height, merged.y));
+      const nextBounds = {
+        ...s.participantBounds,
+        [key]: merged,
+      };
+      persistStudioLayout({ participantBounds: nextBounds });
       return {
-        participantBounds: {
-          ...s.participantBounds,
-          [key]: merged,
-        },
+        participantBounds: nextBounds,
       };
     }),
   resetParticipantBounds: (id) =>
@@ -343,10 +398,18 @@ export const useStudioStore = create<StudioState>((set) => ({
       const key = String(id);
       const next = { ...s.participantBounds };
       delete next[key];
+      persistStudioLayout({ participantBounds: next });
       return { participantBounds: next };
     }),
-  resetAllParticipantBounds: () => set({ participantBounds: {}, selectedParticipantId: null }),
-  setAllParticipantBounds: (allBounds) => set({ participantBounds: allBounds || {} }),
+  resetAllParticipantBounds: () => {
+    persistStudioLayout({ participantBounds: {} });
+    set({ participantBounds: {}, selectedParticipantId: null });
+  },
+  setAllParticipantBounds: (allBounds) => {
+    const safeBounds = allBounds || {};
+    persistStudioLayout({ participantBounds: safeBounds });
+    set({ participantBounds: safeBounds });
+  },
   bringToFront: (id) =>
     set((s) => {
       const key = String(id);
@@ -386,11 +449,14 @@ export const useStudioStore = create<StudioState>((set) => ({
     pipSize: "medium",
     highlightColor: "#6366f1",
     showSpeakerBorder: true,
+    ...(savedLayout.customLayoutConfig || {}),
   },
   setCustomLayoutConfig: (config) =>
-    set((s) => ({
-      customLayoutConfig: { ...s.customLayoutConfig, ...config },
-    })),
+    set((s) => {
+      const nextConfig = { ...s.customLayoutConfig, ...config };
+      persistStudioLayout({ customLayoutConfig: nextConfig });
+      return { customLayoutConfig: nextConfig };
+    }),
 
   micEnabled: true,
   camEnabled: true,
@@ -439,24 +505,29 @@ export const useStudioStore = create<StudioState>((set) => ({
       };
     }),
 
-  showLogo: true,
-  logoPosition: "top-right",
-  logoUrl: "LiveStudio",
+  showLogo: savedLayout.showLogo !== undefined ? savedLayout.showLogo : true,
+  logoPosition: savedLayout.logoPosition || "top-right",
+  logoUrl: savedLayout.logoConfig?.text || "LiveStudio",
   activeOverlayUrl: null,
-  activeBackgroundUrl: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
-  activeBackgroundType: "image",
-  activeThemeColor: "#6366f1",
+  activeBackgroundUrl:
+    savedLayout.activeBackgroundUrl !== undefined
+      ? savedLayout.activeBackgroundUrl
+      : "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
+  activeBackgroundType: savedLayout.activeBackgroundType || "image",
+  activeThemeColor: savedLayout.activeThemeColor || "#6366f1",
   activeBanner: null,
-  tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
-  showTicker: false,
+  tickerText:
+    savedLayout.tickerText ||
+    "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
+  showTicker: savedLayout.showTicker !== undefined ? savedLayout.showTicker : false,
 
-  tileTransforms: {},
+  tileTransforms: savedLayout.tileTransforms || {},
   setTileTransform: (id, updates) =>
     set((s) => {
       const key = String(id);
       const isScreen = key.includes("screen");
-      const current = s.tileTransforms[key] || {
-        fitMode: isScreen ? "contain" : "cover",
+      const current: TileTransform = s.tileTransforms[key] || {
+        fitMode: (isScreen ? "contain" : "cover") as "contain" | "cover",
         zoom: 1,
         panX: 0,
         panY: 0,
@@ -464,30 +535,35 @@ export const useStudioStore = create<StudioState>((set) => ({
         flipH: false,
         flipV: false,
       };
+      const nextTransforms: Record<string, TileTransform> = {
+        ...s.tileTransforms,
+        [key]: { ...current, ...updates },
+      };
+      persistStudioLayout({ tileTransforms: nextTransforms });
       return {
-        tileTransforms: {
-          ...s.tileTransforms,
-          [key]: { ...current, ...updates },
-        },
+        tileTransforms: nextTransforms,
       };
     }),
   resetTileTransform: (id) =>
     set((s) => {
       const key = String(id);
       const isScreen = key.includes("screen");
+      const defaultTransform: TileTransform = {
+        fitMode: (isScreen ? "contain" : "cover") as "contain" | "cover",
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        rotation: 0,
+        flipH: false,
+        flipV: false,
+      };
+      const nextTransforms: Record<string, TileTransform> = {
+        ...s.tileTransforms,
+        [key]: defaultTransform,
+      };
+      persistStudioLayout({ tileTransforms: nextTransforms });
       return {
-        tileTransforms: {
-          ...s.tileTransforms,
-          [key]: {
-            fitMode: isScreen ? "contain" : "cover",
-            zoom: 1,
-            panX: 0,
-            panY: 0,
-            rotation: 0,
-            flipH: false,
-            flipV: false,
-          },
-        },
+        tileTransforms: nextTransforms,
       };
     }),
 
@@ -499,10 +575,12 @@ export const useStudioStore = create<StudioState>((set) => ({
     badgeText: "LIVE UPDATES",
     fontSize: "medium",
     speed: "normal",
+    ...(savedLayout.tickerConfig || {}),
   },
   setTickerConfig: (updates) =>
     set((s) => {
       const next = { ...s.tickerConfig, ...updates };
+      persistStudioLayout({ tickerConfig: next, tickerText: next.text });
       return {
         tickerConfig: next,
         tickerText: next.text,
@@ -516,10 +594,12 @@ export const useStudioStore = create<StudioState>((set) => ({
     bgOpacity: 75,
     isTransparentBg: false,
     fontSize: "medium",
+    ...(savedLayout.logoConfig || {}),
   },
   setLogoConfig: (updates) =>
     set((s) => {
       const next = { ...s.logoConfig, ...updates };
+      persistStudioLayout({ logoConfig: next });
       return {
         logoConfig: next,
         logoUrl: next.text,
@@ -552,20 +632,24 @@ export const useStudioStore = create<StudioState>((set) => ({
     })),
   setLogoPosition: (pos) => set({ logoPosition: pos }),
   setOverlay: (url) => set({ activeOverlayUrl: url }),
-  setBackground: (url, type) =>
+  setBackground: (url, type) => {
+    const resolvedType =
+      type ||
+      (url &&
+      (url.endsWith(".mp4") ||
+        url.endsWith(".webm") ||
+        url.includes("mixkit") ||
+        url.includes("video"))
+        ? "video"
+        : "image");
+    persistStudioLayout({ activeBackgroundUrl: url, activeBackgroundType: resolvedType });
     set({
       activeBackgroundUrl: url,
-      activeBackgroundType:
-        type ||
-        (url &&
-        (url.endsWith(".mp4") ||
-          url.endsWith(".webm") ||
-          url.includes("mixkit") ||
-          url.includes("video"))
-          ? "video"
-          : "image"),
-    }),
-  setThemeColor: (color) =>
+      activeBackgroundType: resolvedType,
+    });
+  },
+  setThemeColor: (color) => {
+    persistStudioLayout({ activeThemeColor: color });
     set((s) => ({
       activeThemeColor: color,
       activeBanner: s.activeBanner ? { ...s.activeBanner, themeColor: color } : null,
@@ -573,7 +657,8 @@ export const useStudioStore = create<StudioState>((set) => ({
         ...s.customLayoutConfig,
         highlightColor: color,
       },
-    })),
+    }));
+  },
   setBanner: (banner) => set({ activeBanner: banner }),
   setTicker: (text, show) =>
     set((s) => ({

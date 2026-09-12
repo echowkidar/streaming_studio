@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
@@ -203,14 +203,15 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 // POST /api/broadcasts/:broadcastId/stream/start
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { destinationIds, roomName } = req.body;
+    const { destinationIds, roomName, directDestinations } = req.body;
     const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
 
     const result = await streamer.startBroadcastStream(
       req.params.broadcastId,
       roomName || `studio-${req.params.broadcastId}`,
-      destinationIds || []
+      destinationIds || [],
+      directDestinations
     );
 
     res.status(result.success ? 200 : 400).json(result);
@@ -220,11 +221,17 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
 });
 
 // POST /api/broadcasts/:broadcastId/stream/chunk
-router.post('/:broadcastId/stream/chunk', (req: Request, res: Response, next: NextFunction): void => {
+router.post('/:broadcastId/stream/chunk', express.raw({ type: '*/*', limit: '50mb' }), (req: Request, res: Response, next: NextFunction): void => {
   try {
     const broadcastId = req.params.broadcastId;
     const { RtmpStreamerService } = require('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
+
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      streamer.pushChunk(broadcastId, req.body);
+      res.status(200).json({ success: true });
+      return;
+    }
 
     req.on('data', (chunk: Buffer) => {
       streamer.pushChunk(broadcastId, chunk);

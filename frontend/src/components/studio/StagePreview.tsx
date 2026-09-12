@@ -667,7 +667,12 @@ export const StagePreview: React.FC = () => {
     if (!p) return null;
     const isScreen = p.role === "screen" || p.isScreen === true;
     return (
-      <div key={p.id || index} className={cn("relative w-full h-full", extraClasses)}>
+      <div
+        key={p.id || index}
+        data-participant-tile="true"
+        data-participant-name={p.name || "Guest"}
+        className={cn("relative w-full h-full", extraClasses)}
+      >
         <VideoTrackView
           id={p.id}
           track={p.videoTrack}
@@ -981,6 +986,7 @@ export const StagePreview: React.FC = () => {
   return (
     <div
       ref={stageContainerRef}
+      id="livestudio-stage-container"
       onClick={() => setSelectedParticipantId(null)}
       className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
       style={{
@@ -1031,6 +1037,9 @@ export const StagePreview: React.FC = () => {
         <div className="absolute top-3 right-4 z-30 flex items-center gap-2 bg-black/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/40 shadow-xl pointer-events-auto">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
           <span className="text-[11px] font-medium text-slate-200">Custom Stage Layout</span>
+          <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-md border border-emerald-500/30">
+            Saved ✓
+          </span>
           <button
             onClick={(e) => {
               e.stopPropagation();

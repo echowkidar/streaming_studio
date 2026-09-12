@@ -43,6 +43,7 @@ import { DeviceSettingsModal } from "@/components/studio/DeviceSettingsModal";
 import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager";
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { GoLiveModal } from "@/components/studio/GoLiveModal";
+import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
@@ -212,14 +213,42 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleGoLive = async (destinationIds: string[]) => {
     try {
+      // Gather any direct destinations from local custom storage
+      let directDestinations: Array<{ rtmpUrl: string; streamKey?: string }> = [];
+      if (typeof window !== "undefined") {
+        try {
+          const localSaved = localStorage.getItem("livestudio_custom_destinations");
+          if (localSaved) {
+            const parsed = JSON.parse(localSaved);
+            if (Array.isArray(parsed)) {
+              directDestinations = parsed
+                .filter((d: { id: string }) => destinationIds.includes(d.id))
+                .map((d: { rtmpUrl: string; streamKey?: string }) => ({
+                  rtmpUrl: d.rtmpUrl,
+                  streamKey: d.streamKey,
+                }));
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 1. Tell backend to spawn FFmpeg RTMP streamers for YouTube / Facebook / Twitch
       await fetch(`/api/broadcasts/${params.id}/stream/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           destinationIds,
           roomName,
+          directDestinations,
         }),
       });
+
+      // 2. Start capturing live stage canvas + mixed audio and streaming chunks to backend
+      const stageEl = document.getElementById("livestudio-stage-container");
+      await stageBroadcaster.start(stageEl, params.id);
+
       startLive();
     } catch (e) {
       console.error("Failed to start RTMP stream:", e);
@@ -230,20 +259,25 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const handleEndBroadcast = async () => {
     if (!confirm("Are you sure you want to end this live broadcast?")) return;
     try {
+      stageBroadcaster.stop();
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {
+      stageBroadcaster.stop();
       endLive();
     }
   };
 
-  // Sync LiveKit participants to studio store
+  // Sync LiveKit participants to studio store and refresh broadcast audio mix
   useEffect(() => {
     if (liveParticipants.length > 0) {
       useStudioStore.getState().setParticipants(liveParticipants);
+      if (stageBroadcaster.isStreaming()) {
+        stageBroadcaster.refreshAudioConnections();
+      }
     }
   }, [liveParticipants]);
 
