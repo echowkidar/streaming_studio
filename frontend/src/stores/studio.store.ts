@@ -15,7 +15,20 @@ export type StudioLayout =
   | "screen-full" 
   | "presentation" 
   | "podcast" 
-  | "interview";
+  | "interview"
+  | "custom";
+
+export interface CustomLayoutConfig {
+  mode: "grid" | "hero-side" | "hero-bottom" | "pip" | "cinema";
+  columns: 1 | 2 | 3 | 4;
+  gap: number; // 0, 8, 12, 16, 24
+  borderRadius: number; // 0, 8, 16, 24
+  heroParticipantId: string | number | null;
+  pipPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  pipSize: "small" | "medium" | "large";
+  highlightColor: string;
+  showSpeakerBorder: boolean;
+}
 
 interface StudioState {
   broadcastTitle: string;
@@ -29,6 +42,8 @@ interface StudioState {
   // Layout
   activeLayout: StudioLayout;
   setLayout: (layout: StudioLayout) => void;
+  customLayoutConfig: CustomLayoutConfig;
+  setCustomLayoutConfig: (config: Partial<CustomLayoutConfig>) => void;
 
   // Audio / Video device states for local user
   micEnabled: boolean;
@@ -94,6 +109,22 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   activeLayout: "speaker-large",
   setLayout: (layout) => set({ activeLayout: layout }),
+
+  customLayoutConfig: {
+    mode: "hero-side",
+    columns: 2,
+    gap: 12,
+    borderRadius: 16,
+    heroParticipantId: null,
+    pipPosition: "bottom-right",
+    pipSize: "medium",
+    highlightColor: "#6366f1",
+    showSpeakerBorder: true,
+  },
+  setCustomLayoutConfig: (config) =>
+    set((s) => ({
+      customLayoutConfig: { ...s.customLayoutConfig, ...config },
+    })),
 
   micEnabled: true,
   camEnabled: true,

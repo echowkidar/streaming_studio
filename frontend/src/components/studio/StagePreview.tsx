@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 export const StagePreview: React.FC = () => {
   const {
     activeLayout,
+    customLayoutConfig,
     participants,
     showLogo,
     logoPosition,
@@ -60,6 +61,155 @@ export const StagePreview: React.FC = () => {
           </div>
           <p className="text-sm font-medium">Stage is empty</p>
           <p className="text-xs text-slate-600">Add participants from the right panel to bring them on stage</p>
+        </div>
+      );
+    }
+
+    // Custom Layout Studio Mode
+    if (activeLayout === "custom") {
+      const {
+        mode = "hero-side",
+        columns = 2,
+        gap = 12,
+        borderRadius = 16,
+        heroParticipantId,
+        pipPosition = "bottom-right",
+        pipSize = "medium",
+        highlightColor = "#6366f1",
+        showSpeakerBorder = true,
+      } = customLayoutConfig || {};
+
+      const heroIndex = heroParticipantId
+        ? onStageParticipants.findIndex((p) => String(p.id) === String(heroParticipantId))
+        : 0;
+      const validHeroIndex = heroIndex !== -1 ? heroIndex : 0;
+      const heroParticipant = onStageParticipants[validHeroIndex] || onStageParticipants[0];
+      const otherParticipants = onStageParticipants.filter((_, idx) => idx !== validHeroIndex);
+
+      const tileWrapper = (p: Participant, idx: number, extraClass = "") => {
+        const isSpeaker = p.isSpeaking && showSpeakerBorder;
+        return (
+          <div
+            key={p.id}
+            className={cn(
+              "relative w-full h-full transition-all duration-200 overflow-hidden",
+              isSpeaker && "ring-2",
+              extraClass
+            )}
+            style={{
+              borderRadius: `${borderRadius}px`,
+              borderColor: isSpeaker ? highlightColor : undefined,
+              boxShadow: isSpeaker ? `0 0 20px ${highlightColor}40` : undefined,
+            }}
+          >
+            {renderTile(p, idx, "w-full h-full")}
+          </div>
+        );
+      };
+
+      if (mode === "hero-side") {
+        return (
+          <div className="w-full h-full flex p-3 min-w-0 min-h-0" style={{ gap: `${gap}px` }}>
+            <div className="flex-[3] h-full min-w-0 min-h-0">
+              {tileWrapper(heroParticipant, 0)}
+            </div>
+            {otherParticipants.length > 0 && (
+              <div className="flex-1 flex flex-col h-full min-w-0 min-h-0" style={{ gap: `${gap}px` }}>
+                {otherParticipants.map((p, idx) => (
+                  <div key={p.id} className="flex-1 min-h-0 min-w-0">
+                    {tileWrapper(p, idx + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (mode === "hero-bottom") {
+        return (
+          <div className="w-full h-full flex flex-col p-3 min-w-0 min-h-0" style={{ gap: `${gap}px` }}>
+            <div className="flex-[3] w-full min-h-0 min-w-0">
+              {tileWrapper(heroParticipant, 0)}
+            </div>
+            {otherParticipants.length > 0 && (
+              <div className="flex-1 flex flex-row w-full min-h-0 min-w-0" style={{ gap: `${gap}px` }}>
+                {otherParticipants.map((p, idx) => (
+                  <div key={p.id} className="flex-1 min-w-0 min-h-0">
+                    {tileWrapper(p, idx + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (mode === "pip") {
+        const pipPositions: Record<string, string> = {
+          "top-left": "top-6 left-6",
+          "top-right": "top-6 right-6",
+          "bottom-left": "bottom-6 left-6",
+          "bottom-right": "bottom-6 right-6",
+        };
+        const pipSizes: Record<string, string> = {
+          small: "w-48 h-28",
+          medium: "w-64 h-36",
+          large: "w-80 h-44",
+        };
+        return (
+          <div className="w-full h-full relative p-3">
+            {tileWrapper(heroParticipant, 0)}
+            {otherParticipants.length > 0 && (
+              <div className={cn("absolute z-20 shadow-2xl transition-all duration-300", pipPositions[pipPosition] || "bottom-6 right-6", pipSizes[pipSize] || "w-64 h-36")}>
+                {tileWrapper(otherParticipants[0], 1, "border-2 border-indigo-500 shadow-2xl")}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (mode === "cinema") {
+        return (
+          <div className="w-full h-full flex items-center justify-center p-3">
+            <div
+              className="w-full h-full flex p-2 bg-black/40 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden"
+              style={{ gap: `${gap}px` }}
+            >
+              <div className="flex-[4] h-full min-w-0 min-h-0">
+                {tileWrapper(heroParticipant, 0)}
+              </div>
+              {otherParticipants.length > 0 && (
+                <div className="flex-1 flex flex-col h-full min-w-0 min-h-0" style={{ gap: `${gap}px` }}>
+                  {otherParticipants.map((p, idx) => (
+                    <div key={p.id} className="flex-1 min-h-0 min-w-0">
+                      {tileWrapper(p, idx + 1)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      const colClass = {
+        1: "grid-cols-1",
+        2: "grid-cols-2",
+        3: "grid-cols-3",
+        4: "grid-cols-4",
+      }[columns] || "grid-cols-2";
+
+      return (
+        <div
+          className={cn("w-full h-full grid p-3", colClass)}
+          style={{ gap: `${gap}px` }}
+        >
+          {onStageParticipants.map((p, idx) => (
+            <div key={p.id} className="min-h-0 min-w-0 h-full w-full">
+              {tileWrapper(p, idx)}
+            </div>
+          ))}
         </div>
       );
     }
