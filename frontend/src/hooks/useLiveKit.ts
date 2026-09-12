@@ -14,6 +14,7 @@ import {
   RemoteTrack,
 } from "livekit-client";
 import { Participant } from "@/types";
+import { useStudioStore } from "@/stores/studio.store";
 
 interface UseLiveKitOptions {
   roomName: string;
@@ -359,21 +360,28 @@ export function useLiveKit({
           syncParticipants(newRoom);
           if (role === "HOST" && typeof window !== "undefined") {
             try {
-              const { useStudioStore } = require("@/stores/studio.store");
               const currentStore = useStudioStore.getState();
               const onStageIds = currentStore.participants
                 .filter((p: any) => p.status === "ON_STAGE")
                 .map((p: any) => p.id);
               setTimeout(() => {
-                if (newRoom.localParticipant) {
-                  const payload = JSON.stringify({
-                    type: "STAGE_SYNC",
-                    senderId: newRoom.localParticipant.identity,
-                    stageParticipantIds: onStageIds.map(String),
-                    activeLayout: currentStore.activeLayout,
-                    layoutSplitRatio: currentStore.layoutSplitRatio,
-                  });
-                  newRoom.localParticipant.publishData(new TextEncoder().encode(payload), { reliable: true });
+                try {
+                  if (newRoom.localParticipant && newRoom.state === "connected") {
+                    const payload = JSON.stringify({
+                      type: "STAGE_SYNC",
+                      senderId: newRoom.localParticipant.identity,
+                      stageParticipantIds: onStageIds.map(String),
+                      activeLayout: currentStore.activeLayout,
+                      layoutSplitRatio: currentStore.layoutSplitRatio,
+                    });
+                    newRoom.localParticipant
+                      .publishData(new TextEncoder().encode(payload), { reliable: true })
+                      .catch((err) => {
+                        console.warn("ParticipantConnected publishData error:", err);
+                      });
+                  }
+                } catch (timeoutErr) {
+                  console.warn("ParticipantConnected timeout sync error:", timeoutErr);
                 }
               }, 600);
             } catch {
@@ -416,7 +424,6 @@ export function useLiveKit({
               // Only GUEST/CO_HOST/PRODUCER sync their local store from incoming host broadcasts!
               if (role !== "HOST" && typeof window !== "undefined") {
                 try {
-                  const { useStudioStore } = require("@/stores/studio.store");
                   if (data.activeLayout) {
                     useStudioStore.getState().setLayout(data.activeLayout);
                   }
@@ -595,13 +602,12 @@ export function useLiveKit({
   // Broadcast stage sync across room
   const publishStageSync = useCallback(
     async (stageParticipantIds: (string | number)[], layout?: string, splitRatio?: number) => {
-      if (!roomRef.current?.localParticipant) return;
+      if (!roomRef.current?.localParticipant || roomRef.current.state !== "connected") return;
       try {
         let activeL = layout;
         let splitR = splitRatio;
         if (typeof window !== "undefined" && (!activeL || splitR === undefined)) {
           try {
-            const { useStudioStore } = require("@/stores/studio.store");
             const st = useStudioStore.getState();
             if (!activeL) activeL = st.activeLayout;
             if (splitR === undefined) splitR = st.layoutSplitRatio;
@@ -616,9 +622,11 @@ export function useLiveKit({
           activeLayout: activeL,
           layoutSplitRatio: splitR ?? 50,
         });
-        await roomRef.current.localParticipant.publishData(new TextEncoder().encode(payload), {
-          reliable: true,
-        });
+        await roomRef.current.localParticipant
+          .publishData(new TextEncoder().encode(payload), { reliable: true })
+          .catch((err) => {
+            console.warn("publishStageSync publishData error:", err);
+          });
       } catch (err) {
         console.warn("Failed to broadcast stage sync:", err);
       }

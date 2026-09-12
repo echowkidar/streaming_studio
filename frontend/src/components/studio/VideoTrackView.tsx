@@ -48,7 +48,7 @@ export function VideoTrackView({
     activeThemeColor 
   } = useStudioStore();
 
-  const tileId = String(id || name);
+  const tileId = String(id || name || "tile");
   const transform = tileTransforms[tileId] || {
     fitMode: isScreen ? "contain" : "cover",
     zoom: 1,
@@ -79,8 +79,12 @@ export function VideoTrackView({
             // ignore
           }
         }
-        track.attach(videoEl);
-        attachedTrackRef.current = track;
+        try {
+          track.attach(videoEl);
+          attachedTrackRef.current = track;
+        } catch (attachErr) {
+          console.warn("Error attaching video track:", attachErr);
+        }
       }
     } else if (mediaStream) {
       if (videoEl.srcObject !== mediaStream) {
@@ -170,9 +174,11 @@ export function VideoTrackView({
     setIsDraggingPan(false);
   };
 
-  const initials = name
+  const displayName = name || "Guest";
+  const initials = displayName
     .split(" ")
-    .map((n) => n[0])
+    .map((n) => (n ? n[0] : ""))
+    .filter(Boolean)
     .join("")
     .toUpperCase()
     .slice(0, 2) || "P";

@@ -275,15 +275,16 @@ export const StagePreview: React.FC = () => {
   };
 
   // Helper to render individual participant tile using real WebRTC VideoTrackView
-  const renderTile = (p: Participant, index: number, extraClasses = "") => {
+  const renderTile = (p?: Participant | null, index: number = 0, extraClasses = "") => {
+    if (!p) return null;
     const isScreen = p.role === "screen" || p.isScreen === true;
     return (
-      <div key={p.id} className={cn("relative w-full h-full", extraClasses)}>
+      <div key={p.id || index} className={cn("relative w-full h-full", extraClasses)}>
         <VideoTrackView
           id={p.id}
           track={p.videoTrack}
           audioTrack={p.audioTrack}
-          name={p.name}
+          name={p.name || "Guest"}
           isSpeaking={p.isSpeaking}
           micOn={p.micOn}
           camOn={p.camOn}

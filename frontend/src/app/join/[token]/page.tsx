@@ -31,7 +31,8 @@ import { AudioMeter } from "@/components/studio/AudioMeter";
 import { cn } from "@/lib/utils";
 
 export default function GuestJoinPage({ params }: { params: { token: string } }) {
-  const layoutSplitRatio = useStudioStore((s) => s.layoutSplitRatio);
+  const rawSplit = useStudioStore((s) => s.layoutSplitRatio);
+  const layoutSplitRatio = typeof rawSplit === "number" ? rawSplit : 50;
   const [displayName, setDisplayName] = useState("");
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -390,7 +391,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                           id={p.id}
                           track={p.videoTrack}
                           audioTrack={p.audioTrack}
-                          name={p.isLocal ? `${p.name} (You)` : p.name}
+                          name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
                           isSpeaking={p.isSpeaking}
                           micOn={p.micOn}
                           camOn={p.camOn}
@@ -404,7 +405,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               ) : (
                 /* Live Broadcast Stage: On-stage participants */
                 <div className="w-full h-full p-2.5 flex items-center justify-center">
-                  {onStageParticipants.length === 2 ? (
+                  {onStageParticipants.length === 2 && onStageParticipants[0] && onStageParticipants[1] ? (
                     <div className="w-full h-full flex items-center p-1 min-w-0 min-h-0 gap-2">
                       <div
                         style={{
@@ -417,7 +418,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                           id={onStageParticipants[0].id}
                           track={onStageParticipants[0].videoTrack}
                           audioTrack={onStageParticipants[0].audioTrack}
-                          name={onStageParticipants[0].isLocal ? `${onStageParticipants[0].name} (You)` : onStageParticipants[0].name}
+                          name={onStageParticipants[0].isLocal ? `${onStageParticipants[0].name || "Guest"} (You)` : (onStageParticipants[0].name || "Guest")}
                           isSpeaking={onStageParticipants[0].isSpeaking}
                           micOn={onStageParticipants[0].micOn}
                           camOn={onStageParticipants[0].camOn}
@@ -436,7 +437,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                           id={onStageParticipants[1].id}
                           track={onStageParticipants[1].videoTrack}
                           audioTrack={onStageParticipants[1].audioTrack}
-                          name={onStageParticipants[1].isLocal ? `${onStageParticipants[1].name} (You)` : onStageParticipants[1].name}
+                          name={onStageParticipants[1].isLocal ? `${onStageParticipants[1].name || "Guest"} (You)` : (onStageParticipants[1].name || "Guest")}
                           isSpeaking={onStageParticipants[1].isSpeaking}
                           micOn={onStageParticipants[1].micOn}
                           camOn={onStageParticipants[1].camOn}
@@ -459,7 +460,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                             id={p.id}
                             track={p.videoTrack}
                             audioTrack={p.audioTrack}
-                            name={p.isLocal ? `${p.name} (You)` : p.name}
+                            name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
                             isSpeaking={p.isSpeaking}
                             micOn={p.micOn}
                             camOn={p.camOn}
@@ -491,7 +492,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                         id={p.id}
                         track={p.videoTrack}
                         audioTrack={p.audioTrack}
-                        name={p.isLocal ? `${p.name} (You)` : p.name}
+                        name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
                         isSpeaking={p.isSpeaking}
                         micOn={p.micOn}
                         camOn={p.camOn}
