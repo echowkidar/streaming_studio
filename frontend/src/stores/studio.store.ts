@@ -32,6 +32,7 @@ export interface CustomLayoutConfig {
 
 interface StudioState {
   broadcastTitle: string;
+  setTitle: (title: string) => void;
   isLive: boolean;
   isRecording: boolean;
   recordDuration: number;
@@ -85,6 +86,7 @@ interface StudioState {
   activeStageOverlay: StageOverlayAsset | null;
   overlayHistory: StageOverlayAsset[];
   setStageOverlay: (overlay: StageOverlayAsset | null) => void;
+  toggleStageOverlay: (overlay: StageOverlayAsset) => void;
   updateStageOverlay: (updates: Partial<StageOverlayAsset>) => void;
   toggleStageOverlayVisibility: () => void;
   saveToOverlayHistory: (overlay: StageOverlayAsset) => void;
@@ -123,8 +125,90 @@ interface StudioState {
   endLive: () => void;
   startRecord: () => void;
   stopRecord: () => void;
-  setTitle: (title: string) => void;
 }
+
+export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
+  {
+    id: "preset-badge",
+    name: "Round Speaker Badge",
+    type: "image",
+    url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
+    position: "bottom-right",
+    scale: 22,
+    cropMode: "circle",
+    borderRadius: 9999,
+    opacity: 100,
+    isShowing: true,
+    isMuted: true,
+    isLooping: true,
+  },
+  {
+    id: "preset-sponsor",
+    name: "Sponsor Spotlight",
+    type: "image",
+    url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=800&q=80",
+    position: "top-right",
+    scale: 28,
+    cropMode: "cover",
+    borderRadius: 16,
+    opacity: 100,
+    isShowing: true,
+    isMuted: true,
+    isLooping: true,
+  },
+  {
+    id: "sample-qa-graphic",
+    name: "Live Q&A Box",
+    type: "image",
+    url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+    position: "bottom-left",
+    scale: 30,
+    cropMode: "cover",
+    borderRadius: 12,
+    opacity: 95,
+    isShowing: true,
+  },
+  {
+    id: "preset-breaking",
+    name: "Breaking Alert Graphic",
+    type: "image",
+    url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
+    position: "top-left",
+    scale: 32,
+    cropMode: "cover",
+    borderRadius: 12,
+    opacity: 100,
+    isShowing: true,
+    isMuted: true,
+    isLooping: true,
+  },
+  {
+    id: "preset-video-clip",
+    name: "Video Showcase Clip",
+    type: "video",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    position: "bottom-left",
+    scale: 35,
+    cropMode: "cover",
+    borderRadius: 16,
+    opacity: 100,
+    isShowing: true,
+    isMuted: true,
+    isLooping: true,
+  },
+  {
+    id: "sample-sponsor-badge",
+    name: "Sponsor Brand Card",
+    type: "image",
+    url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
+    position: "top-right",
+    scale: 28,
+    cropMode: "cover",
+    borderRadius: 16,
+    opacity: 100,
+    isShowing: true,
+  },
+];
 
 export const useStudioStore = create<StudioState>((set) => ({
   broadcastTitle: "Product Launch & Live Q&A Keynote",
@@ -214,39 +298,28 @@ export const useStudioStore = create<StudioState>((set) => ({
     if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("livestudio_custom_overlays");
-        if (saved) return JSON.parse(saved);
+        if (saved) {
+          const parsed: StageOverlayAsset[] = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const existingIds = new Set(parsed.map((item) => item.id));
+            const missingDefaults = DEFAULT_STUDIO_OVERLAYS.filter((d) => !existingIds.has(d.id));
+            return [...parsed, ...missingDefaults];
+          }
+        }
       } catch (e) {
         console.warn("Failed to load saved overlays:", e);
       }
     }
-    return [
-      {
-        id: "sample-sponsor-badge",
-        name: "Sponsor Brand Card",
-        type: "image" as const,
-        url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
-        position: "top-right" as const,
-        scale: 28,
-        cropMode: "cover" as const,
-        borderRadius: 16,
-        opacity: 100,
-        isShowing: true,
-      },
-      {
-        id: "sample-qa-graphic",
-        name: "Live Q&A Box",
-        type: "image" as const,
-        url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-        position: "bottom-left" as const,
-        scale: 32,
-        cropMode: "cover" as const,
-        borderRadius: 12,
-        opacity: 95,
-        isShowing: true,
-      },
-    ];
+    return DEFAULT_STUDIO_OVERLAYS;
   })(),
   setStageOverlay: (overlay) => set({ activeStageOverlay: overlay }),
+  toggleStageOverlay: (overlay) =>
+    set((s) => {
+      if (s.activeStageOverlay?.id === overlay.id) {
+        return { activeStageOverlay: null };
+      }
+      return { activeStageOverlay: overlay };
+    }),
   updateStageOverlay: (updates) =>
     set((s) => {
       if (!s.activeStageOverlay) return {};
@@ -308,40 +381,14 @@ export const useStudioStore = create<StudioState>((set) => ({
     }),
   restoreDefaultOverlays: () =>
     set(() => {
-      const defaults: StageOverlayAsset[] = [
-        {
-          id: "sample-sponsor-badge",
-          name: "Sponsor Brand Card",
-          type: "image",
-          url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
-          position: "top-right",
-          scale: 28,
-          cropMode: "cover",
-          borderRadius: 16,
-          opacity: 100,
-          isShowing: true,
-        },
-        {
-          id: "sample-qa-graphic",
-          name: "Live Q&A Box",
-          type: "image",
-          url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-          position: "bottom-left",
-          scale: 32,
-          cropMode: "cover",
-          borderRadius: 12,
-          opacity: 95,
-          isShowing: true,
-        },
-      ];
       if (typeof window !== "undefined") {
         try {
-          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(defaults));
+          localStorage.setItem("livestudio_custom_overlays", JSON.stringify(DEFAULT_STUDIO_OVERLAYS));
         } catch {
           // ignore
         }
       }
-      return { overlayHistory: defaults };
+      return { overlayHistory: DEFAULT_STUDIO_OVERLAYS };
     }),
 
   activeMedia: null,

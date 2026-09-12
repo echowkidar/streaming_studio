@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Undo2,
   ExternalLink,
+  FolderOpen,
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
 import { useAuthStore } from "@/stores/auth.store";
@@ -41,6 +42,73 @@ interface CustomBgItem {
   name: string;
   url: string;
 }
+
+const STUDIO_SAMPLE_MEDIA = [
+  {
+    id: "media-speaker-badge",
+    name: "Round Speaker Badge",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
+    cropMode: "circle" as const,
+    description: "Speaker circular avatar badge for hosts or guests",
+  },
+  {
+    id: "media-sponsor-spotlight",
+    name: "Sponsor Spotlight Card",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=800&q=80",
+    cropMode: "cover" as const,
+    description: "Premium sponsor banner with clean glass border",
+  },
+  {
+    id: "media-qa-graphic",
+    name: "Live Q&A Box",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+    cropMode: "cover" as const,
+    description: "Audience questions and chat callout box",
+  },
+  {
+    id: "media-breaking-alert",
+    name: "Breaking Alert Graphic",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1585829365295-ab7cd400c167?auto=format&fit=crop&w=800&q=80",
+    cropMode: "cover" as const,
+    description: "High priority breaking news headline badge",
+  },
+  {
+    id: "media-video-fire",
+    name: "Video Showcase Clip",
+    type: "video" as const,
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    cropMode: "cover" as const,
+    description: "Full HD looping video overlay for products or promos",
+  },
+  {
+    id: "media-neon-frame",
+    name: "Cyber Neon Frame",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
+    cropMode: "cover" as const,
+    description: "Futuristic neon glowing frame overlay",
+  },
+  {
+    id: "media-speaker-male",
+    name: "Speaker Avatar (Co-Host)",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&q=80",
+    cropMode: "circle" as const,
+    description: "Co-host circular avatar badge",
+  },
+  {
+    id: "media-brand-sponsor",
+    name: "Sponsor Brand Card",
+    type: "image" as const,
+    url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=600&q=80",
+    cropMode: "cover" as const,
+    description: "Corporate sponsor logo and card",
+  },
+];
 
 export const BrandPanel: React.FC = () => {
   const { user } = useAuthStore();
@@ -58,6 +126,7 @@ export const BrandPanel: React.FC = () => {
     setOverlay,
     activeStageOverlay,
     setStageOverlay,
+    toggleStageOverlay,
     updateStageOverlay,
     toggleStageOverlayVisibility,
     overlayHistory,
@@ -83,9 +152,82 @@ export const BrandPanel: React.FC = () => {
   // Overlay File Upload & State
   const overlayFileInputRef = useRef<HTMLInputElement>(null);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
+  const modalFileInputRef = useRef<HTMLInputElement>(null);
   const [replacingOverlayId, setReplacingOverlayId] = useState<string | null>(null);
   const [recentlyDeletedOverlay, setRecentlyDeletedOverlay] = useState<StageOverlayAsset | null>(null);
   const [overlayUploadError, setOverlayUploadError] = useState<string | null>(null);
+  const [resetSuccessNotice, setResetSuccessNotice] = useState<string | null>(null);
+
+  // Modal State for Replacing Media and Browsing Media Library
+  const [targetReplaceOverlay, setTargetReplaceOverlay] = useState<StageOverlayAsset | null>(null);
+  const [isMediaLibraryModalOpen, setIsMediaLibraryModalOpen] = useState(false);
+  const [modalTab, setModalTab] = useState<"library" | "upload" | "url">("library");
+  const [newMediaUrl, setNewMediaUrl] = useState<string>("");
+  const [newMediaType, setNewMediaType] = useState<"image" | "video">("image");
+  const [newMediaName, setNewMediaName] = useState<string>("");
+  const [newCropMode, setNewCropMode] = useState<"fit" | "cover" | "square" | "circle">("fit");
+  const [urlInput, setUrlInput] = useState<string>("");
+
+  const openReplaceModal = (item: StageOverlayAsset, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setTargetReplaceOverlay(item);
+    setNewMediaUrl(item.url);
+    setNewMediaType(item.type);
+    setNewMediaName(item.name);
+    setNewCropMode(item.cropMode || "fit");
+    setUrlInput(item.url.startsWith("http") ? item.url : "");
+    setModalTab("library");
+  };
+
+  const handleModalFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith("video/");
+    const fileUrl = URL.createObjectURL(file);
+    setNewMediaUrl(fileUrl);
+    setNewMediaType(isVideo ? "video" : "image");
+    if (!newMediaName || newMediaName === targetReplaceOverlay?.name) {
+      setNewMediaName(file.name.replace(/\.[^/.]+$/, "").slice(0, 18));
+    }
+    e.target.value = "";
+  };
+
+  const handleSaveReplacedMedia = () => {
+    if (!targetReplaceOverlay || !newMediaUrl) return;
+    updateOverlayInHistory(targetReplaceOverlay.id, {
+      url: newMediaUrl,
+      type: newMediaType,
+      name: newMediaName.trim() || targetReplaceOverlay.name,
+      cropMode: newCropMode,
+    });
+    setTargetReplaceOverlay(null);
+  };
+
+  const handleSelectFromMediaLibrary = (asset: (typeof STUDIO_SAMPLE_MEDIA)[0]) => {
+    const newOverlay: StageOverlayAsset = {
+      id: `overlay-${Date.now()}`,
+      name: asset.name,
+      type: asset.type,
+      url: asset.url,
+      position: "top-right",
+      scale: 30,
+      cropMode: asset.cropMode,
+      borderRadius: asset.cropMode === "circle" ? 9999 : 16,
+      opacity: 100,
+      isShowing: true,
+      isMuted: true,
+      isLooping: true,
+    };
+    saveToOverlayHistory(newOverlay);
+    setStageOverlay(newOverlay);
+    setIsMediaLibraryModalOpen(false);
+  };
+
+  const handleResetSamples = () => {
+    restoreDefaultOverlays();
+    setResetSuccessNotice("All 6 sample overlays (Round Speaker Badge, Sponsor Spotlight, etc.) restored!");
+    setTimeout(() => setResetSuccessNotice(null), 4000);
+  };
 
   const handleReplaceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -130,72 +272,6 @@ export const BrandPanel: React.FC = () => {
     }
   };
 
-  const handleRename = (item: StageOverlayAsset, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newName = window.prompt("Enter new name for this overlay:", item.name);
-    if (newName && newName.trim()) {
-      updateOverlayInHistory(item.id, { name: newName.trim() });
-    }
-  };
-
-  const overlayPresets: StageOverlayAsset[] = [
-    {
-      id: "preset-sponsor",
-      name: "Sponsor Spotlight",
-      type: "image",
-      url: "https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=800&q=80",
-      position: "top-right",
-      scale: 30,
-      cropMode: "cover",
-      borderRadius: 16,
-      opacity: 100,
-      isShowing: true,
-      isMuted: true,
-      isLooping: true,
-    },
-    {
-      id: "preset-badge",
-      name: "Round Speaker Badge",
-      type: "image",
-      url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
-      position: "bottom-right",
-      scale: 22,
-      cropMode: "circle",
-      borderRadius: 9999,
-      opacity: 100,
-      isShowing: true,
-      isMuted: true,
-      isLooping: true,
-    },
-    {
-      id: "preset-video-clip",
-      name: "Video Showcase Clip",
-      type: "video",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      position: "bottom-left",
-      scale: 35,
-      cropMode: "cover",
-      borderRadius: 16,
-      opacity: 100,
-      isShowing: true,
-      isMuted: true,
-      isLooping: true,
-    },
-    {
-      id: "preset-breaking",
-      name: "Breaking Alert Graphic",
-      type: "image",
-      url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80",
-      position: "top-left",
-      scale: 38,
-      cropMode: "cover",
-      borderRadius: 12,
-      opacity: 95,
-      isShowing: true,
-      isMuted: true,
-      isLooping: true,
-    },
-  ];
 
   const handleOverlayFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -667,14 +743,23 @@ export const BrandPanel: React.FC = () => {
           onChange={handleReplaceFile}
         />
 
-        {/* Upload Overlay Button */}
-        <button
-          onClick={() => overlayFileInputRef.current?.click()}
-          className="w-full py-2.5 px-3 rounded-xl border border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
-        >
-          <Upload className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
-          <span>Upload Overlay (Image or Video Clip)</span>
-        </button>
+        {/* Action buttons: Upload File & Browse Media Library */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => overlayFileInputRef.current?.click()}
+            className="py-2.5 px-3 rounded-xl border border-dashed border-indigo-500/40 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
+          >
+            <Upload className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
+            <span>Upload File</span>
+          </button>
+          <button
+            onClick={() => setIsMediaLibraryModalOpen(true)}
+            className="py-2.5 px-3 rounded-xl border border-dashed border-cyan-500/40 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 hover:text-white transition-all flex items-center justify-center gap-2 text-xs font-medium group cursor-pointer shadow-sm"
+          >
+            <FolderOpen className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+            <span>Media Library</span>
+          </button>
+        </div>
 
         {overlayUploadError && (
           <p className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-1.5">
@@ -697,29 +782,26 @@ export const BrandPanel: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-[9px] text-slate-400 mt-0.5">
-                  Drag directly on stage or use controls below
+                  Showing on live stage • Click card below anytime to hide
                 </p>
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 <button
-                  onClick={toggleStageOverlayVisibility}
-                  className={cn(
-                    "p-1.5 rounded-lg border text-xs transition-colors",
-                    activeStageOverlay.isShowing
-                      ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
-                      : "bg-white/5 border-white/10 text-slate-400"
-                  )}
-                  title={activeStageOverlay.isShowing ? "Hide from stage" : "Show on stage"}
+                  onClick={() => openReplaceModal(activeStageOverlay)}
+                  className="px-2 py-1 rounded-lg text-[10px] font-medium bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-300 hover:text-white transition-colors flex items-center gap-1"
+                  title="Replace media image or video file"
                 >
-                  {activeStageOverlay.isShowing ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <RefreshCw className="w-3 h-3 text-indigo-400" />
+                  Replace
                 </button>
                 <button
                   onClick={() => setStageOverlay(null)}
-                  className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400"
-                  title="Remove from stage"
+                  className="px-2 py-1 rounded-lg text-[10px] font-medium bg-white/10 hover:bg-white/20 border border-white/10 text-slate-300 hover:text-white transition-colors flex items-center gap-1"
+                  title="Hide overlay from stage (remains saved in library below)"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <EyeOff className="w-3 h-3 text-amber-400" />
+                  Hide
                 </button>
               </div>
             </div>
@@ -875,118 +957,102 @@ export const BrandPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Preset Overlays Gallery */}
-        <div className="space-y-1.5 pt-1">
-          <span className="text-[10px] text-slate-400 font-medium">Studio Preset Overlays</span>
-          <div className="grid grid-cols-2 gap-2">
-            {overlayPresets.map((preset) => {
-              const isActive = activeStageOverlay?.id === preset.id;
-              return (
-                <div
-                  key={preset.id}
-                  onClick={() => setStageOverlay(preset)}
-                  className={cn(
-                    "p-2 rounded-xl border flex flex-col justify-between cursor-pointer transition-all group relative overflow-hidden h-18",
-                    isActive
-                      ? "border-indigo-500 bg-indigo-500/20 shadow-md shadow-indigo-500/10"
-                      : "border-white/5 bg-surface hover:border-white/15"
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] uppercase font-bold px-1 rounded bg-white/10 text-indigo-300">
-                      {preset.type}
-                    </span>
-                    {isActive && (
-                      <span className="p-0.5 rounded-full bg-emerald-500 text-white">
-                        <Check className="w-2.5 h-2.5" />
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <div className="font-semibold text-white text-[11px] truncate">{preset.name}</div>
-                    <div className="text-[9px] text-slate-400 truncate">{preset.cropMode} • {preset.scale}%</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Undo banner if an overlay was recently deleted */}
-        {recentlyDeletedOverlay && (
-          <div className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 animate-in fade-in duration-200">
-            <span className="text-[11px] truncate mr-2">Removed <strong>{recentlyDeletedOverlay.name}</strong></span>
-            <button
-              onClick={handleUndoDelete}
-              className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[10px] flex items-center gap-1 transition-colors shrink-0"
-            >
-              <Undo2 className="w-3 h-3" />
-              Undo
-            </button>
-          </div>
-        )}
-
-        {/* User's Uploaded Overlays Management Section */}
-        <div className="space-y-1.5 pt-1">
+        {/* Unified Overlays Gallery (StreamYard Parity) */}
+        <div className="space-y-2 pt-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-slate-400 font-medium">Your Uploaded Overlays</span>
-              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-white/10 text-slate-400 font-mono">
+              <span className="text-[11px] text-white font-semibold flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                Overlays & Badges
+              </span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold">
                 {overlayHistory.length}
               </span>
             </div>
-            <button
-              onClick={restoreDefaultOverlays}
-              className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
-              title="Restore sample overlay cards if accidentally deleted"
-            >
-              <RotateCcw className="w-2.5 h-2.5" />
-              Reset Samples
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsMediaLibraryModalOpen(true)}
+                className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                title="Browse existing studio media assets to add as an overlay"
+              >
+                <FolderOpen className="w-3 h-3 text-cyan-400" />
+                Media Library
+              </button>
+              <button
+                onClick={handleResetSamples}
+                className="text-[10px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                title="Restore all default sample overlays (Round Speaker Badge, Sponsor Spotlight, etc.)"
+              >
+                <RotateCcw className="w-2.5 h-2.5" />
+                Reset Samples
+              </button>
+            </div>
           </div>
 
+          {/* Reset Success Notice */}
+          {resetSuccessNotice && (
+            <div className="p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-center gap-2 animate-in fade-in duration-200">
+              <Check className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+              <span>{resetSuccessNotice}</span>
+            </div>
+          )}
+
+          {/* Undo banner if an overlay was recently deleted */}
+          {recentlyDeletedOverlay && (
+            <div className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200 animate-in fade-in duration-200">
+              <span className="text-[11px] truncate mr-2">Removed <strong>{recentlyDeletedOverlay.name}</strong></span>
+              <button
+                onClick={handleUndoDelete}
+                className="px-2 py-0.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-semibold text-[10px] flex items-center gap-1 transition-colors shrink-0"
+              >
+                <Undo2 className="w-3 h-3" />
+                Undo
+              </button>
+            </div>
+          )}
+
           {overlayHistory.length === 0 ? (
-            <div className="p-3 rounded-xl border border-dashed border-white/10 text-center space-y-2 bg-white/[0.02]">
-              <p className="text-[11px] text-slate-400">No custom overlays left.</p>
+            <div className="p-4 rounded-xl border border-dashed border-white/10 text-center space-y-2 bg-white/[0.02]">
+              <p className="text-xs text-slate-400">No overlays in library.</p>
               <div className="flex items-center justify-center gap-2">
                 <Button
                   size="sm"
                   variant="secondary"
                   onClick={() => overlayFileInputRef.current?.click()}
-                  className="h-6 text-[10px] px-2"
+                  className="h-7 text-[11px]"
                 >
-                  <Upload className="w-2.5 h-2.5 mr-1" />
-                  Upload
+                  <Upload className="w-3 h-3 mr-1" />
+                  Upload File
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={restoreDefaultOverlays}
-                  className="h-6 text-[10px] px-2 text-indigo-300"
+                  onClick={handleResetSamples}
+                  className="h-7 text-[11px] text-indigo-300"
                 >
-                  <RotateCcw className="w-2.5 h-2.5 mr-1" />
-                  Restore Defaults
+                  <RotateCcw className="w-3 h-3 mr-1" />
+                  Restore Samples
                 </Button>
               </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {overlayHistory.map((item) => {
-                const isSelected = activeStageOverlay?.id === item.id;
+                const isLive = activeStageOverlay?.id === item.id && activeStageOverlay.isShowing;
                 return (
                   <div
                     key={item.id}
-                    onClick={() => setStageOverlay(item)}
+                    onClick={() => toggleStageOverlay(item)}
                     className={cn(
-                      "group relative rounded-xl border overflow-hidden cursor-pointer transition-all h-20 flex flex-col justify-between p-2 bg-surface",
-                      isSelected
-                        ? "border-emerald-500 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-500/10"
-                        : "border-white/5 hover:border-white/20"
+                      "group relative rounded-xl border overflow-hidden cursor-pointer transition-all h-24 flex flex-col justify-between p-2.5 bg-surface select-none",
+                      isLive
+                        ? "border-emerald-500 ring-2 ring-emerald-500/40 shadow-lg shadow-emerald-500/15 bg-emerald-950/20"
+                        : "border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
                     )}
                   >
                     {/* Background Preview Thumbnail */}
                     <div
-                      className="absolute inset-0 pointer-events-none opacity-25 group-hover:opacity-40 transition-opacity bg-cover bg-center"
+                      className="absolute inset-0 pointer-events-none opacity-30 group-hover:opacity-45 transition-opacity bg-cover bg-center"
                       style={{
                         backgroundImage: item.type === "image" ? `url("${item.url}")` : undefined,
                       }}
@@ -1001,56 +1067,51 @@ export const BrandPanel: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Top action row */}
+                    {/* Gradient shade over background */}
+                    <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+
+                    {/* Top Action Row */}
                     <div className="relative z-10 flex items-center justify-between">
-                      <span className="text-[9px] uppercase font-bold px-1 rounded bg-black/60 text-slate-300 backdrop-blur-sm">
+                      <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-black/70 text-slate-300 backdrop-blur-sm border border-white/10">
                         {item.type}
                       </span>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {/* Change / Replace File */}
+                      <div className="flex items-center gap-1">
+                        {/* Replace / Edit Media Button */}
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setReplacingOverlayId(item.id);
-                            replaceFileInputRef.current?.click();
-                          }}
-                          className="p-1 rounded bg-black/70 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors"
-                          title="Change / Replace image or video file"
+                          onClick={(e) => openReplaceModal(item, e)}
+                          className="p-1 rounded bg-black/80 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors border border-white/10"
+                          title="Manage & Replace image or video"
                         >
                           <Pencil className="w-2.5 h-2.5" />
                         </button>
-                        {/* Rename */}
-                        <button
-                          onClick={(e) => handleRename(item, e)}
-                          className="p-1 rounded bg-black/70 hover:bg-white/20 text-slate-300 hover:text-white transition-colors"
-                          title="Rename overlay"
-                        >
-                          <Type className="w-2.5 h-2.5" />
-                        </button>
-                        {/* Delete with Undo */}
+                        {/* Delete / Remove Card */}
                         <button
                           onClick={(e) => handleDeleteWithUndo(item, e)}
-                          className="p-1 rounded bg-black/70 hover:bg-rose-600 text-slate-300 hover:text-white transition-colors"
-                          title="Remove overlay (Undo available)"
+                          className="p-1 rounded bg-black/80 hover:bg-rose-600 text-slate-300 hover:text-white transition-colors border border-white/10"
+                          title="Delete overlay (Undo available)"
                         >
                           <X className="w-2.5 h-2.5" />
                         </button>
                       </div>
                     </div>
 
-                    {/* Bottom Info */}
+                    {/* Bottom Info & Live Status */}
                     <div className="relative z-10">
-                      <div className="font-semibold text-white text-[11px] truncate drop-shadow-sm">
+                      <div className="font-semibold text-white text-[11px] truncate drop-shadow-md">
                         {item.name}
                       </div>
-                      <div className="text-[9px] text-slate-300 truncate flex items-center gap-1">
-                        {isSelected && (
-                          <span className="text-emerald-400 font-bold flex items-center gap-0.5">
+                      <div className="text-[9px] truncate flex items-center justify-between mt-0.5">
+                        {isLive ? (
+                          <span className="text-emerald-400 font-bold flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
-                            Live
+                            LIVE (Click to Hide)
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 group-hover:text-indigo-300 transition-colors">
+                            Click to Show
                           </span>
                         )}
-                        <span>{item.cropMode} • {item.scale}%</span>
+                        <span className="text-slate-400 text-[8px] uppercase">{item.cropMode}</span>
                       </div>
                     </div>
                   </div>
@@ -1204,6 +1265,371 @@ export const BrandPanel: React.FC = () => {
           Update & Push Ticker
         </Button>
       </div>
+      {/* Hidden File Input for Modal Upload */}
+      <input
+        ref={modalFileInputRef}
+        type="file"
+        accept="image/*,video/mp4,video/webm"
+        className="hidden"
+        onChange={handleModalFileUpload}
+      />
+
+      {/* ────────────────────────────────────────────────────────────── */}
+      {/* MODAL 1: Manage & Replace Overlay Media Modal                   */}
+      {/* ────────────────────────────────────────────────────────────── */}
+      {targetReplaceOverlay && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div
+            className="bg-[#12121e] border border-white/15 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+              <div>
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-indigo-400" />
+                  Manage & Replace Overlay Media
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Update image, video, name or shape for <strong>{targetReplaceOverlay.name}</strong>
+                </p>
+              </div>
+              <button
+                onClick={() => setTargetReplaceOverlay(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
+              {/* Media Comparison Preview */}
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-black/40 border border-white/5">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block mb-1">Current Media</span>
+                  <div className="h-24 rounded-lg overflow-hidden border border-white/10 bg-black/60 relative flex items-center justify-center">
+                    {targetReplaceOverlay.type === "video" ? (
+                      <video src={targetReplaceOverlay.url} className="w-full h-full object-cover" muted />
+                    ) : (
+                      <img src={targetReplaceOverlay.url} alt="Current" className="w-full h-full object-cover" />
+                    )}
+                    <span className="absolute bottom-1 right-1 text-[8px] px-1 py-0.2 rounded bg-black/70 text-slate-300">
+                      {targetReplaceOverlay.cropMode}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[10px] text-emerald-400 uppercase font-semibold block mb-1">New Selected Media</span>
+                  <div className="h-24 rounded-lg overflow-hidden border border-emerald-500/40 bg-black/60 relative flex items-center justify-center">
+                    {newMediaType === "video" ? (
+                      <video src={newMediaUrl} className="w-full h-full object-cover" autoPlay muted loop />
+                    ) : (
+                      <img src={newMediaUrl} alt="New" className="w-full h-full object-cover" />
+                    )}
+                    <span className="absolute bottom-1 right-1 text-[8px] px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-300 font-bold border border-emerald-500/30">
+                      {newCropMode}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rename input */}
+              <div className="space-y-1">
+                <label className="text-[11px] text-slate-300 font-medium">Overlay Title / Name</label>
+                <input
+                  type="text"
+                  value={newMediaName}
+                  onChange={(e) => setNewMediaName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500"
+                  placeholder="e.g. Host Speaker Badge"
+                />
+              </div>
+
+              {/* Source Tabs */}
+              <div className="space-y-2">
+                <label className="text-[11px] text-slate-300 font-medium">Choose New Media Source</label>
+                <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setModalTab("library")}
+                    className={cn(
+                      "flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5",
+                      modalTab === "library"
+                        ? "bg-indigo-600 text-white shadow-md font-semibold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Studio Assets
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalTab("upload")}
+                    className={cn(
+                      "flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5",
+                      modalTab === "upload"
+                        ? "bg-indigo-600 text-white shadow-md font-semibold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Upload from Device
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalTab("url")}
+                    className={cn(
+                      "flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5",
+                      modalTab === "url"
+                        ? "bg-indigo-600 text-white shadow-md font-semibold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Direct URL
+                  </button>
+                </div>
+
+                {/* Tab 1: Studio Sample Assets Grid */}
+                {modalTab === "library" && (
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                    {STUDIO_SAMPLE_MEDIA.map((asset) => {
+                      const isChosen = newMediaUrl === asset.url;
+                      return (
+                        <div
+                          key={asset.id}
+                          onClick={() => {
+                            setNewMediaUrl(asset.url);
+                            setNewMediaType(asset.type);
+                            setNewCropMode(asset.cropMode);
+                            if (!newMediaName || newMediaName === targetReplaceOverlay.name) {
+                              setNewMediaName(asset.name);
+                            }
+                          }}
+                          className={cn(
+                            "p-2 rounded-xl border flex items-center gap-2 cursor-pointer transition-all relative overflow-hidden",
+                            isChosen
+                              ? "border-emerald-500 bg-emerald-500/15 ring-1 ring-emerald-500"
+                              : "border-white/5 bg-surface hover:border-white/20"
+                          )}
+                        >
+                          <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/10 bg-black/40">
+                            {asset.type === "video" ? (
+                              <video src={asset.url} className="w-full h-full object-cover" muted />
+                            ) : (
+                              <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-semibold text-white truncate">{asset.name}</div>
+                            <div className="text-[9px] text-slate-400 uppercase font-mono">{asset.type} • {asset.cropMode}</div>
+                          </div>
+                          {isChosen && (
+                            <span className="p-0.5 rounded-full bg-emerald-500 text-white">
+                              <Check className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Tab 2: Upload from Device */}
+                {modalTab === "upload" && (
+                  <div className="p-5 border-2 border-dashed border-indigo-500/30 rounded-2xl text-center space-y-2 bg-indigo-500/[0.03]">
+                    <Upload className="w-6 h-6 text-indigo-400 mx-auto" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Upload New Media File</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Supports PNG, JPG, GIF, WebP images & MP4, WebM videos (up to 30MB)</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => modalFileInputRef.current?.click()}
+                      className="h-7 text-xs"
+                    >
+                      Choose File from Device
+                    </Button>
+                  </div>
+                )}
+
+                {/* Tab 3: Direct URL */}
+                {modalTab === "url" && (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={urlInput}
+                      onChange={(e) => setUrlInput(e.target.value)}
+                      placeholder="Paste image or video URL (https://...)"
+                      className="flex-1 px-3 py-2 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 text-xs px-3"
+                      onClick={() => {
+                        if (urlInput.trim()) {
+                          setNewMediaUrl(urlInput.trim());
+                          const isVid = urlInput.endsWith(".mp4") || urlInput.endsWith(".webm");
+                          setNewMediaType(isVid ? "video" : "image");
+                        }
+                      }}
+                    >
+                      Preview
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Crop Mode Selection */}
+              <div className="space-y-1">
+                <label className="text-[11px] text-slate-300 font-medium">Shape / Crop Mode</label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { id: "fit" as const, label: "Fit Ratio" },
+                    { id: "cover" as const, label: "16:9 Cover" },
+                    { id: "square" as const, label: "1:1 Square" },
+                    { id: "circle" as const, label: "Circle Badge" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setNewCropMode(m.id)}
+                      className={cn(
+                        "py-1.5 px-2 rounded-lg text-[10px] font-medium border text-center transition-all",
+                        newCropMode === m.id
+                          ? "bg-indigo-600 border-indigo-400 text-white font-bold"
+                          : "bg-white/5 border-white/5 text-slate-400 hover:text-white"
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-white/10 flex items-center justify-end gap-2 bg-white/[0.02]">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setTargetReplaceOverlay(null)}
+                className="h-8 text-xs text-slate-400"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={handleSaveReplacedMedia}
+                className="h-8 text-xs"
+              >
+                <Check className="w-3.5 h-3.5 mr-1" />
+                Save & Replace Media
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────────────────────── */}
+      {/* MODAL 2: Browse Studio Media Library Modal                      */}
+      {/* ────────────────────────────────────────────────────────────── */}
+      {isMediaLibraryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div
+            className="bg-[#12121e] border border-white/15 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+              <div>
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4 text-cyan-400" />
+                  Studio Media Library — Overlays & Graphics
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Click any asset below to instantly place it on your stage as a live overlay
+                </p>
+              </div>
+              <button
+                onClick={() => setIsMediaLibraryModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 overflow-y-auto grid grid-cols-2 gap-3 max-h-[65vh] custom-scrollbar">
+              {STUDIO_SAMPLE_MEDIA.map((asset) => (
+                <div
+                  key={asset.id}
+                  onClick={() => handleSelectFromMediaLibrary(asset)}
+                  className="group rounded-2xl border border-white/10 bg-surface hover:border-indigo-500/60 p-3 cursor-pointer transition-all flex flex-col justify-between hover:shadow-xl hover:shadow-indigo-500/10"
+                >
+                  <div className="h-28 rounded-xl overflow-hidden bg-black/60 relative border border-white/5 mb-2.5">
+                    {asset.type === "video" ? (
+                      <video src={asset.url} className="w-full h-full object-cover" muted />
+                    ) : (
+                      <img src={asset.url} alt={asset.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                    )}
+                    <span className="absolute top-1.5 left-1.5 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-black/70 text-slate-300 backdrop-blur-sm border border-white/10">
+                      {asset.type}
+                    </span>
+                    <span className="absolute top-1.5 right-1.5 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-500/30">
+                      {asset.cropMode}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-white text-xs truncate group-hover:text-indigo-300 transition-colors">
+                      {asset.name}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
+                      {asset.description}
+                    </p>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="w-full mt-3 h-7 text-[11px] group-hover:bg-indigo-600 group-hover:text-white transition-colors"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Use as Overlay
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-white/10 flex items-center justify-between bg-white/[0.02] text-xs">
+              <span className="text-[11px] text-slate-400">
+                You can also upload your own files anytime from the panel.
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsMediaLibraryModalOpen(false)}
+                className="h-8 text-xs text-slate-300"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
