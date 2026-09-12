@@ -3,9 +3,29 @@
  * Composites the active studio stage (participants, active media, layouts, backgrounds, overlays, banners, tickers)
  * into a pristine 1280x720 30fps canvas + Web Audio stream, and pipes real-time WebM chunks to
  * the backend FFmpeg RTMP service for broadcast to YouTube Live / Twitch / Facebook.
+ * 
+ * Optimized for buttery-smooth playback (zero DOM layout thrashing, 30fps throttled compositor,
+ * strict sequential FIFO chunk queuing, and resilient audio mixing).
  */
 
 import { useStudioStore } from "@/stores/studio.store";
+
+interface CachedTileLayout {
+  element: HTMLElement;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  isMedia: boolean;
+  mediaName: string;
+  name: string;
+  initials: string;
+  camOn: boolean;
+  micOn: boolean;
+  isLocal: boolean;
+  isScreen: boolean;
+  role: string;
+}
 
 class StageBroadcaster {
   private mediaRecorder: MediaRecorder | null = null;
@@ -17,14 +37,30 @@ class StageBroadcaster {
   private silentGain: GainNode | null = null;
   private activeBroadcastId: string | null = null;
   private isBroadcasting = false;
+
+  // Frame Rate Throttling (Strict 30 FPS to save CPU and eliminate video stutter)
+  private lastFrameTime = 0;
+  private readonly FRAME_INTERVAL = 1000 / 30; // ~33.33ms
+
+  // Layout Cache (Eliminates forced synchronous layout thrashing)
+  private cachedLayouts: CachedTileLayout[] = [];
+  private lastLayoutCacheTime = 0;
+
+  // News Ticker
   private tickerOffset = 0;
   private lastTickerTime = 0;
+
+  // Audio Connections
   private connectedAudioTracks = new Set<string>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
 
   // Cached Background Image
   private cachedBgUrl: string | null = null;
   private bgImage: HTMLImageElement | null = null;
+
+  // Strict Sequential FIFO Upload Queue (prevents out-of-order chunks)
+  private chunkQueue: Blob[] = [];
+  private isUploading = false;
 
   public isStreaming(): boolean {
     return this.isBroadcasting;
@@ -47,6 +83,8 @@ class StageBroadcaster {
 
     this.activeBroadcastId = broadcastId;
     this.isBroadcasting = true;
+    this.chunkQueue = [];
+    this.isUploading = false;
 
     // 1. Setup Composite 720p HD Canvas (1280x720 @ 30fps)
     const WIDTH = 1280;
@@ -62,7 +100,7 @@ class StageBroadcaster {
       return false;
     }
 
-    // 2. Setup Web Audio API Pipeline (Ensures YouTube always receives continuous stereo AAC)
+    // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
     try {
       const AudioContextClass =
         window.AudioContext ||
@@ -70,8 +108,7 @@ class StageBroadcaster {
       this.audioCtx = new AudioContextClass();
       this.audioDestination = this.audioCtx.createMediaStreamDestination();
 
-      // YouTube RTMP ingestion drops streams without an active audio track.
-      // We generate a silent baseline carrier tone (amplitude 0.0001) to ensure continuous audio packets.
+      // Silent baseline carrier tone (amplitude 0.0001) to keep RTMP audio stream alive
       const osc = this.audioCtx.createOscillator();
       this.silentGain = this.audioCtx.createGain();
       this.silentGain.gain.value = 0.0001;
@@ -82,19 +119,39 @@ class StageBroadcaster {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
     }
 
-    // 3. Connect active audio tracks from stage participants and media
+    // 3. Connect active audio tracks
     this.refreshAudioConnections();
 
-    // 4. Start Canvas Render Loop
+    // 4. Initial layout snapshot
+    this.updateLayoutCache(container, WIDTH, HEIGHT);
+
+    // 5. Start Throttled 30 FPS Canvas Render Loop
     this.lastTickerTime = performance.now();
+    this.lastFrameTime = performance.now();
+
     const render = (time: number) => {
       if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
-      this.renderStageFrame(container, WIDTH, HEIGHT, time);
+
+      // Throttle strictly to 30 FPS to prevent GPU/CPU saturation
+      const elapsed = time - this.lastFrameTime;
+      if (elapsed >= this.FRAME_INTERVAL) {
+        this.lastFrameTime = time - (elapsed % this.FRAME_INTERVAL);
+
+        // Refresh layout snapshot every 250ms (never every frame to avoid layout thrashing)
+        if (time - this.lastLayoutCacheTime > 250) {
+          this.updateLayoutCache(container, WIDTH, HEIGHT);
+          this.lastLayoutCacheTime = time;
+        }
+
+        this.renderStageFrame(container, WIDTH, HEIGHT, time);
+      }
+
       this.animFrameId = requestAnimationFrame(render);
     };
+
     this.animFrameId = requestAnimationFrame(render);
 
-    // 5. Combine Video Track from Canvas + Audio Track from Web Audio Destination
+    // 6. Combine Video Track from Canvas + Audio Track from Web Audio Destination
     try {
       const canvasStream = this.canvas.captureStream(30);
       const videoTrack = canvasStream.getVideoTracks()[0];
@@ -123,13 +180,13 @@ class StageBroadcaster {
       console.log(`[StageBroadcaster] Starting MediaRecorder with MIME: ${mimeType}`);
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: 3500000, // 3.5 Mbps for crystal-clear 720p HD YouTube streaming
-        audioBitsPerSecond: 128000,  // 128 kbps AAC audio
+        videoBitsPerSecond: 2500000, // 2.5 Mbps rock-solid 720p HD streaming without network choke
+        audioBitsPerSecond: 128000,  // 128 kbps stereo AAC
       });
 
-      this.mediaRecorder.ondataavailable = async (e: BlobEvent) => {
+      this.mediaRecorder.ondataavailable = (e: BlobEvent) => {
         if (e.data && e.data.size > 0 && this.activeBroadcastId) {
-          this.sendChunk(this.activeBroadcastId, e.data);
+          this.enqueueChunk(e.data);
         }
       };
 
@@ -137,14 +194,73 @@ class StageBroadcaster {
         console.error("[StageBroadcaster] MediaRecorder error:", recorderErr);
       };
 
-      // Emit chunk every 1000ms (1 second) for low-latency live RTMP delivery
+      // Emit chunk every 1000ms for stable RTMP delivery
       this.mediaRecorder.start(1000);
-      console.log("[StageBroadcaster] Live stage streaming successfully initiated.");
+      console.log("[StageBroadcaster] Live stage streaming initiated successfully.");
       return true;
     } catch (streamErr) {
       console.error("[StageBroadcaster] Failed to start MediaRecorder stream:", streamErr);
       this.stop();
       return false;
+    }
+  }
+
+  /**
+   * Snapshot stage layout bounds outside the 30fps draw loop to prevent forced layout thrashing
+   */
+  private updateLayoutCache(container: HTMLElement, W: number, H: number) {
+    try {
+      const containerRect = container.getBoundingClientRect();
+      if (containerRect.width <= 0 || containerRect.height <= 0) return;
+
+      const scaleX = W / containerRect.width;
+      const scaleY = H / containerRect.height;
+
+      const stageTiles = container.querySelectorAll("[data-stage-tile]");
+      const nextLayouts: CachedTileLayout[] = [];
+
+      stageTiles.forEach((el) => {
+        const tile = el as HTMLElement;
+        const tileRect = tile.getBoundingClientRect();
+
+        const x = (tileRect.left - containerRect.left) * scaleX;
+        const y = (tileRect.top - containerRect.top) * scaleY;
+        const w = tileRect.width * scaleX;
+        const h = tileRect.height * scaleY;
+
+        if (w <= 0 || h <= 0) return;
+
+        const isMedia = tile.hasAttribute("data-stage-media");
+        const mediaName = tile.getAttribute("data-media-name") || "Media";
+        const name = tile.getAttribute("data-participant-name") || "Guest";
+        const initials = tile.getAttribute("data-participant-initials") || "U";
+        const camOn = tile.getAttribute("data-participant-cam") === "on";
+        const micOn = tile.getAttribute("data-participant-mic") === "on";
+        const isLocal = tile.getAttribute("data-participant-local") === "true";
+        const isScreen = tile.getAttribute("data-participant-screen") === "true";
+        const role = tile.getAttribute("data-participant-role") || "";
+
+        nextLayouts.push({
+          element: tile,
+          x,
+          y,
+          w,
+          h,
+          isMedia,
+          mediaName,
+          name,
+          initials,
+          camOn,
+          micOn,
+          isLocal,
+          isScreen,
+          role,
+        });
+      });
+
+      this.cachedLayouts = nextLayouts;
+    } catch (err) {
+      console.warn("[StageBroadcaster] Layout snapshot warning:", err);
     }
   }
 
@@ -195,7 +311,6 @@ class StageBroadcaster {
               console.log("[StageBroadcaster] Connected media video audio stream to broadcast mix");
             }
           } else if (!this.connectedMediaElements.has(mediaVideo)) {
-            // Fallback: createMediaElementSource
             const src = this.audioCtx.createMediaElementSource(mediaVideo);
             src.connect(this.audioDestination);
             src.connect(this.audioCtx.destination);
@@ -212,7 +327,7 @@ class StageBroadcaster {
   }
 
   /**
-   * Render single frame of the live stage onto the composite canvas
+   * Render single frame of the live stage onto the composite canvas using cached layout coordinates
    */
   private renderStageFrame(container: HTMLElement, W: number, H: number, timestamp: number) {
     const ctx = this.ctx!;
@@ -225,7 +340,6 @@ class StageBroadcaster {
     if (bgVideo && bgVideo.readyState >= 2) {
       ctx.drawImage(bgVideo, 0, 0, W, H);
     } else if (store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
-      // Pre-load and cache background image
       if (this.cachedBgUrl !== store.activeBackgroundUrl) {
         this.cachedBgUrl = store.activeBackgroundUrl;
         this.bgImage = new Image();
@@ -243,222 +357,183 @@ class StageBroadcaster {
       ctx.fillRect(0, 0, W, H);
     }
 
-    const containerRect = container.getBoundingClientRect();
-    if (containerRect.width <= 0 || containerRect.height <= 0) return;
-
-    const scaleX = W / containerRect.width;
-    const scaleY = H / containerRect.height;
-
     // ─────────────────────────────────────────────────────────────
-    // 2. Draw All Stage Tiles (Media Video/Slides & Participant Windows)
+    // 2. Draw All Stage Tiles from Cached Layouts (Zero DOM Thrashing)
     // ─────────────────────────────────────────────────────────────
-    const stageTiles = container.querySelectorAll("[data-stage-tile]");
-    if (stageTiles.length > 0) {
-      stageTiles.forEach((el) => {
-        const tile = el as HTMLElement;
-        const tileRect = tile.getBoundingClientRect();
+    for (let i = 0; i < this.cachedLayouts.length; i++) {
+      const tile = this.cachedLayouts[i];
+      const { element: el, x, y, w, h, isMedia } = tile;
 
-        const x = (tileRect.left - containerRect.left) * scaleX;
-        const y = (tileRect.top - containerRect.top) * scaleY;
-        const w = tileRect.width * scaleX;
-        const h = tileRect.height * scaleY;
+      ctx.save();
+      this.drawRoundedRect(ctx, x, y, w, h, 14);
+      ctx.clip();
 
-        if (w <= 0 || h <= 0) return;
+      // Card background
+      ctx.fillStyle = "#0a0a14";
+      ctx.fillRect(x, y, w, h);
 
-        ctx.save();
-        this.drawRoundedRect(ctx, x, y, w, h, 14);
-        ctx.clip();
+      if (isMedia) {
+        // ── Media Tile (Video or Image/Slides) ──
+        const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
+        const mediaImg = el.querySelector("img") as HTMLImageElement | null;
 
-        // Dark card background
-        ctx.fillStyle = "#0a0a14";
-        ctx.fillRect(x, y, w, h);
-
-        const isMedia = tile.hasAttribute("data-stage-media");
-
-        if (isMedia) {
-          // ── Media Tile (Video or Image/Slides) ──
-          const mediaVideo = tile.querySelector("video") as HTMLVideoElement | null;
-          const mediaImg = tile.querySelector("img") as HTMLImageElement | null;
-
-          if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
-            // Object contain fit for media video
-            const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
-            const tRatio = w / h;
-            let dw = w, dh = h, dx = x, dy = y;
-            if (vRatio > tRatio) {
-              dh = w / vRatio;
-              dy = y + (h - dh) / 2;
-            } else {
-              dw = h * vRatio;
-              dx = x + (w - dw) / 2;
-            }
-            ctx.drawImage(mediaVideo, dx, dy, dw, dh);
-          } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
-            // Object contain fit for media image/pdf slide
-            const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
-            const tRatio = w / h;
-            let dw = w, dh = h, dx = x, dy = y;
-            if (iRatio > tRatio) {
-              dh = w / iRatio;
-              dy = y + (h - dh) / 2;
-            } else {
-              dw = h * iRatio;
-              dx = x + (w - dw) / 2;
-            }
-            ctx.drawImage(mediaImg, dx, dy, dw, dh);
-          }
-
-          // Media Name Pill (top-left of media tile)
-          const mediaName = tile.getAttribute("data-media-name") || "Media";
-          if (mediaName) {
-            ctx.font = "bold 11px Inter, system-ui, sans-serif";
-            const textW = ctx.measureText(mediaName).width;
-            const pillW = textW + 28;
-            const pillH = 22;
-            const pillX = x + 10;
-            const pillY = y + 10;
-
-            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-            this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
-            ctx.fill();
-
-            // Emerald dot
-            ctx.fillStyle = "#10b981";
-            ctx.beginPath();
-            ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Text
-            ctx.fillStyle = "#ffffff";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.fillText(mediaName, pillX + 16, pillY + pillH / 2);
-          }
-        } else {
-          // ── Participant Tile ──
-          const video = tile.querySelector("video") as HTMLVideoElement | null;
-          const canvas = tile.querySelector("canvas") as HTMLCanvasElement | null;
-          const camOn = tile.getAttribute("data-participant-cam") === "on";
-          const hasVideo =
-            camOn &&
-            video &&
-            video.readyState >= 2 &&
-            video.videoWidth > 0 &&
-            !video.classList.contains("opacity-0");
-          const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
-
-          if (hasChroma) {
-            ctx.drawImage(canvas, x, y, w, h);
-          } else if (hasVideo && video) {
-            // Object cover fit for participant webcam / screen
-            const vRatio = video.videoWidth / video.videoHeight;
-            const tRatio = w / h;
-            let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-            if (vRatio > tRatio) {
-              sw = video.videoHeight * tRatio;
-              sx = (video.videoWidth - sw) / 2;
-            } else {
-              sh = video.videoWidth / tRatio;
-              sy = (video.videoHeight - sh) / 2;
-            }
-
-            const isLocal = tile.getAttribute("data-participant-local") === "true";
-            const isScreen = tile.getAttribute("data-participant-screen") === "true";
-
-            if (isLocal && !isScreen) {
-              ctx.save();
-              ctx.translate(x + w, y);
-              ctx.scale(-1, 1);
-              ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
-              ctx.restore();
-            } else {
-              ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
-            }
+        if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
+          const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
+          const tRatio = w / h;
+          let dw = w, dh = h, dx = x, dy = y;
+          if (vRatio > tRatio) {
+            dh = w / vRatio;
+            dy = y + (h - dh) / 2;
           } else {
-            // Camera is OFF: Draw stylish Avatar Circle + Initials + "Camera Off"
-            const initials = tile.getAttribute("data-participant-initials") || "U";
-            const centerX = x + w / 2;
-            const centerY = y + h / 2 - 12;
-            const radius = Math.max(18, Math.min(36, Math.min(w, h) * 0.22));
-
-            // Circle with vibrant gradient
-            const grad = ctx.createLinearGradient(
-              centerX - radius,
-              centerY - radius,
-              centerX + radius,
-              centerY + radius
-            );
-            grad.addColorStop(0, "#4f46e5");
-            grad.addColorStop(1, "#9333ea");
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-            ctx.fillStyle = grad;
-            ctx.fill();
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // Initials text
-            ctx.fillStyle = "#ffffff";
-            ctx.font = `bold ${Math.round(radius * 1.05)}px Inter, system-ui, sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(initials, centerX, centerY + 1);
-
-            // "Camera Off" pill
-            const pillY = centerY + radius + 14;
-            ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-            this.drawRoundedRect(ctx, centerX - 42, pillY - 9, 84, 18, 9);
-            ctx.fill();
-            ctx.fillStyle = "#94a3b8";
-            ctx.font = "500 10px Inter, system-ui, sans-serif";
-            ctx.fillText("Camera Off", centerX, pillY);
+            dw = h * vRatio;
+            dx = x + (w - dw) / 2;
           }
+          ctx.drawImage(mediaVideo, dx, dy, dw, dh);
+        } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
+          const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
+          const tRatio = w / h;
+          let dw = w, dh = h, dx = x, dy = y;
+          if (iRatio > tRatio) {
+            dh = w / iRatio;
+            dy = y + (h - dh) / 2;
+          } else {
+            dw = h * iRatio;
+            dx = x + (w - dw) / 2;
+          }
+          ctx.drawImage(mediaImg, dx, dy, dw, dh);
+        }
 
-          // Participant Name Pill (bottom-left)
-          const name = tile.getAttribute("data-participant-name") || "Guest";
-          const role = tile.getAttribute("data-participant-role") || "";
-          const micOn = tile.getAttribute("data-participant-mic") === "on";
-          const isLocal = tile.getAttribute("data-participant-local") === "true";
-          const displayName = `${name}${isLocal ? " (You)" : ""}`;
-
+        // Media Name Pill
+        if (tile.mediaName) {
           ctx.font = "bold 11px Inter, system-ui, sans-serif";
-          const textW = ctx.measureText(displayName).width;
-          const pillW = textW + 36;
-          const pillH = 24;
+          const pillW = Math.min(220, tile.mediaName.length * 7 + 28);
+          const pillH = 22;
           const pillX = x + 10;
-          const pillY = y + h - pillH - 10;
+          const pillY = y + 10;
 
-          // Pill backdrop
           ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
           this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
           ctx.fill();
-          ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}50`;
-          ctx.lineWidth = 1;
-          ctx.stroke();
 
-          // Theme dot
-          ctx.fillStyle = store.activeThemeColor || "#6366f1";
+          // Emerald dot
+          ctx.fillStyle = "#10b981";
           ctx.beginPath();
           ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
           ctx.fill();
 
-          // Name text
           ctx.fillStyle = "#ffffff";
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillText(displayName, pillX + 16, pillY + pillH / 2);
+          ctx.fillText(tile.mediaName.slice(0, 24), pillX + 16, pillY + pillH / 2);
+        }
+      } else {
+        // ── Participant Tile ──
+        const video = el.querySelector("video") as HTMLVideoElement | null;
+        const canvas = el.querySelector("canvas") as HTMLCanvasElement | null;
+        const hasVideo =
+          tile.camOn &&
+          video &&
+          video.readyState >= 2 &&
+          video.videoWidth > 0 &&
+          !video.classList.contains("opacity-0");
+        const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
 
-          // Mic status dot (emerald for mic on, rose for mic off)
-          const micDotX = pillX + pillW - 9;
+        if (hasChroma && canvas) {
+          ctx.drawImage(canvas, x, y, w, h);
+        } else if (hasVideo && video) {
+          const vRatio = video.videoWidth / video.videoHeight;
+          const tRatio = w / h;
+          let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+          if (vRatio > tRatio) {
+            sw = video.videoHeight * tRatio;
+            sx = (video.videoWidth - sw) / 2;
+          } else {
+            sh = video.videoWidth / tRatio;
+            sy = (video.videoHeight - sh) / 2;
+          }
+
+          if (tile.isLocal && !tile.isScreen) {
+            ctx.save();
+            ctx.translate(x + w, y);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+            ctx.restore();
+          } else {
+            ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+          }
+        } else {
+          // Camera is OFF: Avatar Circle + Initials + "Camera Off"
+          const centerX = x + w / 2;
+          const centerY = y + h / 2 - 12;
+          const radius = Math.max(18, Math.min(36, Math.min(w, h) * 0.22));
+
+          const grad = ctx.createLinearGradient(
+            centerX - radius,
+            centerY - radius,
+            centerX + radius,
+            centerY + radius
+          );
+          grad.addColorStop(0, "#4f46e5");
+          grad.addColorStop(1, "#9333ea");
           ctx.beginPath();
-          ctx.arc(micDotX, pillY + pillH / 2, 3, 0, Math.PI * 2);
-          ctx.fillStyle = micOn ? "#10b981" : "#f43f5e";
+          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
           ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          ctx.fillStyle = "#ffffff";
+          ctx.font = `bold ${Math.round(radius * 1.05)}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(tile.initials, centerX, centerY + 1);
+
+          const pillY = centerY + radius + 14;
+          ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+          this.drawRoundedRect(ctx, centerX - 42, pillY - 9, 84, 18, 9);
+          ctx.fill();
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "500 10px Inter, system-ui, sans-serif";
+          ctx.fillText("Camera Off", centerX, pillY);
         }
 
-        ctx.restore();
-      });
+        // Participant Name Pill
+        const displayName = `${tile.name}${tile.isLocal ? " (You)" : ""}`;
+        ctx.font = "bold 11px Inter, system-ui, sans-serif";
+        const pillW = Math.min(180, displayName.length * 7 + 36);
+        const pillH = 24;
+        const pillX = x + 10;
+        const pillY = y + h - pillH - 10;
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
+        ctx.fill();
+        ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}50`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Theme dot
+        ctx.fillStyle = store.activeThemeColor || "#6366f1";
+        ctx.beginPath();
+        ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Name text
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(displayName.slice(0, 20), pillX + 16, pillY + pillH / 2);
+
+        // Mic dot
+        const micDotX = pillX + pillW - 9;
+        ctx.beginPath();
+        ctx.arc(micDotX, pillY + pillH / 2, 3, 0, Math.PI * 2);
+        ctx.fillStyle = tile.micOn ? "#10b981" : "#f43f5e";
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -506,8 +581,7 @@ class StageBroadcaster {
       ctx.font = "bold 13px Inter, monospace, sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      const textW = ctx.measureText(logoText.toUpperCase()).width;
-      const pillW = textW + 36;
+      const pillW = logoText.length * 8 + 36;
       const pillH = 30;
 
       let lX = W - pillW - 32;
@@ -569,8 +643,8 @@ class StageBroadcaster {
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
 
-      const textWidth = ctx.measureText(store.tickerText).width;
-      const totalSpan = textWidth + W;
+      const approxTextWidth = store.tickerText.length * 8;
+      const totalSpan = approxTextWidth + W;
       const currentX = W - (this.tickerOffset % totalSpan);
 
       ctx.fillText(store.tickerText, currentX, tY + tH / 2);
@@ -600,18 +674,35 @@ class StageBroadcaster {
   }
 
   /**
-   * Push binary chunk to backend stream ingest route
+   * Enqueue chunk into strict sequential FIFO queue to guarantee ordered delivery
    */
-  private async sendChunk(broadcastId: string, chunk: Blob) {
-    try {
-      await fetch(`/api/broadcasts/${broadcastId}/stream/chunk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: chunk,
-      });
-    } catch (err) {
-      console.warn("[StageBroadcaster] Chunk transmission warning:", err);
+  private enqueueChunk(chunk: Blob) {
+    this.chunkQueue.push(chunk);
+    this.processUploadQueue();
+  }
+
+  /**
+   * Process queue sequentially one chunk at a time (prevents out-of-order WebM chunks)
+   */
+  private async processUploadQueue() {
+    if (this.isUploading || this.chunkQueue.length === 0 || !this.activeBroadcastId) return;
+    this.isUploading = true;
+
+    while (this.chunkQueue.length > 0 && this.isBroadcasting && this.activeBroadcastId) {
+      const chunk = this.chunkQueue.shift()!;
+      try {
+        await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: chunk,
+          keepalive: true,
+        });
+      } catch (err) {
+        console.warn("[StageBroadcaster] Chunk upload warning:", err);
+      }
     }
+
+    this.isUploading = false;
   }
 
   /**
@@ -620,6 +711,8 @@ class StageBroadcaster {
   public stop() {
     this.isBroadcasting = false;
     this.activeBroadcastId = null;
+    this.chunkQueue = [];
+    this.isUploading = false;
 
     if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
       try {
@@ -646,6 +739,7 @@ class StageBroadcaster {
 
     this.connectedAudioTracks.clear();
     this.connectedMediaElements.clear();
+    this.cachedLayouts = [];
     this.canvas = null;
     this.ctx = null;
     this.cachedBgUrl = null;

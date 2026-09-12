@@ -16,6 +16,7 @@ export class RtmpStreamerService extends EventEmitter {
   private static instance: RtmpStreamerService;
   private readonly encryptionService: EncryptionService;
   private readonly activeSessions: Map<string, StreamSession> = new Map();
+  private readonly headerBuffers: Map<string, Buffer> = new Map();
 
   constructor() {
     super();
@@ -27,6 +28,90 @@ export class RtmpStreamerService extends EventEmitter {
       RtmpStreamerService.instance = new RtmpStreamerService();
     }
     return RtmpStreamerService.instance;
+  }
+
+  /**
+   * Spawn a robust, low-CPU FFmpeg RTMP process for YouTube / Facebook / Twitch
+   */
+  private spawnFfmpegProcess(broadcastId: string, targetUrl: string): ChildProcess {
+    // Robust low-CPU broadcast configuration matching YouTube Live specs (720p 30fps, H.264 ultrafast, AAC, GOP 60)
+    const args = [
+      '-loglevel', 'warning',
+      '-fflags', '+genpts+nobuffer+discardcorrupt',
+      '-thread_queue_size', '1024',
+      '-f', 'webm',
+      '-i', 'pipe:0',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-b:v', '2500k',
+      '-maxrate', '3000k',
+      '-bufsize', '6000k',
+      '-pix_fmt', 'yuv420p',
+      '-g', '60',
+      '-keyint_min', '30',
+      '-r', '30',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-ar', '44100',
+      '-f', 'flv',
+      '-flvflags', 'no_duration_filesize',
+      targetUrl,
+    ];
+
+    console.log(`[FFmpeg RTMP]: Spawning stream pipeline for ${broadcastId}`);
+    const proc = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+    // Handle stdin errors to prevent Node process unhandled EPIPE crashes
+    proc.stdin?.on('error', (err) => {
+      console.warn(`[FFmpeg RTMP Stdin Warning - ${broadcastId}]:`, err.message);
+    });
+
+    proc.stderr?.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('error') || msg.includes('Error')) {
+        console.error(`[FFmpeg RTMP Error - ${broadcastId}]:`, msg);
+      }
+    });
+
+    proc.on('close', (code) => {
+      console.log(`[FFmpeg RTMP Exited - ${broadcastId}]: exit code ${code}`);
+      const session = this.activeSessions.get(broadcastId);
+      // Auto-heal: If broadcast is still LIVE, automatically reconnect pipeline!
+      if (session && session.status === 'LIVE') {
+        console.log(`[FFmpeg RTMP Auto-Recovery]: Reconnecting stream for ${targetUrl} in 1s...`);
+        setTimeout(() => {
+          this.respawnDestinationProcess(broadcastId, targetUrl, proc);
+        }, 1000);
+      }
+    });
+
+    return proc;
+  }
+
+  /**
+   * Auto-recover a closed FFmpeg process by respawning it and sending the cached WebM header
+   */
+  private respawnDestinationProcess(broadcastId: string, targetUrl: string, oldProc: ChildProcess): void {
+    const session = this.activeSessions.get(broadcastId);
+    if (!session || session.status !== 'LIVE') return;
+
+    try {
+      const newProc = this.spawnFfmpegProcess(broadcastId, targetUrl);
+
+      // Write cached WebM initialization header to new process
+      const cachedHeader = this.headerBuffers.get(broadcastId);
+      if (cachedHeader && newProc.stdin && newProc.stdin.writable) {
+        newProc.stdin.write(cachedHeader);
+      }
+
+      // Replace old process in session
+      session.ffmpegProcesses = session.ffmpegProcesses.filter((p) => p !== oldProc);
+      session.ffmpegProcesses.push(newProc);
+      console.log(`[FFmpeg RTMP Auto-Recovery]: Stream pipeline restored successfully for ${broadcastId}`);
+    } catch (err) {
+      console.error(`[FFmpeg RTMP Auto-Recovery Failed for ${broadcastId}]:`, err);
+    }
   }
 
   /**
@@ -66,13 +151,11 @@ export class RtmpStreamerService extends EventEmitter {
           if (decRes.success && decRes.data) {
             const cleanUrl = dest.rtmpUrl.replace(/\/+$/, '');
             const streamKey = decRes.data.trim();
-            // Standard RTMP format: rtmp://a.rtmp.youtube.com/live2/key
             const fullRtmp = `${cleanUrl}/${streamKey}`;
             if (!urls.includes(fullRtmp)) {
               urls.push(fullRtmp);
             }
 
-            // Update destination status and last used
             await prisma.destination.update({
               where: { id: dest.id },
               data: { status: 'LIVE', lastUsedAt: new Date() },
@@ -111,41 +194,8 @@ export class RtmpStreamerService extends EventEmitter {
       const ffmpegProcesses: ChildProcess[] = [];
 
       for (const targetUrl of rtmpUrls) {
-        // High quality broadcast configuration matching YouTube Live specs (720p/1080p, H.264, AAC, 30fps, zero latency)
-        const args = [
-          '-f', 'webm',
-          '-i', 'pipe:0',
-          '-c:v', 'libx264',
-          '-preset', 'veryfast',
-          '-tune', 'zerolatency',
-          '-b:v', '3500k',
-          '-maxrate', '4000k',
-          '-bufsize', '7000k',
-          '-pix_fmt', 'yuv420p',
-          '-g', '60',
-          '-r', '30',
-          '-c:a', 'aac',
-          '-b:a', '128k',
-          '-ar', '44100',
-          '-f', 'flv',
-          '-flvflags', 'no_duration_filesize',
-          targetUrl,
-        ];
-
         try {
-          console.log(`[FFmpeg RTMP]: Spawning stream process for broadcast ${broadcastId}`);
-          const proc = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
-          proc.stderr?.on('data', (data) => {
-            const msg = data.toString();
-            if (msg.includes('error') || msg.includes('Error')) {
-              console.error(`[FFmpeg RTMP Error - ${broadcastId}]:`, msg);
-            }
-          });
-
-          proc.on('close', (code) => {
-            console.log(`[FFmpeg RTMP Exited - ${broadcastId}]: code ${code}`);
-          });
-
+          const proc = this.spawnFfmpegProcess(broadcastId, targetUrl);
           ffmpegProcesses.push(proc);
         } catch (spawnErr) {
           console.warn('FFmpeg spawn warning (will continue with available pipelines):', spawnErr);
@@ -182,8 +232,13 @@ export class RtmpStreamerService extends EventEmitter {
     const session = this.activeSessions.get(broadcastId);
     if (!session || session.status !== 'LIVE') return false;
 
+    // Cache initial WebM header for recovery
+    if (!this.headerBuffers.has(broadcastId)) {
+      this.headerBuffers.set(broadcastId, chunk);
+    }
+
     for (const proc of session.ffmpegProcesses) {
-      if (proc.stdin && proc.stdin.writable) {
+      if (proc.stdin && proc.stdin.writable && !proc.killed) {
         try {
           proc.stdin.write(chunk);
         } catch (e) {
@@ -213,6 +268,7 @@ export class RtmpStreamerService extends EventEmitter {
     }
 
     this.activeSessions.delete(broadcastId);
+    this.headerBuffers.delete(broadcastId);
 
     // Update broadcast in DB
     try {
