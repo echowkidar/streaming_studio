@@ -95,7 +95,7 @@ export default function TopBar() {
 
               <div className="space-y-0.5">
                 <Link
-                  href="/settings"
+                  href="/settings?tab=account"
                   onClick={() => setIsMenuOpen(false)}
                   className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/5 rounded-xl transition-colors"
                 >

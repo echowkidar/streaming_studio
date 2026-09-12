@@ -9,6 +9,7 @@ interface AuthState {
   token: string | null;
   isLoading: boolean;
   setUser: (user: User | null) => void;
+  updateUser: (updates: Partial<User>) => void;
   setToken: (token: string | null) => void;
   setCurrentWorkspace: (workspace: Workspace | null) => void;
   setWorkspaces: (workspaces: Workspace[]) => void;
@@ -24,6 +25,10 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isLoading: false,
       setUser: (user) => set({ user }),
+      updateUser: (updates) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, ...updates } : null,
+        })),
       setToken: (token) => set({ token }),
       setCurrentWorkspace: (workspace) => set({ currentWorkspace: workspace }),
       setWorkspaces: (workspaces) => set({ workspaces }),
