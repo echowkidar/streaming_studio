@@ -695,7 +695,6 @@ class StageBroadcaster {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
           body: chunk,
-          keepalive: true,
         });
       } catch (err) {
         console.warn("[StageBroadcaster] Chunk upload warning:", err);

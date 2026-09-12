@@ -34,11 +34,8 @@ export class RtmpStreamerService extends EventEmitter {
    * Spawn a robust, low-CPU FFmpeg RTMP process for YouTube / Facebook / Twitch
    */
   private spawnFfmpegProcess(broadcastId: string, targetUrl: string): ChildProcess {
-    // Robust low-CPU broadcast configuration matching YouTube Live specs (720p 30fps, H.264 ultrafast, AAC, GOP 60)
+    // Standard low-CPU broadcast configuration matching YouTube Live specs (720p 30fps, H.264 ultrafast, AAC, GOP 60)
     const args = [
-      '-loglevel', 'warning',
-      '-fflags', '+genpts+nobuffer+discardcorrupt',
-      '-thread_queue_size', '1024',
       '-f', 'webm',
       '-i', 'pipe:0',
       '-c:v', 'libx264',
@@ -49,7 +46,6 @@ export class RtmpStreamerService extends EventEmitter {
       '-bufsize', '6000k',
       '-pix_fmt', 'yuv420p',
       '-g', '60',
-      '-keyint_min', '30',
       '-r', '30',
       '-c:a', 'aac',
       '-b:a', '128k',
