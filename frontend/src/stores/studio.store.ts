@@ -40,6 +40,15 @@ export interface TileTransform {
   flipV: boolean;
 }
 
+export interface ParticipantBounds {
+  x: number; // percentage left: 0 to 100
+  y: number; // percentage top: 0 to 100
+  width: number; // percentage width: 10 to 100
+  height: number; // percentage height: 10 to 100
+  zIndex: number;
+  isLockedRatio?: boolean;
+}
+
 interface StudioState {
   broadcastTitle: string;
   setTitle: (title: string) => void;
@@ -60,6 +69,19 @@ interface StudioState {
   setLayoutSplitRatio: (ratio: number) => void;
   customLayoutConfig: CustomLayoutConfig;
   setCustomLayoutConfig: (config: Partial<CustomLayoutConfig>) => void;
+
+  // Freeform Window Bounds & Selection Tool (StreamYard parity)
+  participantBounds: Record<string, ParticipantBounds>;
+  setParticipantBounds: (id: string | number, bounds: Partial<ParticipantBounds>) => void;
+  resetParticipantBounds: (id: string | number) => void;
+  resetAllParticipantBounds: () => void;
+  setAllParticipantBounds: (allBounds: Record<string, ParticipantBounds>) => void;
+  selectedParticipantId: string | number | null;
+  setSelectedParticipantId: (id: string | number | null) => void;
+  isFreeformMode: boolean;
+  setIsFreeformMode: (enabled: boolean) => void;
+  bringToFront: (id: string | number) => void;
+  sendToBack: (id: string | number) => void;
 
   // Audio / Video device states for local user
   micEnabled: boolean;
@@ -245,6 +267,74 @@ export const useStudioStore = create<StudioState>((set) => ({
   setLayout: (layout) => set({ activeLayout: layout }),
   layoutSplitRatio: 50,
   setLayoutSplitRatio: (ratio) => set({ layoutSplitRatio: Math.max(20, Math.min(80, ratio)) }),
+
+  // Freeform Window Bounds & Selection Tool (StreamYard parity)
+  participantBounds: {},
+  selectedParticipantId: null,
+  isFreeformMode: false,
+  setSelectedParticipantId: (id) => set({ selectedParticipantId: id !== null ? String(id) : null }),
+  setIsFreeformMode: (enabled) => set({ isFreeformMode: enabled }),
+  setParticipantBounds: (id, updates) =>
+    set((s) => {
+      const key = String(id);
+      const existing = s.participantBounds[key] || {
+        x: 10,
+        y: 10,
+        width: 45,
+        height: 45,
+        zIndex: 10,
+        isLockedRatio: true,
+      };
+      const merged = { ...existing, ...updates };
+      // Clamp bounds safely within stage
+      merged.width = Math.max(10, Math.min(100, merged.width));
+      merged.height = Math.max(8, Math.min(100, merged.height));
+      merged.x = Math.max(0, Math.min(100 - merged.width, merged.x));
+      merged.y = Math.max(0, Math.min(100 - merged.height, merged.y));
+      return {
+        participantBounds: {
+          ...s.participantBounds,
+          [key]: merged,
+        },
+      };
+    }),
+  resetParticipantBounds: (id) =>
+    set((s) => {
+      const key = String(id);
+      const next = { ...s.participantBounds };
+      delete next[key];
+      return { participantBounds: next };
+    }),
+  resetAllParticipantBounds: () => set({ participantBounds: {}, selectedParticipantId: null }),
+  setAllParticipantBounds: (allBounds) => set({ participantBounds: allBounds || {} }),
+  bringToFront: (id) =>
+    set((s) => {
+      const key = String(id);
+      const boundsList = Object.values(s.participantBounds);
+      const maxZ = boundsList.length > 0 ? Math.max(10, ...boundsList.map((b) => b.zIndex || 10)) : 10;
+      const current = s.participantBounds[key];
+      if (!current) return s;
+      return {
+        participantBounds: {
+          ...s.participantBounds,
+          [key]: { ...current, zIndex: maxZ + 1 },
+        },
+      };
+    }),
+  sendToBack: (id) =>
+    set((s) => {
+      const key = String(id);
+      const boundsList = Object.values(s.participantBounds);
+      const minZ = boundsList.length > 0 ? Math.min(10, ...boundsList.map((b) => b.zIndex || 10)) : 10;
+      const current = s.participantBounds[key];
+      if (!current) return s;
+      return {
+        participantBounds: {
+          ...s.participantBounds,
+          [key]: { ...current, zIndex: Math.max(1, minZ - 1) },
+        },
+      };
+    }),
 
   customLayoutConfig: {
     mode: "hero-side",

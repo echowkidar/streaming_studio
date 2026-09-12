@@ -29,10 +29,13 @@ import { useStudioStore } from "@/stores/studio.store";
 import { VideoTrackView } from "@/components/studio/VideoTrackView";
 import { AudioMeter } from "@/components/studio/AudioMeter";
 import { cn } from "@/lib/utils";
+import { getDefaultSlotBounds } from "@/lib/layoutBounds";
 
 export default function GuestJoinPage({ params }: { params: { token: string } }) {
   const rawSplit = useStudioStore((s) => s.layoutSplitRatio);
   const layoutSplitRatio = typeof rawSplit === "number" ? rawSplit : 50;
+  const participantBounds = useStudioStore((s) => s.participantBounds) || {};
+  const activeLayout = useStudioStore((s) => s.activeLayout) || "side-by-side";
   const [displayName, setDisplayName] = useState("");
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -403,74 +406,44 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   </div>
                 </div>
               ) : (
-                /* Live Broadcast Stage: On-stage participants */
-                <div className="w-full h-full p-2.5 flex items-center justify-center">
-                  {onStageParticipants.length === 2 && onStageParticipants[0] && onStageParticipants[1] ? (
-                    <div className="w-full h-full flex items-center p-1 min-w-0 min-h-0 gap-2">
+                /* Live Broadcast Stage: On-stage participants with real-time sync of custom layout & bounds */
+                <div className="w-full h-full p-2 relative select-none">
+                  {onStageParticipants.map((p, idx) => {
+                    const defaultBounds = getDefaultSlotBounds(
+                      activeLayout,
+                      idx,
+                      onStageParticipants.length,
+                      layoutSplitRatio
+                    );
+                    const bounds = participantBounds[p.id] || defaultBounds;
+                    return (
                       <div
+                        key={p.id}
                         style={{
-                          width: `${layoutSplitRatio}%`,
-                          transition: "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+                          position: "absolute",
+                          left: `${bounds.x}%`,
+                          top: `${bounds.y}%`,
+                          width: `${bounds.width}%`,
+                          height: `${bounds.height}%`,
+                          zIndex: bounds.zIndex || 10,
+                          transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
                         }}
-                        className="h-full min-w-0"
+                        className="rounded-2xl overflow-hidden border border-white/10"
                       >
                         <VideoTrackView
-                          id={onStageParticipants[0].id}
-                          track={onStageParticipants[0].videoTrack}
-                          audioTrack={onStageParticipants[0].audioTrack}
-                          name={onStageParticipants[0].isLocal ? `${onStageParticipants[0].name || "Guest"} (You)` : (onStageParticipants[0].name || "Guest")}
-                          isSpeaking={onStageParticipants[0].isSpeaking}
-                          micOn={onStageParticipants[0].micOn}
-                          camOn={onStageParticipants[0].camOn}
-                          isLocal={onStageParticipants[0].isLocal}
-                          role={onStageParticipants[0].role}
+                          id={p.id}
+                          track={p.videoTrack}
+                          audioTrack={p.audioTrack}
+                          name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
+                          isSpeaking={p.isSpeaking}
+                          micOn={p.micOn}
+                          camOn={p.camOn}
+                          isLocal={p.isLocal}
+                          role={p.role}
                         />
                       </div>
-                      <div
-                        style={{
-                          width: `${100 - layoutSplitRatio}%`,
-                          transition: "width 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
-                        }}
-                        className="h-full min-w-0"
-                      >
-                        <VideoTrackView
-                          id={onStageParticipants[1].id}
-                          track={onStageParticipants[1].videoTrack}
-                          audioTrack={onStageParticipants[1].audioTrack}
-                          name={onStageParticipants[1].isLocal ? `${onStageParticipants[1].name || "Guest"} (You)` : (onStageParticipants[1].name || "Guest")}
-                          isSpeaking={onStageParticipants[1].isSpeaking}
-                          micOn={onStageParticipants[1].micOn}
-                          camOn={onStageParticipants[1].camOn}
-                          isLocal={onStageParticipants[1].isLocal}
-                          role={onStageParticipants[1].role}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      className={cn(
-                        "w-full h-full grid gap-2.5 items-center justify-center",
-                        onStageParticipants.length === 1 && "grid-cols-1",
-                        onStageParticipants.length >= 3 && "grid-cols-2 sm:grid-cols-3"
-                      )}
-                    >
-                      {onStageParticipants.map((p) => (
-                        <div key={p.id} className="w-full h-full min-h-0 min-w-0">
-                          <VideoTrackView
-                            id={p.id}
-                            track={p.videoTrack}
-                            audioTrack={p.audioTrack}
-                            name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
-                            isSpeaking={p.isSpeaking}
-                            micOn={p.micOn}
-                            camOn={p.camOn}
-                            isLocal={p.isLocal}
-                            role={p.role}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
             </div>

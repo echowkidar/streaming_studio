@@ -373,6 +373,7 @@ export function useLiveKit({
                       stageParticipantIds: onStageIds.map(String),
                       activeLayout: currentStore.activeLayout,
                       layoutSplitRatio: currentStore.layoutSplitRatio,
+                      participantBounds: currentStore.participantBounds || {},
                     });
                     newRoom.localParticipant
                       .publishData(new TextEncoder().encode(payload), { reliable: true })
@@ -432,6 +433,9 @@ export function useLiveKit({
                   }
                   if (Array.isArray(data.stageParticipantIds)) {
                     useStudioStore.getState().setStageParticipants(data.stageParticipantIds);
+                  }
+                  if (data.participantBounds && typeof data.participantBounds === "object") {
+                    useStudioStore.getState().setAllParticipantBounds(data.participantBounds);
                   }
                 } catch {
                   // ignore
@@ -601,16 +605,23 @@ export function useLiveKit({
 
   // Broadcast stage sync across room
   const publishStageSync = useCallback(
-    async (stageParticipantIds: (string | number)[], layout?: string, splitRatio?: number) => {
+    async (
+      stageParticipantIds: (string | number)[],
+      layout?: string,
+      splitRatio?: number,
+      bounds?: Record<string, any>
+    ) => {
       if (!roomRef.current?.localParticipant || roomRef.current.state !== "connected") return;
       try {
         let activeL = layout;
         let splitR = splitRatio;
-        if (typeof window !== "undefined" && (!activeL || splitR === undefined)) {
+        let pBounds = bounds;
+        if (typeof window !== "undefined") {
           try {
             const st = useStudioStore.getState();
             if (!activeL) activeL = st.activeLayout;
             if (splitR === undefined) splitR = st.layoutSplitRatio;
+            if (!pBounds) pBounds = st.participantBounds;
           } catch {
             // ignore
           }
@@ -621,6 +632,7 @@ export function useLiveKit({
           stageParticipantIds: stageParticipantIds.map(String),
           activeLayout: activeL,
           layoutSplitRatio: splitR ?? 50,
+          participantBounds: pBounds || {},
         });
         await roomRef.current.localParticipant
           .publishData(new TextEncoder().encode(payload), { reliable: true })

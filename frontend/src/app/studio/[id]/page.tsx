@@ -91,6 +91,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     activeLayout,
     setLayout,
     layoutSplitRatio,
+    participantBounds,
     isLive,
     startLive,
     endLive,
@@ -109,7 +110,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = Array.from(
       new Set([...participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id), id])
     );
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds);
   };
 
   const handleMoveToBackstage = (id: string | number) => {
@@ -117,19 +118,23 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = participants
       .filter((p) => p.status === "ON_STAGE" && String(p.id) !== String(id))
       .map((p) => p.id);
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds);
   };
 
-  // Sync layout changes to all guests (debounced so mouse dragging never floods WebRTC channel)
+  // Sync layout and freeform bounds changes to all guests (debounced so mouse dragging never floods WebRTC channel)
   useEffect(() => {
     const timer = setTimeout(() => {
-      const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
-      if (onStageIds.length > 0) {
-        publishStageSync(onStageIds, activeLayout, layoutSplitRatio);
+      try {
+        const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+        if (onStageIds.length > 0) {
+          publishStageSync(onStageIds, activeLayout, layoutSplitRatio, participantBounds);
+        }
+      } catch (err) {
+        console.warn("Stage sync broadcast error:", err);
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [activeLayout, layoutSplitRatio]);
+  }, [activeLayout, layoutSplitRatio, participantBounds]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>("chat");
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
