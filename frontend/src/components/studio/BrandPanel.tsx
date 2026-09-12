@@ -13,10 +13,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
+import { useAuthStore } from "@/stores/auth.store";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 
 export const BrandPanel: React.FC = () => {
+  const { user } = useAuthStore();
+  const defaultHostName = user?.name || "Host Speaker";
+
   const {
     showLogo,
     logoUrl,
@@ -36,8 +40,8 @@ export const BrandPanel: React.FC = () => {
 
   const [logoTextInput, setLogoTextInput] = useState(logoUrl || "LIVESTUDIO");
   const [customBgInput, setCustomBgInput] = useState("");
-  const [bannerTitle, setBannerTitle] = useState(activeBanner?.title || "Salar Khan");
-  const [bannerSubtitle, setBannerSubtitle] = useState(activeBanner?.subtitle || "Founder & Lead Architect");
+  const [bannerTitle, setBannerTitle] = useState(activeBanner?.title || defaultHostName);
+  const [bannerSubtitle, setBannerSubtitle] = useState(activeBanner?.subtitle || "Live Presenter");
   const [tickerInput, setTickerInput] = useState(tickerText);
 
   const colors = [
@@ -74,9 +78,9 @@ export const BrandPanel: React.FC = () => {
   ];
 
   const lowerThirdPresets = [
-    { title: "Salar Khan", subtitle: "Founder & Lead Architect", color: "#6366f1" },
-    { title: "Keynote Presentation", subtitle: "Live Q&A & Product Demo", color: "#06b6d4" },
-    { title: "BREAKING LIVESTREAM", subtitle: "Official LiveStudio Broadcast", color: "#f43f5e" },
+    { title: defaultHostName, subtitle: "Host / Presenter", color: "#6366f1" },
+    { title: "Live Q&A Session", subtitle: "Ask Questions in Live Chat", color: "#06b6d4" },
+    { title: "BREAKING LIVESTREAM", subtitle: "Official Broadcast", color: "#f43f5e" },
   ];
 
   const handleUpdateBanner = () => {
@@ -90,6 +94,11 @@ export const BrandPanel: React.FC = () => {
   };
 
   const handleApplyPreset = (preset: { title: string; subtitle: string; color: string }) => {
+    // If this preset is already active and live on stage, toggle it OFF (hide)!
+    if (activeBanner?.title === preset.title && activeBanner?.isShowing) {
+      setBanner(null);
+      return;
+    }
     setBannerTitle(preset.title);
     setBannerSubtitle(preset.subtitle);
     setThemeColor(preset.color);
@@ -265,42 +274,55 @@ export const BrandPanel: React.FC = () => {
             Lower Third Banners
           </h4>
           {activeBanner?.isShowing && (
-            <button
+            <Button
+              variant="danger"
+              size="sm"
               onClick={() => setBanner(null)}
-              className="text-[10px] text-rose-400 hover:underline font-semibold"
+              className="h-6 text-[10px] px-2 rounded-lg"
             >
-              Hide from Stage
-            </button>
+              <EyeOff className="w-3 h-3 mr-1" />
+              Hide Banner
+            </Button>
           )}
         </div>
 
         {/* Quick Presets */}
         <div className="space-y-1.5">
-          <span className="text-[10px] text-slate-400">Quick Presets</span>
+          <span className="text-[10px] text-slate-400">Quick Presets (Click to Show / Hide)</span>
           <div className="space-y-1">
-            {lowerThirdPresets.map((preset, idx) => (
-              <div
-                key={idx}
-                onClick={() => handleApplyPreset(preset)}
-                className={cn(
-                  "p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all",
-                  activeBanner?.title === preset.title && activeBanner?.isShowing
-                    ? "border-indigo-500 bg-indigo-500/15 text-white"
-                    : "border-white/5 bg-surface hover:border-white/15 text-slate-300"
-                )}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-1.5 h-6 rounded-full shrink-0" style={{ backgroundColor: preset.color }} />
-                  <div className="min-w-0">
-                    <div className="font-semibold text-[11px] truncate">{preset.title}</div>
-                    <div className="text-[9px] text-slate-400 truncate">{preset.subtitle}</div>
+            {lowerThirdPresets.map((preset, idx) => {
+              const isThisActive = activeBanner?.title === preset.title && activeBanner?.isShowing;
+              return (
+                <div
+                  key={idx}
+                  onClick={() => handleApplyPreset(preset)}
+                  className={cn(
+                    "p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all",
+                    isThisActive
+                      ? "border-indigo-500 bg-indigo-500/15 text-white shadow-md ring-1 ring-indigo-500/30"
+                      : "border-white/5 bg-surface hover:border-white/15 text-slate-300"
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-1.5 h-6 rounded-full shrink-0" style={{ backgroundColor: preset.color }} />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[11px] truncate">{preset.title}</div>
+                      <div className="text-[9px] text-slate-400 truncate">{preset.subtitle}</div>
+                    </div>
                   </div>
+                  <span
+                    className={cn(
+                      "text-[9px] font-bold uppercase px-2 py-0.5 rounded transition-colors",
+                      isThisActive
+                        ? "bg-rose-500/25 text-rose-300 border border-rose-500/40"
+                        : "bg-white/5 text-indigo-400 hover:bg-white/10"
+                    )}
+                  >
+                    {isThisActive ? "Hide (Live)" : "Show"}
+                  </span>
                 </div>
-                <span className="text-[9px] font-bold uppercase text-indigo-400 px-1.5 py-0.5 rounded bg-white/5">
-                  {activeBanner?.title === preset.title && activeBanner?.isShowing ? "Live" : "Show"}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -321,9 +343,40 @@ export const BrandPanel: React.FC = () => {
             placeholder="Subtitle / Role / Title"
             className="w-full h-8 px-3 rounded-lg bg-surface border border-white/10 text-white"
           />
-          <Button variant="primary" size="sm" className="w-full text-xs h-8" onClick={handleUpdateBanner}>
-            Show on Stage
-          </Button>
+          <div className="flex gap-2">
+            {activeBanner?.isShowing ? (
+              <>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="flex-1 text-xs h-8"
+                  onClick={() => setBanner(null)}
+                >
+                  <EyeOff className="w-3.5 h-3.5 mr-1.5" />
+                  Hide from Stage
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-xs h-8 px-3"
+                  onClick={handleUpdateBanner}
+                  title="Update banner text"
+                >
+                  Update
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full text-xs h-8"
+                onClick={handleUpdateBanner}
+              >
+                <Eye className="w-3.5 h-3.5 mr-1.5" />
+                Show on Stage
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 

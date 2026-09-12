@@ -376,11 +376,13 @@ export const StagePreview: React.FC = () => {
       {/* Animated News Ticker Crawl */}
       {showTicker && (
         <div className="absolute bottom-0 inset-x-0 h-8 bg-indigo-950/90 border-t border-indigo-500/30 backdrop-blur-md z-30 flex items-center overflow-hidden">
-          <div className="px-3 bg-indigo-600 text-[10px] font-bold tracking-widest text-white uppercase shrink-0 h-full flex items-center">
+          <div className="px-3 bg-indigo-600 text-[10px] font-bold tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg">
             LIVE UPDATES
           </div>
-          <div className="whitespace-nowrap animate-marquee text-xs font-medium text-white px-4">
-            {tickerText}
+          <div className="flex-1 overflow-hidden relative">
+            <div className="animate-marquee text-xs font-medium text-white px-4">
+              {tickerText}
+            </div>
           </div>
         </div>
       )}

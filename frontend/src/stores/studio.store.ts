@@ -186,14 +186,8 @@ export const useStudioStore = create<StudioState>((set) => ({
   activeOverlayUrl: null,
   activeBackgroundUrl: null,
   activeThemeColor: "#6366f1",
-  activeBanner: {
-    id: "banner-1",
-    title: "Salar Khan",
-    subtitle: "Founder & Lead Architect",
-    themeColor: "#6366f1",
-    isShowing: true,
-  },
-  tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube, Twitch & Custom RTMP",
+  activeBanner: null,
+  tickerText: "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
   showTicker: false,
 
   setLogo: (url, show) => set((s) => ({ logoUrl: url, showLogo: show !== undefined ? show : s.showLogo })),

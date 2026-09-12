@@ -7,8 +7,10 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
+import { useAuthStore } from "@/stores/auth.store";
 
 export default function TeamPage() {
+  const { user } = useAuthStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("PRODUCER");
@@ -16,8 +18,8 @@ export default function TeamPage() {
   const [members, setMembers] = useState([
     {
       id: "mem-1",
-      name: "Salar Khan",
-      email: "creator@livestudio.io",
+      name: user?.name || "Workspace Owner",
+      email: user?.email || "owner@livestudio.io",
       role: "OWNER",
       status: "ACTIVE",
       joinedAt: "Jan 10, 2026",

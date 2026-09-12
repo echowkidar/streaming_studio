@@ -43,9 +43,11 @@ export default function DestinationsPage() {
     try {
       setLoading(true);
       const res = await fetch("/api/destinations");
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setDestinations(json.data);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setDestinations(json.data);
+        }
       }
     } catch (e) {
       console.error("Failed to fetch destinations:", e);

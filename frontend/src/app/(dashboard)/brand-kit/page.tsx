@@ -5,8 +5,10 @@ import { Palette, Upload, Image as ImageIcon, Type, Sparkles, Plus, Check } from
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Tabs } from "@/components/ui/Tabs";
+import { useAuthStore } from "@/stores/auth.store";
 
 export default function BrandKitPage() {
+  const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState("logos");
   const [activeColor, setActiveColor] = useState("#6366f1");
 
@@ -104,7 +106,7 @@ export default function BrandKitPage() {
       {activeTab === "banners" && (
         <div className="space-y-4">
           {[
-            { title: "Salar Khan", subtitle: "Founder & Lead Architect", style: "Minimal Gradient" },
+            { title: user?.name || "Host Presenter", subtitle: "Founder & Lead Architect", style: "Minimal Gradient" },
             { title: "Special Guest Keynote", subtitle: "VP of Cloud & AI Infrastructure", style: "Corporate Glass" },
             { title: "⚡ Breaking Announcement", subtitle: "LiveStudio v2 is now generally available", style: "High Contrast News" },
           ].map((banner, idx) => (

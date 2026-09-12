@@ -45,9 +45,11 @@ export default function RecordingsPage() {
     try {
       setLoading(true);
       const res = await fetch("/api/recordings");
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setRecordings(json.data);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          setRecordings(json.data);
+        }
       }
     } catch (e) {
       console.error("Failed to fetch recordings:", e);

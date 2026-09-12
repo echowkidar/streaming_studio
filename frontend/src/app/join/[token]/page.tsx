@@ -7,6 +7,7 @@ import {
   Video,
   VideoOff,
   ArrowRight,
+  ArrowLeft,
   MonitorUp,
   PhoneOff,
   Users,
@@ -129,7 +130,11 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
   const handleLeave = () => {
     disconnect();
-    window.location.href = "/";
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.href = "/";
+    }
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -163,12 +168,30 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
       {step === "setup" ? (
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="w-full max-w-lg space-y-5">
-            {/* Header */}
-            <div className="text-center space-y-1.5">
+            {/* Back Button & Header */}
+            <div className="flex items-center justify-between">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  if (typeof window !== "undefined" && window.history.length > 1) {
+                    window.history.back();
+                  } else {
+                    window.location.href = "/";
+                  }
+                }}
+                className="text-xs text-slate-400 hover:text-white flex items-center gap-1.5 h-8 px-2.5 rounded-xl"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back
+              </Button>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
                 LiveStudio Green Room
               </div>
+            </div>
+
+            <div className="text-center space-y-1.5">
               <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
                 Guest Studio Check-In
               </h1>

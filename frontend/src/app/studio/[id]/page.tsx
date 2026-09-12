@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mic,
@@ -44,8 +45,17 @@ import { useLiveKit } from "@/hooks/useLiveKit";
 import { useAuthStore } from "@/stores/auth.store";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
   const { user } = useAuthStore();
   const hostName = user?.name || "Host";
+
+  const handleBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/");
+    }
+  };
 
   const cleanStudioId = params.id.replace(/^studio-/, "");
   const roomName = `studio-${cleanStudioId}`;
@@ -92,25 +102,24 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [liveDurationSec, setLiveDurationSec] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // StreamYard Security Check: Ensure only authenticated host can access studio console.
-  // Guests who open the studio URL directly are seamlessly redirected to their guest join page.
+  // Check auth session safely without breaking browser history
   useEffect(() => {
     if (typeof window !== "undefined") {
       const authRaw = localStorage.getItem("livestudio_auth");
       if (!authRaw) {
-        window.location.replace(`/join/studio-${params.id}`);
+        router.push("/login");
         return;
       }
       try {
         const parsed = JSON.parse(authRaw);
-        if (!parsed?.state?.user) {
-          window.location.replace(`/join/studio-${params.id}`);
+        if (!parsed?.state?.user && !parsed?.state?.token) {
+          router.push("/login");
         }
       } catch {
-        window.location.replace(`/join/studio-${params.id}`);
+        router.push("/login");
       }
     }
-  }, [params.id]);
+  }, [router]);
 
   // Live timer effect
   useEffect(() => {
@@ -176,11 +185,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       {/* ─── Top Bar ────────────────────────────────────────── */}
       <header className="h-14 border-b border-white/5 flex items-center justify-between px-4 bg-[#0c0c14]/90 backdrop-blur-md z-30">
         <div className="flex items-center gap-3">
-          <Link href="/dashboard">
-            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xl text-slate-400 hover:text-white">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleBack}
+            className="h-8 w-8 rounded-xl text-slate-400 hover:text-white hover:bg-white/10"
+            title="Go Back"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
 
           <div className="flex items-center gap-2">
             <input
@@ -405,16 +418,16 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                 Cam/Mic Test
               </Button>
 
-              <Link href="/dashboard">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-10 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
-                >
-                  <PhoneOff className="w-4 h-4 mr-1.5" />
-                  Exit
-                </Button>
-              </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleBack}
+                className="h-10 rounded-xl text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                title="Exit Studio"
+              >
+                <PhoneOff className="w-4 h-4 mr-1.5" />
+                Exit
+              </Button>
             </div>
           </div>
         </div>

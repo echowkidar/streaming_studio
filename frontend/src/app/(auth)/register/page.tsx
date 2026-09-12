@@ -107,7 +107,7 @@ export default function RegisterPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="block w-full pl-10 pr-3 py-2.5 rounded-xl border border-white/10 bg-surface text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-              placeholder="Salar Khan"
+              placeholder="Alex Morgan"
             />
           </div>
         </div>
