@@ -180,7 +180,7 @@ class StageBroadcaster {
       console.log(`[StageBroadcaster] Starting MediaRecorder with MIME: ${mimeType}`);
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: 2500000, // 2.5 Mbps rock-solid 720p HD streaming without network choke
+        videoBitsPerSecond: 1800000, // 1.8 Mbps clean 720p HD streaming without network choke
         audioBitsPerSecond: 128000,  // 128 kbps stereo AAC
       });
 
@@ -689,16 +689,31 @@ class StageBroadcaster {
     this.isUploading = true;
 
     while (this.chunkQueue.length > 0 && this.isBroadcasting && this.activeBroadcastId) {
-      const chunk = this.chunkQueue.shift()!;
-      try {
-        await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: chunk,
-        });
-      } catch (err) {
-        console.warn("[StageBroadcaster] Chunk upload warning:", err);
+      const chunk = this.chunkQueue[0];
+      let uploaded = false;
+      let retries = 0;
+
+      while (!uploaded && retries < 3 && this.isBroadcasting && this.activeBroadcastId) {
+        retries++;
+        try {
+          const res = await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: chunk,
+          });
+          if (res.ok) {
+            uploaded = true;
+          } else {
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        } catch (err) {
+          console.warn(`[StageBroadcaster] Chunk upload retry #${retries}:`, err);
+          await new Promise((r) => setTimeout(r, 200));
+        }
       }
+
+      // Dequeue only after success or max retries
+      this.chunkQueue.shift();
     }
 
     this.isUploading = false;
