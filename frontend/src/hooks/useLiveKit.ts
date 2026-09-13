@@ -63,6 +63,7 @@ export function useLiveKit({
 
     if (local) {
       local.videoTrackPublications.forEach((pub) => {
+        if (pub.trackName === "stage_composite_video") return;
         if (pub.source === Track.Source.ScreenShare) {
           localScrTrack = (pub.track as LocalVideoTrack) || (pub.videoTrack as LocalVideoTrack) || null;
         } else {
@@ -71,6 +72,7 @@ export function useLiveKit({
       });
 
       local.audioTrackPublications.forEach((pub) => {
+        if (pub.trackName === "stage_composite_audio") return;
         localMicTrack = (pub.track as LocalAudioTrack) || (pub.audioTrack as LocalAudioTrack) || null;
       });
 
@@ -162,6 +164,7 @@ export function useLiveKit({
       let remoteAudio: any = null;
 
       remote.videoTrackPublications.forEach((pub: RemoteTrackPublication) => {
+        if (pub.trackName === "stage_composite_video") return;
         if (pub.source === Track.Source.ScreenShare) {
           remoteScrTrack = pub.track || (pub.videoTrack as any) || null;
         } else {
@@ -171,18 +174,19 @@ export function useLiveKit({
 
       if (!remoteScrTrack) {
         const scrPub = remote.getTrackPublication(Track.Source.ScreenShare);
-        if (scrPub) {
+        if (scrPub && scrPub.trackName !== "stage_composite_video") {
           remoteScrTrack = scrPub.track || (scrPub.videoTrack as any) || null;
         }
       }
       if (!remoteCamTrack) {
         const camPub = remote.getTrackPublication(Track.Source.Camera);
-        if (camPub) {
+        if (camPub && camPub.trackName !== "stage_composite_video") {
           remoteCamTrack = camPub.track || (camPub.videoTrack as any) || null;
         }
       }
 
       remote.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
+        if (pub.trackName === "stage_composite_audio") return;
         if (pub.track) {
           remoteAudio = pub.track;
         }

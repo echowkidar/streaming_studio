@@ -203,7 +203,7 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 // POST /api/broadcasts/:broadcastId/stream/start
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { destinationIds, roomName, directDestinations } = req.body;
+    const { destinationIds, roomName, directDestinations, videoTrackId, audioTrackId } = req.body;
     
     // Resolve RTMP URLs (handles decryption of stored stream keys)
     const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
@@ -215,12 +215,19 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
       return;
     }
 
-    // Start LiveKit Egress
+    // Start LiveKit Egress: if videoTrackId is provided, stream the studio canvas composite directly!
     const { EgressService } = await import('../services/egress.service');
     const egress = EgressService.getInstance();
     const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
     
-    const result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+    let result: { egressId: string };
+    if (videoTrackId) {
+      console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${videoTrackId}`);
+      result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, videoTrackId, audioTrackId);
+    } else {
+      console.log(`[Broadcast API] Starting Room Composite Egress (fallback)`);
+      result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+    }
     
     // Track in memory
     egress.setEgressForBroadcast(req.params.broadcastId, result.egressId);

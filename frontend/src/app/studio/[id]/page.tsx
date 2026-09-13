@@ -43,6 +43,7 @@ import { DeviceSettingsModal } from "@/components/studio/DeviceSettingsModal";
 import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager";
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { GoLiveModal } from "@/components/studio/GoLiveModal";
+import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
@@ -105,6 +106,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     moveToBackstage,
     removeParticipant,
   } = useStudioStore();
+
+  const compositeVideoPubRef = React.useRef<any>(null);
+  const compositeAudioPubRef = React.useRef<any>(null);
 
   const handleMoveToStage = (id: string | number) => {
     moveToStage(id);
@@ -212,7 +216,35 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleGoLive = async (destinationIds: string[]) => {
     try {
-      // Gather any direct destinations from local custom storage
+      // 1. Start Stage Canvas Composite (30 FPS render loop for tickers, banners, logos, backgrounds, participant videos)
+      let videoTrackId: string | undefined;
+      let audioTrackId: string | undefined;
+
+      try {
+        const stageEl = document.getElementById("livestudio-stage-container");
+        const compositeTracks = stageBroadcaster.startStageComposite(stageEl);
+
+        if (compositeTracks && room?.localParticipant) {
+          const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
+            name: "stage_composite_video",
+          });
+          compositeVideoPubRef.current = vPub;
+          videoTrackId = vPub.trackSid;
+
+          if (compositeTracks.audioTrack) {
+            const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
+              name: "stage_composite_audio",
+            });
+            compositeAudioPubRef.current = aPub;
+            audioTrackId = aPub.trackSid;
+          }
+          console.log("[Studio GoLive] Published composite tracks for RTMP:", { videoTrackId, audioTrackId });
+        }
+      } catch (trackErr) {
+        console.warn("[Studio GoLive] Track composite publish warning (will fallback to room composite):", trackErr);
+      }
+
+      // 2. Gather any direct destinations from local custom storage
       let directDestinations: Array<{ rtmpUrl: string; streamKey?: string }> = [];
       if (typeof window !== "undefined") {
         try {
@@ -233,7 +265,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         }
       }
 
-      // Tell backend to start LiveKit Egress RTMP streaming (server-side rendering + encoding)
+      // 3. Tell backend to start LiveKit Egress RTMP streaming (with composite track IDs)
       const res = await fetch(`/api/broadcasts/${params.id}/stream/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -241,6 +273,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           destinationIds,
           roomName,
           directDestinations,
+          videoTrackId,
+          audioTrackId,
         }),
       });
 
@@ -259,10 +293,23 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const handleEndBroadcast = async () => {
     if (!confirm("Are you sure you want to end this live broadcast?")) return;
     try {
-      // Tell backend to stop LiveKit Egress RTMP streaming
+      // 1. Tell backend to stop LiveKit Egress RTMP streaming
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
+
+      // 2. Unpublish composite tracks from LiveKit room
+      if (room?.localParticipant) {
+        if (compositeVideoPubRef.current?.track) {
+          await room.localParticipant.unpublishTrack(compositeVideoPubRef.current.track).catch(() => {});
+          compositeVideoPubRef.current = null;
+        }
+        if (compositeAudioPubRef.current?.track) {
+          await room.localParticipant.unpublishTrack(compositeAudioPubRef.current.track).catch(() => {});
+          compositeAudioPubRef.current = null;
+        }
+      }
+      stageBroadcaster.stopStageComposite();
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {
@@ -270,12 +317,26 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
   };
 
-  // Sync LiveKit participants to studio store
+  // Sync LiveKit participants to studio store and refresh broadcast audio mix
   useEffect(() => {
     if (liveParticipants.length > 0) {
       useStudioStore.getState().setParticipants(liveParticipants);
+      if (stageBroadcaster.isStreaming()) {
+        stageBroadcaster.refreshAudioConnections();
+      }
     }
   }, [liveParticipants]);
+
+  // Refresh broadcast audio when active media (video/audio) is played or stopped
+  const activeMedia = useStudioStore((s) => s.activeMedia);
+  useEffect(() => {
+    if (stageBroadcaster.isStreaming()) {
+      const t = setTimeout(() => {
+        stageBroadcaster.refreshAudioConnections();
+      }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [activeMedia]);
 
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");

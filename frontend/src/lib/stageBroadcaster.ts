@@ -62,8 +62,140 @@ class StageBroadcaster {
   private chunkQueue: Blob[] = [];
   private isUploading = false;
 
+  // Tracks for LiveKit WebRTC transmission
+  private activeVideoTrack: MediaStreamTrack | null = null;
+  private activeAudioTrack: MediaStreamTrack | null = null;
+
   public isStreaming(): boolean {
     return this.isBroadcasting;
+  }
+
+  /**
+   * Start 30 FPS Canvas render loop & Web Audio mix, returning live MediaStreamTracks for WebRTC
+   * This allows LiveKit to stream the exact stage (with overlays, tickers, banners, backgrounds) to YouTube!
+   */
+  public startStageComposite(stageElement: HTMLElement | null): { videoTrack: MediaStreamTrack; audioTrack: MediaStreamTrack | null } | null {
+    if (this.isBroadcasting && this.activeVideoTrack) {
+      return { videoTrack: this.activeVideoTrack, audioTrack: this.activeAudioTrack };
+    }
+
+    const container = stageElement || document.getElementById("livestudio-stage-container");
+    if (!container) {
+      console.error("[StageBroadcaster] Stage container element not found");
+      return null;
+    }
+
+    this.isBroadcasting = true;
+
+    // 1. Setup Composite 720p HD Canvas (1280x720 @ 30fps)
+    const WIDTH = 1280;
+    const HEIGHT = 720;
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = WIDTH;
+    this.canvas.height = HEIGHT;
+    this.ctx = this.canvas.getContext("2d", { alpha: false });
+
+    if (!this.ctx) {
+      console.error("[StageBroadcaster] Failed to get canvas 2d context");
+      this.stopStageComposite();
+      return null;
+    }
+
+    // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.audioCtx = new AudioContextClass();
+      this.audioDestination = this.audioCtx.createMediaStreamDestination();
+
+      // Silent baseline carrier tone (amplitude 0.0001) to keep RTMP audio stream alive
+      const osc = this.audioCtx.createOscillator();
+      this.silentGain = this.audioCtx.createGain();
+      this.silentGain.gain.value = 0.0001;
+      osc.connect(this.silentGain);
+      this.silentGain.connect(this.audioDestination);
+      osc.start();
+    } catch (audioErr) {
+      console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
+    }
+
+    // 3. Connect active audio tracks
+    this.refreshAudioConnections();
+
+    // 4. Initial layout snapshot
+    this.updateLayoutCache(container, WIDTH, HEIGHT);
+
+    // 5. Start Throttled 30 FPS Canvas Render Loop
+    this.lastTickerTime = performance.now();
+    this.lastFrameTime = performance.now();
+
+    const render = (time: number) => {
+      if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
+
+      const elapsed = time - this.lastFrameTime;
+      if (elapsed >= this.FRAME_INTERVAL) {
+        this.lastFrameTime = time - (elapsed % this.FRAME_INTERVAL);
+
+        if (time - this.lastLayoutCacheTime > 250) {
+          this.updateLayoutCache(container, WIDTH, HEIGHT);
+          this.lastLayoutCacheTime = time;
+        }
+
+        this.renderStageFrame(container, WIDTH, HEIGHT, time);
+      }
+
+      this.animFrameId = requestAnimationFrame(render);
+    };
+
+    this.animFrameId = requestAnimationFrame(render);
+
+    // 6. Extract MediaStreamTracks
+    const canvasStream = this.canvas.captureStream(30);
+    this.activeVideoTrack = canvasStream.getVideoTracks()[0] || null;
+
+    if (this.audioDestination && this.audioDestination.stream) {
+      const aTracks = this.audioDestination.stream.getAudioTracks();
+      if (aTracks.length > 0) {
+        this.activeAudioTrack = aTracks[0];
+      }
+    }
+
+    if (!this.activeVideoTrack) {
+      console.error("[StageBroadcaster] Failed to capture canvas video track");
+      this.stopStageComposite();
+      return null;
+    }
+
+    console.log("[StageBroadcaster] Stage composite active (30 FPS canvas + mixed audio).");
+    return { videoTrack: this.activeVideoTrack, audioTrack: this.activeAudioTrack };
+  }
+
+  public stopStageComposite() {
+    this.isBroadcasting = false;
+    this.activeVideoTrack = null;
+    this.activeAudioTrack = null;
+
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
+
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch {}
+      this.audioCtx = null;
+    }
+
+    this.connectedAudioTracks.clear();
+    this.connectedMediaElements.clear();
+    this.cachedLayouts = [];
+    this.canvas = null;
+    this.ctx = null;
+    this.cachedBgUrl = null;
+    this.bgImage = null;
+    console.log("[StageBroadcaster] Stage composite stopped and resources freed.");
   }
 
   /**

@@ -5,7 +5,7 @@ import {
   StreamProtocol,
 } from 'livekit-server-sdk';
 
-import type { RoomCompositeOptions, WebOptions, EncodedOutputs } from 'livekit-server-sdk';
+import type { RoomCompositeOptions, WebOptions, TrackCompositeOptions, EncodedOutputs } from 'livekit-server-sdk';
 
 export class EgressService {
   private static instance: EgressService;
@@ -58,6 +58,45 @@ export class EgressService {
       return { egressId };
     } catch (error) {
       console.error(`[Egress] Error starting Room Composite Egress:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start Track Composite Egress — captures specific video & audio tracks (e.g. stage canvas composite) and streams to RTMP
+   * This is how StreamYard streams the exact studio canvas (with overlays, tickers, backgrounds) to YouTube!
+   */
+  async startTrackCompositeEgress(
+    roomName: string,
+    rtmpUrls: string[],
+    videoTrackId: string,
+    audioTrackId?: string
+  ): Promise<{ egressId: string }> {
+    try {
+      console.log(`[Egress] Starting Track Composite Egress for room "${roomName}" [video: ${videoTrackId}, audio: ${audioTrackId || 'none'}] → ${rtmpUrls.length} destination(s)`);
+
+      const streamOutput: StreamOutput = {
+        protocol: StreamProtocol.RTMP,
+        urls: rtmpUrls,
+      };
+
+      const output: EncodedOutputs = {
+        stream: streamOutput,
+      };
+
+      const opts: TrackCompositeOptions = {
+        videoTrackId,
+        audioTrackId: audioTrackId || undefined,
+        encodingOptions: EncodingOptionsPreset.H264_720P_30,
+      };
+
+      const info = await this.egressClient.startTrackCompositeEgress(roomName, output, opts);
+
+      const egressId = info.egressId ?? '';
+      console.log(`[Egress] Started Track Composite successfully: egressId="${egressId}"`);
+      return { egressId };
+    } catch (error) {
+      console.error(`[Egress] Error starting Track Composite Egress:`, error);
       throw error;
     }
   }
