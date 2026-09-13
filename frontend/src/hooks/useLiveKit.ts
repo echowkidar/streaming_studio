@@ -19,6 +19,7 @@ import { useStudioStore } from "@/stores/studio.store";
 interface UseLiveKitOptions {
   roomName: string;
   participantName: string;
+  identity?: string;
   role?: "HOST" | "GUEST" | "CO_HOST";
   autoConnect?: boolean;
 }
@@ -26,6 +27,7 @@ interface UseLiveKitOptions {
 export function useLiveKit({
   roomName,
   participantName,
+  identity,
   role = "GUEST",
   autoConnect = true,
 }: UseLiveKitOptions) {
@@ -295,6 +297,7 @@ export function useLiveKit({
         body: JSON.stringify({
           roomName,
           participantName,
+          identity,
           role,
         }),
       });

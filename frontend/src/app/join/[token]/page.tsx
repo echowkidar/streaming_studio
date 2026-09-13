@@ -415,7 +415,12 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                       onStageParticipants.length,
                       layoutSplitRatio
                     );
-                    const bounds = participantBounds[p.id] || defaultBounds;
+                    const bounds =
+                      participantBounds[p.id] ||
+                      (p.isLocal && participantBounds["local-host"]) ||
+                      (p.isScreen && participantBounds["screen-share"]) ||
+                      participantBounds[`slot-${idx}`] ||
+                      defaultBounds;
                     return (
                       <div
                         key={p.id}

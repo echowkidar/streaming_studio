@@ -64,6 +64,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const cleanStudioId = params.id.replace(/^studio-/, "");
   const roomName = `studio-${cleanStudioId}`;
+  const hostIdentity = user?.id ? `host-${user.id}` : `host-${cleanStudioId}`;
   const {
     room,
     isConnected,
@@ -83,6 +84,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   } = useLiveKit({
     roomName,
     participantName: hostName,
+    identity: hostIdentity,
     role: "HOST",
     autoConnect: true,
   });

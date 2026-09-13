@@ -779,7 +779,12 @@ export const StagePreview: React.FC = () => {
             onStageParticipants.length,
             layoutSplitRatio
           );
-          const bounds: ParticipantBounds = participantBounds[p.id] || defaultBounds;
+          const bounds: ParticipantBounds =
+            participantBounds[p.id] ||
+            (p.isLocal && participantBounds["local-host"]) ||
+            (p.isScreen && participantBounds["screen-share"]) ||
+            participantBounds[`slot-${idx}`] ||
+            defaultBounds;
           const isSelected = String(selectedParticipantId) === String(p.id);
           const isThisDragging = activeDragState?.participantId === p.id;
 

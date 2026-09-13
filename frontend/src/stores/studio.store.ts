@@ -312,6 +312,10 @@ interface SavedStudioLayoutState {
   logoConfig?: LogoConfig;
   showLogo?: boolean;
   logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  activeBanner?: LowerThirdBanner | null;
+  chromaKeyConfig?: ChromaKeyConfig;
+  activeStageOverlay?: StageOverlayAsset | null;
+  activeOverlayUrl?: string | null;
 }
 
 function loadSavedStudioLayout(): SavedStudioLayoutState {
@@ -388,6 +392,22 @@ export const useStudioStore = create<StudioState>((set) => ({
         ...s.participantBounds,
         [key]: merged,
       };
+
+      // Also persist under stable alias keys so positions remain valid across refreshes
+      const p = s.participants.find((item) => String(item.id) === key);
+      if (p?.isLocal || key.includes("host") || key.includes("local")) {
+        nextBounds["local-host"] = merged;
+      }
+      if (p?.isScreen || key.includes("screen")) {
+        nextBounds["screen-share"] = merged;
+      }
+      const onStageIndex = s.participants
+        .filter((item) => item.status === "ON_STAGE")
+        .findIndex((item) => String(item.id) === key);
+      if (onStageIndex >= 0) {
+        nextBounds[`slot-${onStageIndex}`] = merged;
+      }
+
       persistStudioLayout({ participantBounds: nextBounds });
       return {
         participantBounds: nextBounds,
@@ -398,6 +418,19 @@ export const useStudioStore = create<StudioState>((set) => ({
       const key = String(id);
       const next = { ...s.participantBounds };
       delete next[key];
+      const p = s.participants.find((item) => String(item.id) === key);
+      if (p?.isLocal || key.includes("host") || key.includes("local")) {
+        delete next["local-host"];
+      }
+      if (p?.isScreen || key.includes("screen")) {
+        delete next["screen-share"];
+      }
+      const onStageIndex = s.participants
+        .filter((item) => item.status === "ON_STAGE")
+        .findIndex((item) => String(item.id) === key);
+      if (onStageIndex >= 0) {
+        delete next[`slot-${onStageIndex}`];
+      }
       persistStudioLayout({ participantBounds: next });
       return { participantBounds: next };
     }),
@@ -508,14 +541,14 @@ export const useStudioStore = create<StudioState>((set) => ({
   showLogo: savedLayout.showLogo !== undefined ? savedLayout.showLogo : true,
   logoPosition: savedLayout.logoPosition || "top-right",
   logoUrl: savedLayout.logoConfig?.text || "LiveStudio",
-  activeOverlayUrl: null,
+  activeOverlayUrl: savedLayout.activeOverlayUrl !== undefined ? savedLayout.activeOverlayUrl : null,
   activeBackgroundUrl:
     savedLayout.activeBackgroundUrl !== undefined
       ? savedLayout.activeBackgroundUrl
       : "https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&w=1920&q=80",
   activeBackgroundType: savedLayout.activeBackgroundType || "image",
   activeThemeColor: savedLayout.activeThemeColor || "#6366f1",
-  activeBanner: null,
+  activeBanner: savedLayout.activeBanner !== undefined ? savedLayout.activeBanner : null,
   tickerText:
     savedLayout.tickerText ||
     "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
@@ -614,24 +647,38 @@ export const useStudioStore = create<StudioState>((set) => ({
     spill: 0.35,
     backdropType: "image",
     backdropUrl: "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80",
+    ...(savedLayout.chromaKeyConfig || {}),
   },
   setChromaKeyConfig: (updates) =>
-    set((s) => ({
-      chromaKeyConfig: { ...s.chromaKeyConfig, ...updates },
-    })),
+    set((s) => {
+      const next = { ...s.chromaKeyConfig, ...updates };
+      persistStudioLayout({ chromaKeyConfig: next });
+      return { chromaKeyConfig: next };
+    }),
 
   isLeftSidebarCollapsed: false,
   setLeftSidebarCollapsed: (collapsed) => set({ isLeftSidebarCollapsed: collapsed }),
   toggleLeftSidebar: () => set((s) => ({ isLeftSidebarCollapsed: !s.isLeftSidebarCollapsed })),
 
   setLogo: (url, show) =>
-    set((s) => ({
-      logoUrl: url,
-      showLogo: show !== undefined ? show : s.showLogo,
-      logoConfig: { ...s.logoConfig, text: url },
-    })),
-  setLogoPosition: (pos) => set({ logoPosition: pos }),
-  setOverlay: (url) => set({ activeOverlayUrl: url }),
+    set((s) => {
+      const nextShow = show !== undefined ? show : s.showLogo;
+      const nextConfig = { ...s.logoConfig, text: url };
+      persistStudioLayout({ showLogo: nextShow, logoConfig: nextConfig });
+      return {
+        logoUrl: url,
+        showLogo: nextShow,
+        logoConfig: nextConfig,
+      };
+    }),
+  setLogoPosition: (pos) => {
+    persistStudioLayout({ logoPosition: pos });
+    set({ logoPosition: pos });
+  },
+  setOverlay: (url) => {
+    persistStudioLayout({ activeOverlayUrl: url });
+    set({ activeOverlayUrl: url });
+  },
   setBackground: (url, type) => {
     const resolvedType =
       type ||
@@ -659,15 +706,20 @@ export const useStudioStore = create<StudioState>((set) => ({
       },
     }));
   },
-  setBanner: (banner) => set({ activeBanner: banner }),
-  setTicker: (text, show) =>
+  setBanner: (banner) => {
+    persistStudioLayout({ activeBanner: banner });
+    set({ activeBanner: banner });
+  },
+  setTicker: (text, show) => {
+    persistStudioLayout({ tickerText: text, showTicker: show });
     set((s) => ({
       tickerText: text,
       showTicker: show,
       tickerConfig: { ...s.tickerConfig, text },
-    })),
+    }));
+  },
 
-  activeStageOverlay: null,
+  activeStageOverlay: savedLayout.activeStageOverlay !== undefined ? savedLayout.activeStageOverlay : null,
   overlayHistory: (() => {
     if (typeof window !== "undefined") {
       try {
@@ -686,18 +738,21 @@ export const useStudioStore = create<StudioState>((set) => ({
     }
     return DEFAULT_STUDIO_OVERLAYS;
   })(),
-  setStageOverlay: (overlay) => set({ activeStageOverlay: overlay }),
+  setStageOverlay: (overlay) => {
+    persistStudioLayout({ activeStageOverlay: overlay });
+    set({ activeStageOverlay: overlay });
+  },
   toggleStageOverlay: (overlay) =>
     set((s) => {
-      if (s.activeStageOverlay?.id === overlay.id) {
-        return { activeStageOverlay: null };
-      }
-      return { activeStageOverlay: overlay };
+      const next = s.activeStageOverlay?.id === overlay.id ? null : overlay;
+      persistStudioLayout({ activeStageOverlay: next });
+      return { activeStageOverlay: next };
     }),
   updateStageOverlay: (updates) =>
     set((s) => {
       if (!s.activeStageOverlay) return {};
       const updated = { ...s.activeStageOverlay, ...updates };
+      persistStudioLayout({ activeStageOverlay: updated });
       return {
         activeStageOverlay: updated,
         overlayHistory: s.overlayHistory.map((item) => (item.id === updated.id ? updated : item)),
@@ -706,8 +761,10 @@ export const useStudioStore = create<StudioState>((set) => ({
   toggleStageOverlayVisibility: () =>
     set((s) => {
       if (!s.activeStageOverlay) return {};
+      const updated = { ...s.activeStageOverlay, isShowing: !s.activeStageOverlay.isShowing };
+      persistStudioLayout({ activeStageOverlay: updated });
       return {
-        activeStageOverlay: { ...s.activeStageOverlay, isShowing: !s.activeStageOverlay.isShowing },
+        activeStageOverlay: updated,
       };
     }),
   saveToOverlayHistory: (overlay) =>
