@@ -229,6 +229,13 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         if (compositeTracks && room?.localParticipant) {
           const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
             name: "stage_composite_video",
+            simulcast: false,
+            videoCodec: "h264",
+            videoEncoding: {
+              maxBitrate: 3_500_000,
+              maxFramerate: 30,
+            },
+            degradationPreference: "maintain-resolution",
           });
           compositeVideoPubRef.current = vPub;
           videoTrackId = vPub.trackSid;
@@ -236,6 +243,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           if (compositeTracks.audioTrack) {
             const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
               name: "stage_composite_audio",
+              dtx: false,
             });
             compositeAudioPubRef.current = aPub;
             audioTrackId = aPub.trackSid;

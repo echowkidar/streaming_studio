@@ -54,9 +54,15 @@ class StageBroadcaster {
   private connectedAudioTracks = new Set<string>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
 
-  // Cached Background Image
+  // Cached Background & Overlay Images
   private cachedBgUrl: string | null = null;
   private bgImage: HTMLImageElement | null = null;
+  private cachedOverlayUrl: string | null = null;
+  private overlayImage: HTMLImageElement | null = null;
+
+  // Background Web Worker Clock (prevents tab throttling to 1 FPS when switching to YouTube Studio tab)
+  private workerTimer: Worker | null = null;
+  private workerBlobUrl: string | null = null;
 
   // Strict Sequential FIFO Upload Queue (prevents out-of-order chunks)
   private chunkQueue: Blob[] = [];
@@ -107,15 +113,29 @@ class StageBroadcaster {
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.audioCtx = new AudioContextClass();
+      if (this.audioCtx.state === "suspended") {
+        this.audioCtx.resume().catch((audioResumeErr) => {
+          console.warn("[StageBroadcaster] AudioContext resume warning:", audioResumeErr);
+        });
+      }
       this.audioDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Silent baseline carrier tone (amplitude 0.0001) to keep RTMP audio stream alive
-      const osc = this.audioCtx.createOscillator();
-      this.silentGain = this.audioCtx.createGain();
-      this.silentGain.gain.value = 0.0001;
-      osc.connect(this.silentGain);
-      this.silentGain.connect(this.audioDestination);
-      osc.start();
+      // Continuous gentle carrier (amplitude 0.0002 = ~ -74dB)
+      // Completely inaudible to human ears, but forces WebRTC & GStreamer AAC to stream 128 kbps audio packets 24/7 without silence suppression/DTX
+      const sampleRate = this.audioCtx.sampleRate || 48000;
+      const bufferSize = sampleRate * 2;
+      const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const channelData = noiseBuffer.getChannelData(ch);
+        for (let i = 0; i < bufferSize; i++) {
+          channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+        }
+      }
+      const carrier = this.audioCtx.createBufferSource();
+      carrier.buffer = noiseBuffer;
+      carrier.loop = true;
+      carrier.connect(this.audioDestination);
+      carrier.start();
     } catch (audioErr) {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
     }
@@ -126,29 +146,63 @@ class StageBroadcaster {
     // 4. Initial layout snapshot
     this.updateLayoutCache(container, WIDTH, HEIGHT);
 
-    // 5. Start Throttled 30 FPS Canvas Render Loop
+    // 5. Start Resilient 30 FPS Canvas Render Loop (Dual clock: Worker Timer + requestAnimationFrame)
     this.lastTickerTime = performance.now();
     this.lastFrameTime = performance.now();
 
-    const render = (time: number) => {
+    const doRenderFrame = (now: number) => {
       if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
 
-      const elapsed = time - this.lastFrameTime;
+      const elapsed = now - this.lastFrameTime;
       if (elapsed >= this.FRAME_INTERVAL) {
-        this.lastFrameTime = time - (elapsed % this.FRAME_INTERVAL);
+        this.lastFrameTime = now - (elapsed % this.FRAME_INTERVAL);
 
-        if (time - this.lastLayoutCacheTime > 250) {
+        if (now - this.lastLayoutCacheTime > 250) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
-          this.lastLayoutCacheTime = time;
+          this.refreshAudioConnections();
+          this.lastLayoutCacheTime = now;
         }
 
-        this.renderStageFrame(container, WIDTH, HEIGHT, time);
+        this.renderStageFrame(container, WIDTH, HEIGHT, now);
       }
-
-      this.animFrameId = requestAnimationFrame(render);
     };
 
+    // Foreground VSync Loop
+    const render = (time: number) => {
+      if (!this.isBroadcasting) return;
+      doRenderFrame(time);
+      this.animFrameId = requestAnimationFrame(render);
+    };
     this.animFrameId = requestAnimationFrame(render);
+
+    // Background Web Worker Clock: Prevents Chrome from throttling/pausing loop to 1 FPS when switching tabs
+    try {
+      const workerCode = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (timer) clearInterval(timer);
+            timer = setInterval(function() {
+              self.postMessage('tick');
+            }, 33);
+          } else if (e.data === 'stop') {
+            if (timer) clearInterval(timer);
+            timer = null;
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: "application/javascript" });
+      this.workerBlobUrl = URL.createObjectURL(blob);
+      this.workerTimer = new Worker(this.workerBlobUrl);
+      this.workerTimer.onmessage = () => {
+        if (this.isBroadcasting) {
+          doRenderFrame(performance.now());
+        }
+      };
+      this.workerTimer.postMessage("start");
+    } catch (wErr) {
+      console.warn("[StageBroadcaster] Worker timer fallback:", wErr);
+    }
 
     // 6. Extract MediaStreamTracks
     const canvasStream = this.canvas.captureStream(30);
@@ -167,7 +221,7 @@ class StageBroadcaster {
       return null;
     }
 
-    console.log("[StageBroadcaster] Stage composite active (30 FPS canvas + mixed audio).");
+    console.log("[StageBroadcaster] Stage composite active (30 FPS background-resilient canvas + mixed audio).");
     return { videoTrack: this.activeVideoTrack, audioTrack: this.activeAudioTrack };
   }
 
@@ -179,6 +233,20 @@ class StageBroadcaster {
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
+    }
+
+    if (this.workerTimer) {
+      try {
+        this.workerTimer.postMessage("stop");
+        this.workerTimer.terminate();
+      } catch {}
+      this.workerTimer = null;
+    }
+    if (this.workerBlobUrl) {
+      try {
+        URL.revokeObjectURL(this.workerBlobUrl);
+      } catch {}
+      this.workerBlobUrl = null;
     }
 
     if (this.audioCtx) {
@@ -195,6 +263,8 @@ class StageBroadcaster {
     this.ctx = null;
     this.cachedBgUrl = null;
     this.bgImage = null;
+    this.cachedOverlayUrl = null;
+    this.overlayImage = null;
     console.log("[StageBroadcaster] Stage composite stopped and resources freed.");
   }
 
@@ -411,14 +481,19 @@ class StageBroadcaster {
       );
 
       onStageParticipants.forEach((p) => {
-        if (p.audioTrack && p.audioTrack.mediaStreamTrack) {
-          const trackId = p.audioTrack.mediaStreamTrack.id || String(p.id);
+        const mediaTrack =
+          (p.audioTrack as any)?.mediaStreamTrack ||
+          (p.audioTrack instanceof MediaStreamTrack ? p.audioTrack : null);
+
+        if (mediaTrack && mediaTrack.readyState === "live") {
+          const trackId = mediaTrack.id || String(p.id);
           if (!this.connectedAudioTracks.has(trackId)) {
             try {
-              const srcStream = new MediaStream([p.audioTrack.mediaStreamTrack]);
+              const srcStream = new MediaStream([mediaTrack]);
               const srcNode = this.audioCtx!.createMediaStreamSource(srcStream);
               srcNode.connect(this.audioDestination!);
               this.connectedAudioTracks.add(trackId);
+              console.log(`[StageBroadcaster] Connected mic audio for participant: ${p.name}`);
             } catch (err) {
               console.warn(`[StageBroadcaster] Audio connect error for participant ${p.name}:`, err);
             }
@@ -669,6 +744,99 @@ class StageBroadcaster {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 2.5. Interactive Stage Overlay (Circle Avatar, Sponsor Graphics, Floating Video)
+    // ─────────────────────────────────────────────────────────────
+    if (store.activeStageOverlay && store.activeStageOverlay.isShowing && store.activeStageOverlay.url) {
+      const overlay = store.activeStageOverlay;
+      const overlayEl = container.querySelector("[data-stage-overlay]") as HTMLElement | null;
+
+      let ox = 0, oy = 0, ow = 0, oh = 0;
+      let hasCoords = false;
+
+      if (overlayEl) {
+        const containerRect = container.getBoundingClientRect();
+        const oRect = overlayEl.getBoundingClientRect();
+        if (containerRect.width > 0 && containerRect.height > 0 && oRect.width > 0 && oRect.height > 0) {
+          const scaleX = W / containerRect.width;
+          const scaleY = H / containerRect.height;
+          ox = (oRect.left - containerRect.left) * scaleX;
+          oy = (oRect.top - containerRect.top) * scaleY;
+          ow = oRect.width * scaleX;
+          oh = oRect.height * scaleY;
+          hasCoords = true;
+        }
+      }
+
+      if (!hasCoords) {
+        const scalePct = (overlay.scale || 35) / 100;
+        ow = W * scalePct;
+        oh = overlay.cropMode === "circle" || overlay.cropMode === "square" ? ow : ow * 0.5625;
+        if (overlay.position === "custom" && overlay.customCoords) {
+          ox = (overlay.customCoords.x / 100) * W;
+          oy = (overlay.customCoords.y / 100) * H;
+        } else if (overlay.position === "top-left") {
+          ox = W * 0.04;
+          oy = H * 0.04;
+        } else if (overlay.position === "top-right") {
+          ox = W * 0.96 - ow;
+          oy = H * 0.04;
+        } else if (overlay.position === "bottom-left") {
+          ox = W * 0.04;
+          oy = H * 0.93 - oh;
+        } else if (overlay.position === "bottom-right") {
+          ox = W * 0.96 - ow;
+          oy = H * 0.93 - oh;
+        } else {
+          ox = (W - ow) / 2;
+          oy = (H - oh) / 2;
+        }
+      }
+
+      if (ow > 0 && oh > 0) {
+        ctx.save();
+        if (overlay.opacity !== undefined) {
+          ctx.globalAlpha = Math.max(0.05, Math.min(1, overlay.opacity / 100));
+        }
+
+        if (overlay.cropMode === "circle") {
+          const radius = Math.min(ow, oh) / 2;
+          ctx.beginPath();
+          ctx.arc(ox + ow / 2, oy + oh / 2, radius, 0, Math.PI * 2);
+          ctx.clip();
+        } else if (overlay.borderRadius) {
+          this.drawRoundedRect(ctx, ox, oy, ow, oh, overlay.borderRadius);
+          ctx.clip();
+        }
+
+        if (overlay.showBackdrop) {
+          ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+          ctx.fillRect(ox, oy, ow, oh);
+        }
+
+        const vidEl = overlayEl?.querySelector("video") as HTMLVideoElement | null;
+        const imgEl = overlayEl?.querySelector("img") as HTMLImageElement | null;
+
+        if (vidEl && vidEl.readyState >= 2) {
+          ctx.drawImage(vidEl, ox, oy, ow, oh);
+        } else if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+          ctx.drawImage(imgEl, ox, oy, ow, oh);
+        } else {
+          if (this.cachedOverlayUrl !== overlay.url) {
+            this.cachedOverlayUrl = overlay.url;
+            this.overlayImage = new Image();
+            this.overlayImage.crossOrigin = "anonymous";
+            this.overlayImage.src = overlay.url;
+          }
+          if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
+            ctx.drawImage(this.overlayImage, ox, oy, ow, oh);
+          }
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 3. Lower-Third Banner
     // ─────────────────────────────────────────────────────────────
     if (store.activeBanner && store.activeBanner.isShowing && store.activeBanner.title) {
@@ -760,26 +928,47 @@ class StageBroadcaster {
       this.tickerOffset += tickerSpeed * Math.min(delta, 0.1);
 
       ctx.save();
-      const tH = 36;
+      const tH = 38;
       const tY = H - tH;
 
-      ctx.fillStyle = store.tickerConfig?.bgColor || "#000000";
+      ctx.fillStyle = store.tickerConfig?.bgColor || "#050508";
       ctx.fillRect(0, tY, W, tH);
 
       // Top border accent
       ctx.fillStyle = store.activeThemeColor || "#6366f1";
       ctx.fillRect(0, tY, W, 2);
 
+      // ── Live Updates Badge on Left (matching Studio UI) ──
+      const badgeText = store.tickerConfig?.badgeText || "LIVE UPDATES";
+      ctx.font = "bold 11px Inter, system-ui, sans-serif";
+      const badgeWidth = ctx.measureText(badgeText).width + 24;
+      ctx.fillStyle = store.tickerConfig?.badgeBgColor || "#e11d48";
+      ctx.fillRect(0, tY, badgeWidth, tH);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(badgeText, badgeWidth / 2, tY + tH / 2);
+
+      // ── Crawling Text Area (Clipped to right of badge) ──
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(badgeWidth, tY, W - badgeWidth, tH);
+      ctx.clip();
+
       ctx.font = "bold 13px Inter, system-ui, sans-serif";
       ctx.fillStyle = store.tickerConfig?.textColor || "#ffffff";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
 
-      const approxTextWidth = store.tickerText.length * 8;
-      const totalSpan = approxTextWidth + W;
+      const textWidth = ctx.measureText(store.tickerText).width;
+      const crawlAreaW = W - badgeWidth;
+      const totalSpan = textWidth + crawlAreaW;
       const currentX = W - (this.tickerOffset % totalSpan);
 
       ctx.fillText(store.tickerText, currentX, tY + tH / 2);
+      ctx.restore();
+
       ctx.restore();
     }
   }

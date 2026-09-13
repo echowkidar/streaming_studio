@@ -1123,6 +1123,7 @@ export const StagePreview: React.FC = () => {
       {/* Real-time Interactive Stage Overlay Layer (Images / Videos / Graphics) */}
       {activeStageOverlay && activeStageOverlay.isShowing && (
         <div
+          data-stage-overlay="true"
           style={getOverlayStyle()}
           className="group/overlay cursor-move select-none"
           onMouseDown={handleOverlayMouseDown}
