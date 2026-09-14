@@ -236,11 +236,15 @@ export class RtmpStreamerService extends EventEmitter {
 
       this.activeSessions.set(broadcastId, session);
 
-      // Update broadcast in DB
-      await prisma.broadcast.update({
-        where: { id: broadcastId },
-        data: { status: 'LIVE', startedAt: new Date() },
-      });
+      // Update broadcast in DB (non-fatal if studio was opened without a pre-existing broadcast record)
+      try {
+        await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: { status: 'LIVE', startedAt: new Date() },
+        });
+      } catch (dbErr) {
+        console.warn(`[RTMP] Broadcast DB record not found for id ${broadcastId}, continuing stream anyway:`, dbErr instanceof Error ? dbErr.message : dbErr);
+      }
 
       return { success: true, activeDestinations: rtmpUrls.length };
     } catch (error) {
