@@ -41,6 +41,7 @@ class StageBroadcaster {
   // Frame Rate Throttling (Strict 30 FPS to save CPU and eliminate video stutter)
   private lastFrameTime = 0;
   private readonly FRAME_INTERVAL = 1000 / 30; // ~33.33ms
+  private readonly FRAME_TOLERANCE = 27; // ms (smooth 30 FPS on 60Hz/120Hz/144Hz displays without dropped vsync ticks)
 
   // Layout Cache (Eliminates forced synchronous layout thrashing)
   private cachedLayouts: CachedTileLayout[] = [];
@@ -198,15 +199,16 @@ class StageBroadcaster {
     // 5. Start Resilient 30 FPS Canvas Render Loop (Dual clock: Worker Timer + requestAnimationFrame)
     this.lastTickerTime = performance.now();
     this.lastFrameTime = performance.now();
+    let lastRafTime = performance.now();
 
     const doRenderFrame = (now: number) => {
       if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
 
       const elapsed = now - this.lastFrameTime;
-      if (elapsed >= this.FRAME_INTERVAL) {
-        this.lastFrameTime = now - (elapsed % this.FRAME_INTERVAL);
+      if (elapsed >= this.FRAME_TOLERANCE) {
+        this.lastFrameTime = now;
 
-        if (now - this.lastLayoutCacheTime > 250) {
+        if (now - this.lastLayoutCacheTime > 1000) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
           this.refreshAudioConnections();
           this.lastLayoutCacheTime = now;
@@ -219,15 +221,18 @@ class StageBroadcaster {
     // Foreground VSync Loop
     const render = (time: number) => {
       if (!this.isBroadcasting) return;
+      lastRafTime = time;
       doRenderFrame(time);
       this.animFrameId = requestAnimationFrame(render);
     };
     this.animFrameId = requestAnimationFrame(render);
 
-    // Background Web Worker Clock: Prevents Chrome from throttling/pausing loop to 1 FPS when switching tabs
+    // Background Web Worker Clock: Only fires when tab is hidden/throttled and rAF stops
     this.startWorkerClock(() => {
-      if (this.isBroadcasting) {
-        doRenderFrame(performance.now());
+      if (!this.isBroadcasting) return;
+      const now = performance.now();
+      if (now - lastRafTime > 45) {
+        doRenderFrame(now);
       }
     });
 
@@ -445,16 +450,17 @@ class StageBroadcaster {
     // 5. Start Resilient 30 FPS Canvas Render Loop (Dual clock: VSync rAF + Web Worker background clock)
     this.lastTickerTime = performance.now();
     this.lastFrameTime = performance.now();
+    let lastRafTime = performance.now();
 
     const doRenderFrame = (now: number) => {
       if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
 
       const elapsed = now - this.lastFrameTime;
-      if (elapsed >= this.FRAME_INTERVAL) {
-        this.lastFrameTime = now - (elapsed % this.FRAME_INTERVAL);
+      if (elapsed >= this.FRAME_TOLERANCE) {
+        this.lastFrameTime = now;
 
-        // Refresh layout snapshot every 250ms (never every frame to avoid layout thrashing)
-        if (now - this.lastLayoutCacheTime > 250) {
+        // Refresh layout snapshot every 1000ms (avoids synchronous reflow stalls during render)
+        if (now - this.lastLayoutCacheTime > 1000) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
           this.refreshAudioConnections();
           this.lastLayoutCacheTime = now;
@@ -467,15 +473,18 @@ class StageBroadcaster {
     // Foreground VSync Loop
     const render = (time: number) => {
       if (!this.isBroadcasting) return;
+      lastRafTime = time;
       doRenderFrame(time);
       this.animFrameId = requestAnimationFrame(render);
     };
     this.animFrameId = requestAnimationFrame(render);
 
-    // Background Web Worker Clock (Unthrottled by Chrome when tab is in background or minimized)
+    // Background Web Worker Clock: Only fires when tab is hidden/throttled and rAF stops
     this.startWorkerClock(() => {
-      if (this.isBroadcasting) {
-        doRenderFrame(performance.now());
+      if (!this.isBroadcasting) return;
+      const now = performance.now();
+      if (now - lastRafTime > 45) {
+        doRenderFrame(now);
       }
     });
 
@@ -526,8 +535,8 @@ class StageBroadcaster {
         console.error("[StageBroadcaster] MediaRecorder error:", recorderErr);
       };
 
-      // Emit chunk every 1000ms for stable RTMP delivery
-      this.mediaRecorder.start(1000);
+      // Emit chunk every 500ms for smooth, continuous delivery
+      this.mediaRecorder.start(500);
       console.log("[StageBroadcaster] Live stage streaming initiated successfully.");
       return true;
     } catch (streamErr) {
