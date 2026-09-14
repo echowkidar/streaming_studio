@@ -166,6 +166,32 @@ export class RtmpStreamerService extends EventEmitter {
       console.warn('[RTMP] Database query skipped in resolveDestinationUrls:', dbErr);
     }
 
+    // 3. Check memory fallback destinations if not found in DB
+    try {
+      const { fallbackDestinations } = await import('../routes/destination.routes');
+      for (const destId of destinationIds) {
+        const fallback = fallbackDestinations.find((d) => d.id === destId);
+        if (fallback) {
+          const decRes = await this.encryptionService.decrypt({
+            iv: fallback.streamKeyIv,
+            authTag: fallback.streamKeyTag,
+            encryptedData: fallback.streamKeyEncrypted,
+          });
+          if (decRes.success && decRes.data) {
+            const cleanUrl = fallback.rtmpUrl.replace(/\/+$/, '');
+            const streamKey = decRes.data.trim();
+            const fullRtmp = `${cleanUrl}/${streamKey}`;
+            if (!urls.includes(fullRtmp)) {
+              urls.push(fullRtmp);
+            }
+          }
+        }
+      }
+    } catch (fbErr) {
+      console.warn('[RTMP] Memory fallback check skipped:', fbErr);
+    }
+
+    console.log(`[RTMP] Resolved ${urls.length} target RTMP destination URL(s)`);
     return urls;
   }
 

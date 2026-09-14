@@ -221,12 +221,21 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
     const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
     
     let result: { egressId: string };
-    if (videoTrackId) {
-      console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${videoTrackId}`);
-      result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, videoTrackId, audioTrackId);
-    } else {
-      console.log(`[Broadcast API] Starting Room Composite Egress (fallback)`);
-      result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+    try {
+      if (videoTrackId) {
+        console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${videoTrackId}`);
+        result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, videoTrackId, audioTrackId);
+      } else {
+        console.log(`[Broadcast API] Starting Room Composite Egress (fallback)`);
+        result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+      }
+    } catch (trackEgressErr) {
+      if (videoTrackId) {
+        console.warn(`[Broadcast API] Track Composite Egress failed (${trackEgressErr instanceof Error ? trackEgressErr.message : trackEgressErr}), falling back to Room Composite Egress...`);
+        result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+      } else {
+        throw trackEgressErr;
+      }
     }
     
     // Track in memory

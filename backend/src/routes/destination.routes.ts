@@ -37,7 +37,7 @@ interface FallbackDestinationItem {
   createdAt: Date;
 }
 
-const fallbackDestinations: FallbackDestinationItem[] = [];
+export const fallbackDestinations: FallbackDestinationItem[] = [];
 
 // Helper to resolve workspace ID
 async function resolveWorkspaceId(req: Request): Promise<string> {

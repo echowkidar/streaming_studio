@@ -151,6 +151,7 @@ export function GoLiveModal({
         name: channelName.trim(),
         platform: channelPlatform,
         rtmpUrl: channelRtmpUrl.trim(),
+        streamKey: channelStreamKey.trim() || editingDest.streamKey,
       };
 
       try {
@@ -170,7 +171,7 @@ export function GoLiveModal({
         });
         const json = await res.json();
         const next = destinations.map((d) =>
-          d.id === editingDest.id ? (json.success && json.data ? { ...d, ...json.data } : updatedItem) : d
+          d.id === editingDest.id ? (json.success && json.data ? { ...d, ...json.data, streamKey: updatedItem.streamKey } : updatedItem) : d
         );
         setDestinations(next);
         saveLocalDestinations(next);
@@ -193,7 +194,7 @@ export function GoLiveModal({
       name: channelName.trim(),
       platform: channelPlatform,
       rtmpUrl: channelRtmpUrl.trim(),
-      streamKey: "••••••••••••",
+      streamKey: channelStreamKey.trim(),
       status: "READY",
     };
 
@@ -209,7 +210,7 @@ export function GoLiveModal({
         }),
       });
       const json = await res.json();
-      const savedItem = json.success && json.data ? json.data : newDest;
+      const savedItem = json.success && json.data ? { ...json.data, streamKey: channelStreamKey.trim() } : newDest;
       const next = [savedItem, ...destinations.filter((d) => d.id !== savedItem.id)];
       setDestinations(next);
       setSelectedIds((prev) => [...prev, savedItem.id]);

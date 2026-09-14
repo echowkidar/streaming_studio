@@ -291,12 +291,14 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       const result = await res.json();
       if (!result.success) {
         console.error("Failed to start egress stream:", result.error);
+        alert(`❌ Live Stream Error: ${result.error || "Could not connect to RTMP destination. Please verify your YouTube Stream Key."}`);
+        return;
       }
 
       startLive();
     } catch (e) {
       console.error("Failed to start RTMP stream:", e);
-      startLive();
+      alert(`❌ Connection Error: ${e instanceof Error ? e.message : "Could not reach streaming server."}`);
     }
   };
 
