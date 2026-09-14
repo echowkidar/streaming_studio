@@ -102,10 +102,27 @@ export const MediaPanel: React.FC = () => {
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
 
-      await fetch("/api/media/upload", {
+      const res = await fetch("/api/media/upload", {
         method: "POST",
         body: formData,
       });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data?.url) {
+          const serverUrl = json.data.url;
+          setMediaList((prev) =>
+            prev.map((m) => (m.id === newItem.id ? { ...m, url: serverUrl } : m))
+          );
+          const currentActive = useStudioStore.getState().activeMedia;
+          if (currentActive?.id === newItem.id) {
+            setActiveMedia({
+              ...currentActive,
+              url: serverUrl,
+            });
+          }
+        }
+      }
     } catch (err) {
       console.warn("Backend MinIO upload skipped or errored, local preview active:", err);
     } finally {
@@ -113,6 +130,30 @@ export const MediaPanel: React.FC = () => {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  // Load existing media assets from backend library on mount
+  React.useEffect(() => {
+    fetch("/api/media")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json?.success && Array.isArray(json.data) && json.data.length > 0) {
+          const serverItems: MediaFileItem[] = json.data.map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            type: item.assetType.toLowerCase() as any,
+            duration: item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
+            url: item.url,
+            isUploaded: true,
+          }));
+          setMediaList((prev) => {
+            const existingUrls = new Set(prev.map((m) => m.url));
+            const newOnes = serverItems.filter((s) => !existingUrls.has(s.url));
+            return [...prev, ...newOnes];
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleTogglePlay = (item: MediaFileItem) => {
     if (activeMedia?.id === item.id) {

@@ -46,6 +46,10 @@ function resolveAssetType(mimeType: string): AssetType {
 }
 
 function serializeMediaAsset(asset: any, presignedUrl?: string) {
+  let fileUrl = `/api/media/${asset.id}/file`;
+  if (presignedUrl && !presignedUrl.includes('minio:9000')) {
+    fileUrl = presignedUrl;
+  }
   return {
     id: asset.id,
     workspaceId: asset.workspaceId,
@@ -54,7 +58,7 @@ function serializeMediaAsset(asset: any, presignedUrl?: string) {
     mimeType: asset.mimeType,
     fileSize: asset.fileSize ? Number(asset.fileSize) : 0,
     storagePath: asset.storagePath,
-    url: presignedUrl || `/media/${asset.id}`,
+    url: fileUrl,
     createdAt: asset.createdAt,
   };
 }
@@ -151,6 +155,37 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction): Prom
       success: true,
       data: serializeMediaAsset(asset, urlRes.success ? urlRes.data : undefined),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/media/:id/file (Stream file content directly to clients/guests)
+router.get('/:id/file', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const asset = await prisma.mediaAsset.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!asset) {
+      res.status(404).json({ success: false, error: 'Media asset not found' });
+      return;
+    }
+
+    const fileRes = await storageService.getFileStream(asset.storagePath);
+    if (!fileRes.success || !fileRes.data) {
+      res.status(500).json({ success: false, error: 'Failed to retrieve media file stream' });
+      return;
+    }
+
+    res.setHeader('Content-Type', fileRes.data.contentType || asset.mimeType);
+    if (fileRes.data.contentLength) {
+      res.setHeader('Content-Length', fileRes.data.contentLength);
+    }
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    (fileRes.data.stream as any).pipe(res);
   } catch (error) {
     next(error);
   }

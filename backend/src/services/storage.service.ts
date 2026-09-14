@@ -70,6 +70,28 @@ export class StorageService {
     }
   }
 
+  public async getFileStream(key: string, bucket?: string): Promise<ServiceResponse<{ stream: any; contentType?: string; contentLength?: number }>> {
+    try {
+      const targetBucket = bucket ?? this.defaultBucket;
+      const command = new GetObjectCommand({
+        Bucket: targetBucket,
+        Key: key,
+      });
+
+      const response = await this.s3Client.send(command);
+      return {
+        success: true,
+        data: {
+          stream: response.Body,
+          contentType: response.ContentType,
+          contentLength: response.ContentLength,
+        },
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to retrieve file stream' };
+    }
+  }
+
   public async deleteFile(key: string, bucket?: string): Promise<ServiceResponse<void>> {
     try {
       const targetBucket = bucket ?? this.defaultBucket;
