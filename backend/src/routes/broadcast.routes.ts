@@ -217,25 +217,46 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
 
     // Start LiveKit Egress: if videoTrackId is provided, stream the studio canvas composite directly!
     const { EgressService } = await import('../services/egress.service');
+    const { LiveKitService } = await import('../services/livekit.service');
     const egress = EgressService.getInstance();
+    const lkService = new LiveKitService();
     const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
     
+    let resolvedVideoTrackId = videoTrackId;
+    let resolvedAudioTrackId = audioTrackId;
+
+    if (resolvedVideoTrackId) {
+      console.log(`[Broadcast API] Verifying video track "${resolvedVideoTrackId}" in LiveKit room "${actualRoomName}"...`);
+      const { videoTrackReady, audioTrackId: detectedAudioId } = await lkService.verifyAndResolveTracks(
+        actualRoomName,
+        resolvedVideoTrackId,
+        resolvedAudioTrackId,
+        4000
+      );
+      if (detectedAudioId) {
+        resolvedAudioTrackId = detectedAudioId;
+      }
+      console.log(`[Broadcast API] Track verification result: videoReady=${videoTrackReady}, audioTrackId=${resolvedAudioTrackId || 'none'}`);
+    }
+
     let result: { egressId: string };
-    try {
-      if (videoTrackId) {
-        console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${videoTrackId}`);
-        result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, videoTrackId, audioTrackId);
-      } else {
-        console.log(`[Broadcast API] Starting Room Composite Egress (fallback)`);
-        result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+    if (resolvedVideoTrackId) {
+      console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${resolvedVideoTrackId}, audio: ${resolvedAudioTrackId || 'none'}`);
+      try {
+        result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, resolvedVideoTrackId, resolvedAudioTrackId);
+      } catch (trackEgressErr) {
+        console.warn(`[Broadcast API] Track Composite Egress attempt 1 failed (${trackEgressErr instanceof Error ? trackEgressErr.message : trackEgressErr}), retrying in 1.5s...`);
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try {
+          result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, resolvedVideoTrackId, resolvedAudioTrackId);
+        } catch (retryErr) {
+          console.error(`[Broadcast API] Track Composite Egress retry failed (${retryErr instanceof Error ? retryErr.message : retryErr}). Falling back to Room Composite Egress as last resort...`);
+          result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
+        }
       }
-    } catch (trackEgressErr) {
-      if (videoTrackId) {
-        console.warn(`[Broadcast API] Track Composite Egress failed (${trackEgressErr instanceof Error ? trackEgressErr.message : trackEgressErr}), falling back to Room Composite Egress...`);
-        result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
-      } else {
-        throw trackEgressErr;
-      }
+    } else {
+      console.log(`[Broadcast API] No videoTrackId provided, starting Room Composite Egress`);
+      result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
     }
     
     // Track in memory

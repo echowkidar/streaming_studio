@@ -108,4 +108,56 @@ export class LiveKitService {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to remove participant' };
     }
   }
+
+  public getRoomService(): RoomServiceClient {
+    return this.roomService;
+  }
+
+  /**
+   * Verify whether a video track SID is registered and active in the given room.
+   * If audioTrackId is missing, automatically discovers and returns an active audio track SID from the room.
+   */
+  public async verifyAndResolveTracks(
+    roomName: string,
+    videoTrackId?: string,
+    audioTrackId?: string,
+    maxWaitMs: number = 4000
+  ): Promise<{ videoTrackReady: boolean; audioTrackId?: string }> {
+    const startTime = Date.now();
+    let videoReady = false;
+    let resolvedAudioId = audioTrackId;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const participants = await this.roomService.listParticipants(roomName);
+        let foundVideo = false;
+
+        for (const p of participants) {
+          if (!p.tracks) continue;
+          for (const t of p.tracks) {
+            if (videoTrackId && t.sid === videoTrackId) {
+              foundVideo = true;
+            }
+            // Auto-detect audio track if not provided or empty
+            if (!resolvedAudioId && (t.type === 0 || (t.type as any) === 'AUDIO') && t.sid) {
+              resolvedAudioId = t.sid;
+              console.log(`[LiveKitService] Auto-detected audio track "${t.sid}" from participant "${p.identity}"`);
+            }
+          }
+        }
+
+        if (!videoTrackId || foundVideo) {
+          videoReady = foundVideo;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[LiveKitService] listParticipants polling notice:`, err instanceof Error ? err.message : err);
+      }
+
+      // Wait 600ms before next poll
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+
+    return { videoTrackReady: videoReady, audioTrackId: resolvedAudioId };
+  }
 }

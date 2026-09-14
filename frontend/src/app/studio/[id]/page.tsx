@@ -48,6 +48,7 @@ import { HardDrive, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
 import { useAuthStore } from "@/stores/auth.store";
+import { Track } from "livekit-client";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
   const router = useRouter();
@@ -227,8 +228,10 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         const compositeTracks = stageBroadcaster.startStageComposite(stageEl);
 
         if (compositeTracks && room?.localParticipant) {
+          console.log("[Studio GoLive] Publishing stage composite video track...");
           const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
             name: "stage_composite_video",
+            source: Track.Source.ScreenShare,
             simulcast: false,
             videoEncoding: {
               maxBitrate: 3_500_000,
@@ -240,20 +243,37 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           videoTrackId = vPub.trackSid;
 
           if (compositeTracks.audioTrack) {
-            const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
-              name: "stage_composite_audio",
-              dtx: false,
-            });
-            compositeAudioPubRef.current = aPub;
-            audioTrackId = aPub.trackSid;
+            try {
+              console.log("[Studio GoLive] Publishing stage composite audio track...");
+              const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
+                name: "stage_composite_audio",
+                source: Track.Source.ScreenShareAudio,
+                dtx: false,
+              });
+              compositeAudioPubRef.current = aPub;
+              audioTrackId = aPub.trackSid;
+            } catch (audioPubErr) {
+              console.warn("[Studio GoLive] Composite audio publish warning:", audioPubErr);
+            }
           }
-          console.log("[Studio GoLive] Published composite tracks for RTMP:", { videoTrackId, audioTrackId });
+
+          // Fallback: If composite audioTrack wasn't published or has no trackSid, use the host's published microphone track
+          if (!audioTrackId && room.localParticipant) {
+            room.localParticipant.trackPublications.forEach((pub) => {
+              if (!audioTrackId && pub.kind === Track.Kind.Audio && pub.trackSid) {
+                audioTrackId = pub.trackSid;
+                console.log("[Studio GoLive] Using host microphone audio track for RTMP stream:", audioTrackId);
+              }
+            });
+          }
+
+          console.log("[Studio GoLive] Stage composite tracks ready for RTMP:", { videoTrackId, audioTrackId });
           
-          // Brief 500ms delay to allow WebRTC keyframe to reach LiveKit SFU before Egress begins encoding
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          // 1500ms delay to allow WebRTC keyframe & SDP negotiation to reach LiveKit SFU before Egress starts encoding
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
       } catch (trackErr) {
-        console.warn("[Studio GoLive] Track composite publish warning (will fallback to room composite):", trackErr);
+        console.error("[Studio GoLive] Track composite publish error:", trackErr);
       }
 
       // 2. Gather any direct destinations from local custom storage
