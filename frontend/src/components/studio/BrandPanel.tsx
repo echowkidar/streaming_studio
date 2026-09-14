@@ -2079,10 +2079,10 @@ export const BrandPanel: React.FC = () => {
             <span className="text-[10px] text-slate-400">Text Size</span>
             <div className="grid grid-cols-2 gap-1">
               {[
-                { id: "small" as const, label: "Small (11px)" },
-                { id: "medium" as const, label: "Medium (12px)" },
-                { id: "large" as const, label: "Large (14px)" },
-                { id: "xlarge" as const, label: "XL (16px)" },
+                { id: "small" as const, label: "Small (14px)" },
+                { id: "medium" as const, label: "Medium (18px)" },
+                { id: "large" as const, label: "Large (22px)" },
+                { id: "xlarge" as const, label: "XL (26px)" },
               ].map((s) => (
                 <button
                   key={s.id}

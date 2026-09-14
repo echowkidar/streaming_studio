@@ -742,43 +742,251 @@ export const StagePreview: React.FC = () => {
 
   // Layout Engine: StreamYard-Parity Canvas with Selection Tool & Independent Window Resizing
   const renderLayoutContent = () => {
-    // Stage Media Presentation Mode
-    if (activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")) {
-      if (onStageParticipants.length === 0) {
-        return <div className="w-full h-full p-3">{renderMediaTile()}</div>;
-      }
-      return (
-        <div className="w-full h-full flex gap-3 p-3">
-          <div className="flex-[3] h-full min-w-0 min-h-0">{renderMediaTile()}</div>
-          <div className="flex-1 flex flex-col gap-3 h-full min-w-0 min-h-0 overflow-y-auto">
-            {onStageParticipants.map((p, idx) => renderTile(p, idx, "w-full flex-1 min-h-[110px]"))}
-          </div>
-        </div>
-      );
-    }
+    const hasVisualMedia = Boolean(
+      activeMedia &&
+        (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+    );
 
-    if (onStageParticipants.length === 0) {
+    if (onStageParticipants.length === 0 && !hasVisualMedia) {
       return (
         <div className="h-full w-full flex flex-col items-center justify-center text-slate-500 gap-3">
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
             <Video className="w-10 h-10 text-slate-400" />
           </div>
           <p className="text-sm font-medium">Stage is empty</p>
-          <p className="text-xs text-slate-600">Add participants from the right panel to bring them on stage</p>
+          <p className="text-xs text-slate-600">Add participants or play media to bring them on stage</p>
         </div>
       );
     }
 
-    // Unified Stage Canvas with Independent Moving & Resizing for all Participants
+    const defaultMediaBounds: ParticipantBounds =
+      onStageParticipants.length === 0
+        ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+        : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
+    const mediaBounds: ParticipantBounds = participantBounds["active-media"] || defaultMediaBounds;
+    const isMediaSelected = String(selectedParticipantId) === "active-media";
+    const isMediaDragging = activeDragState?.participantId === "active-media";
+
+    // Unified Stage Canvas with Independent Moving & Resizing for all Participants & Media
     return (
       <div className="w-full h-full relative p-2 select-none">
+        {/* Active Stage Media Window (Interactive & Resizable) */}
+        {hasVisualMedia && activeMedia && (
+          <div
+            key="stage-active-media"
+            style={{
+              position: "absolute",
+              left: `${mediaBounds.x}%`,
+              top: `${mediaBounds.y}%`,
+              width: `${mediaBounds.width}%`,
+              height: `${mediaBounds.height}%`,
+              zIndex: isMediaSelected ? 35 : (mediaBounds.zIndex || 10),
+              transition: isMediaDragging ? "none" : "all 0.18s cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+            onMouseDown={(e) =>
+              handleTileMouseDown(e, { id: "active-media", name: activeMedia.name } as any, mediaBounds)
+            }
+            onTouchStart={(e) =>
+              handleTileTouchStart(e, { id: "active-media", name: activeMedia.name } as any, mediaBounds)
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedParticipantId("active-media");
+            }}
+            className={cn(
+              "rounded-2xl overflow-visible select-none border transition-shadow",
+              isMediaSelected
+                ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-move"
+                : "border-white/10 hover:border-indigo-400/50 cursor-pointer"
+            )}
+          >
+            {/* Inner Media Content */}
+            <div className="w-full h-full rounded-2xl overflow-hidden relative pointer-events-auto">
+              {renderMediaTile()}
+            </div>
+
+            {/* Floating Action Pill Toolbar for Media */}
+            {isMediaSelected && (
+              <div
+                className={cn(
+                  "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
+                  mediaBounds.y < 12 ? "-bottom-11" : "-top-11"
+                )}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+              >
+                {/* Drag Move Handle */}
+                <span className="text-slate-400 p-0.5 cursor-move" title="Click and drag to move media">
+                  <Move className="w-3.5 h-3.5" />
+                </span>
+
+                {/* Media Name Tag */}
+                <span className="text-[10px] font-semibold text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[120px] truncate">
+                  🎬 {activeMedia.name}
+                </span>
+
+                <span className="w-px h-3 bg-white/20" />
+
+                {/* 16:9 Aspect Ratio Lock Toggle */}
+                <button
+                  type="button"
+                  onClick={() => handleToggleRatioLock("active-media", mediaBounds)}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
+                    mediaBounds.isLockedRatio !== false
+                      ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
+                      : "bg-white/10 text-slate-300 border-white/20"
+                  )}
+                  title={
+                    mediaBounds.isLockedRatio !== false
+                      ? "16:9 Ratio Locked (Click to allow freeform resize)"
+                      : "Freeform Ratio Active (Click to lock 16:9)"
+                  }
+                >
+                  {mediaBounds.isLockedRatio !== false ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                  <span>{mediaBounds.isLockedRatio !== false ? "16:9" : "Free"}</span>
+                </button>
+
+                {/* Center on Stage */}
+                <button
+                  type="button"
+                  onClick={() => handleCenterTile("active-media", mediaBounds)}
+                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
+                  title="Center Media on Stage"
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Layer Up */}
+                <button
+                  type="button"
+                  onClick={() => bringToFront("active-media")}
+                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
+                  title="Bring Media Forward"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Layer Down */}
+                <button
+                  type="button"
+                  onClick={() => sendToBack("active-media")}
+                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
+                  title="Send Media Backward"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+
+                <span className="w-px h-3 bg-white/20" />
+
+                {/* Reset to Default */}
+                <button
+                  type="button"
+                  onClick={() => resetParticipantBounds("active-media")}
+                  className="px-1.5 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
+                  title="Reset Media Position"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset</span>
+                </button>
+
+                {/* Stop / Remove Media */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetParticipantBounds("active-media");
+                    setActiveMedia(null);
+                  }}
+                  className="px-1.5 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors"
+                  title="Stop and Remove Media from Stage"
+                >
+                  Remove
+                </button>
+
+                {/* Deselect */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedParticipantId(null)}
+                  className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
+                  title="Deselect window"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* 8 Resize Handles for Media Window */}
+            {isMediaSelected && (
+              <>
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "nw", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "nw", "active-media", mediaBounds)}
+                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Top-Left"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "ne", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "ne", "active-media", mediaBounds)}
+                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Top-Right"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "se", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "se", "active-media", mediaBounds)}
+                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Bottom-Right"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "sw", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "sw", "active-media", mediaBounds)}
+                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Bottom-Left"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "n", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "n", "active-media", mediaBounds)}
+                  className="absolute -top-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Top Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "s", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "s", "active-media", mediaBounds)}
+                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Bottom Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "w", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "w", "active-media", mediaBounds)}
+                  className="absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Left Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleStartResize(e, "e", "active-media", mediaBounds)}
+                  onTouchStart={(e) => handleStartResize(e, "e", "active-media", mediaBounds)}
+                  className="absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
+                  title="Resize Right Edge"
+                />
+              </>
+            )}
+          </div>
+        )}
         {onStageParticipants.map((p, idx) => {
-          const defaultBounds = getDefaultSlotBounds(
-            activeLayout,
-            idx,
-            onStageParticipants.length,
-            layoutSplitRatio
-          );
+          const defaultBounds = hasVisualMedia
+            ? {
+                x: 72,
+                y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, onStageParticipants.length))),
+                width: 26,
+                height: Math.min(92, Math.max(22, 88 / Math.max(1, onStageParticipants.length))),
+                zIndex: 10,
+                isLockedRatio: true,
+              }
+            : getDefaultSlotBounds(
+                activeLayout,
+                idx,
+                onStageParticipants.length,
+                layoutSplitRatio
+              );
           const bounds: ParticipantBounds =
             participantBounds[p.id] ||
             (p.isLocal && participantBounds["local-host"]) ||
@@ -1356,15 +1564,15 @@ export const StagePreview: React.FC = () => {
       {/* Animated News Ticker Crawl */}
       {showTicker && (
         <div 
-          className="absolute bottom-0 inset-x-0 h-9 border-t backdrop-blur-md z-30 flex items-center overflow-hidden"
+          className="absolute bottom-0 inset-x-0 h-12 border-t backdrop-blur-md z-30 flex items-center overflow-hidden shadow-2xl"
           style={{ 
             backgroundColor: tickerConfig?.bgColor || "#050508",
             borderColor: `${activeThemeColor}40`,
-            borderBottom: `2px solid ${activeThemeColor}`
+            borderBottom: `3px solid ${activeThemeColor}`
           }}
         >
           <div 
-            className="px-3.5 text-[10px] font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
+            className="px-4 text-xs font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
             style={{ backgroundColor: tickerConfig?.badgeBgColor || activeThemeColor }}
           >
             {tickerConfig?.badgeText || "LIVE UPDATES"}
@@ -1373,15 +1581,15 @@ export const StagePreview: React.FC = () => {
             <div 
               className={cn(
                 "animate-marquee font-medium px-4",
-                tickerConfig?.fontSize === "small" && "text-[11px]",
-                tickerConfig?.fontSize === "medium" && "text-xs",
-                tickerConfig?.fontSize === "large" && "text-sm font-semibold",
-                tickerConfig?.fontSize === "xlarge" && "text-base font-bold",
-                !tickerConfig?.fontSize && "text-xs"
+                tickerConfig?.fontSize === "small" && "text-sm font-medium",
+                tickerConfig?.fontSize === "medium" && "text-base font-semibold",
+                tickerConfig?.fontSize === "large" && "text-lg font-bold",
+                tickerConfig?.fontSize === "xlarge" && "text-xl font-black",
+                !tickerConfig?.fontSize && "text-base font-semibold"
               )}
               style={{ 
                 color: tickerConfig?.textColor || "#ffffff",
-                animationDuration: tickerConfig?.speed === "slow" ? "45s" : tickerConfig?.speed === "fast" ? "14s" : "24s"
+                animationDuration: tickerConfig?.speed === "slow" ? "75s" : tickerConfig?.speed === "fast" ? "30s" : "50s"
               }}
             >
               {tickerConfig?.text || tickerText}

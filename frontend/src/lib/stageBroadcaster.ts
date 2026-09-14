@@ -1090,11 +1090,15 @@ class StageBroadcaster {
       const delta = (timestamp - this.lastTickerTime) / 1000;
       this.lastTickerTime = timestamp;
 
-      const tickerSpeed = 120; // pixels per second
+      // Slower, smoother scroll speed as requested by user
+      let tickerSpeed = 65; // pixels per second (was 120)
+      if (store.tickerConfig?.speed === "slow") tickerSpeed = 45;
+      else if (store.tickerConfig?.speed === "fast") tickerSpeed = 100;
+
       this.tickerOffset += tickerSpeed * Math.min(delta, 0.1);
 
       ctx.save();
-      const tH = 38;
+      const tH = 50; // Increased height/width for prominent broadcast banner (was 38)
       const tY = H - tH;
 
       ctx.fillStyle = store.tickerConfig?.bgColor || "#050508";
@@ -1106,8 +1110,8 @@ class StageBroadcaster {
 
       // ── Live Updates Badge on Left (matching Studio UI) ──
       const badgeText = store.tickerConfig?.badgeText || "LIVE UPDATES";
-      ctx.font = "bold 11px Inter, system-ui, sans-serif";
-      const badgeWidth = ctx.measureText(badgeText).width + 24;
+      ctx.font = "bold 13px Inter, system-ui, sans-serif";
+      const badgeWidth = ctx.measureText(badgeText).width + 32;
       ctx.fillStyle = store.tickerConfig?.badgeBgColor || "#e11d48";
       ctx.fillRect(0, tY, badgeWidth, tH);
 
@@ -1122,7 +1126,12 @@ class StageBroadcaster {
       ctx.rect(badgeWidth, tY, W - badgeWidth, tH);
       ctx.clip();
 
-      ctx.font = "bold 13px Inter, system-ui, sans-serif";
+      let fontSizePx = 18;
+      if (store.tickerConfig?.fontSize === "small") fontSizePx = 14;
+      else if (store.tickerConfig?.fontSize === "large") fontSizePx = 22;
+      else if (store.tickerConfig?.fontSize === "xlarge") fontSizePx = 26;
+
+      ctx.font = `bold ${fontSizePx}px Inter, system-ui, sans-serif`;
       ctx.fillStyle = store.tickerConfig?.textColor || "#ffffff";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
