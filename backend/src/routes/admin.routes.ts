@@ -227,6 +227,15 @@ router.post('/users', async (req: Request, res: Response, next: NextFunction): P
 router.delete('/users/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
+    const targetUser = await prisma.user.findUnique({ where: { id } });
+    if (!targetUser) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+    if (targetUser.role === 'SUPER_ADMIN') {
+      res.status(403).json({ success: false, error: 'SUPER_ADMIN accounts are protected and cannot be deleted.' });
+      return;
+    }
     await prisma.user.delete({ where: { id } });
     res.status(200).json({ success: true, message: 'User deleted successfully' });
   } catch (error) {

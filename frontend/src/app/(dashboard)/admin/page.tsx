@@ -156,9 +156,9 @@ export default function AdminPage() {
     }
   };
 
-  const handleDeleteUser = async (u: { id: string; email: string }) => {
-    if (u.id === user?.id || u.email === user?.email) {
-      alert("You cannot delete your own active super admin account.");
+  const handleDeleteUser = async (u: { id: string; email: string; role?: string }) => {
+    if (u.role === "SUPER_ADMIN" || u.id === user?.id || u.email === user?.email) {
+      alert("SUPER_ADMIN accounts are protected and cannot be deleted.");
       return;
     }
     if (!confirm(`Are you sure you want to permanently delete user ${u.email}?`)) return;
@@ -411,7 +411,7 @@ export default function AdminPage() {
                           <KeyRound className="w-3 h-3 mr-1" />
                           Reset Password
                         </Button>
-                        {u.id !== user?.id && u.email !== user?.email && (
+                        {u.role !== "SUPER_ADMIN" && u.id !== user?.id && u.email !== user?.email && (
                           <Button
                             variant="ghost"
                             size="icon"
