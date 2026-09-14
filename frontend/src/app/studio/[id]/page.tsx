@@ -114,6 +114,19 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const compositeVideoPubRef = React.useRef<any>(null);
   const compositeAudioPubRef = React.useRef<any>(null);
 
+  const unpublishCompositeTracks = async () => {
+    if (!room) return;
+    for (const publication of [compositeVideoPubRef.current, compositeAudioPubRef.current]) {
+      try {
+        if (publication?.track) await room.localParticipant.unpublishTrack(publication.track);
+      } catch (err) {
+        console.warn("Could not unpublish stage composite track:", err);
+      }
+    }
+    compositeVideoPubRef.current = null;
+    compositeAudioPubRef.current = null;
+  };
+
   const handleMoveToStage = (id: string | number) => {
     moveToStage(id);
     const nextOnStage = Array.from(
@@ -250,7 +263,38 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         }
       }
 
-      // 2. Start FFmpeg RTMP broadcast session on backend
+      if (!room || room.state !== "connected") {
+        alert("LiveKit is still connecting. Please wait until Studio shows connected, then try again.");
+        return;
+      }
+
+      // 2. Publish one program feed to LiveKit. Cloud Egress delivers that
+      // track to YouTube, instead of uploading WebM chunks through this VPS.
+      const stageEl = document.getElementById("livestudio-stage-container");
+      const composite = stageBroadcaster.startStageComposite(stageEl);
+      if (!composite) {
+        alert("❌ Failed to capture the studio program feed.");
+        return;
+      }
+
+      try {
+        compositeVideoPubRef.current = await room.localParticipant.publishTrack(composite.videoTrack, {
+          name: "stage_composite_video",
+          source: Track.Source.Camera,
+        });
+        if (composite.audioTrack) {
+          compositeAudioPubRef.current = await room.localParticipant.publishTrack(composite.audioTrack, {
+            name: "stage_composite_audio",
+            source: Track.Source.Microphone,
+          });
+        }
+      } catch (publishError) {
+        await unpublishCompositeTracks();
+        stageBroadcaster.stopStageComposite();
+        throw new Error(`Could not publish the program feed to LiveKit: ${publishError instanceof Error ? publishError.message : "unknown error"}`);
+      }
+
+      // 3. Start a LiveKit Track Composite Egress session on the backend.
       const res = await fetch(`/api/broadcasts/${params.id}/stream/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -258,25 +302,19 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           destinationIds,
           roomName,
           directDestinations,
+          videoTrackId: compositeVideoPubRef.current.trackSid,
+          audioTrackId: compositeAudioPubRef.current?.trackSid,
         }),
       });
 
       const result = await res.json();
       if (!result.success) {
         console.error("Failed to start RTMP stream:", result.error);
+        await unpublishCompositeTracks();
+        stageBroadcaster.stopStageComposite();
         alert(
           `❌ Live Stream Error: ${result.error || "Could not connect to RTMP destination. Please verify your YouTube Stream Key."}`
         );
-        return;
-      }
-
-      // 3. Start stage canvas recording & chunk streaming directly to backend
-      const stageEl = document.getElementById("livestudio-stage-container");
-      const started = await stageBroadcaster.start(stageEl, params.id);
-      if (!started) {
-        console.warn("[Studio GoLive] Canvas broadcaster failed to start, stopping backend session");
-        await fetch(`/api/broadcasts/${params.id}/stream/stop`, { method: "POST" });
-        alert("❌ Failed to capture studio screen for live stream.");
         return;
       }
 
@@ -293,17 +331,20 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const handleEndBroadcast = async () => {
     if (!confirm("Are you sure you want to end this live broadcast?")) return;
     try {
-      // 1. Stop stage canvas recording & chunk upload
-      stageBroadcaster.stop();
+      // 1. Stop cloud RTMP delivery before releasing the program tracks.
       setShowMonitor(false);
 
-      // 2. Stop backend FFmpeg RTMP session
+      // 2. Stop backend Egress session.
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
+      await unpublishCompositeTracks();
+      stageBroadcaster.stopStageComposite();
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {
+      await unpublishCompositeTracks();
+      stageBroadcaster.stopStageComposite();
       endLive();
     }
   };
@@ -930,4 +971,3 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     </div>
   );
 }
-

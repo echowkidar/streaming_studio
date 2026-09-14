@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
 import { RtmpStreamerService } from '../services/rtmp-streamer.service';
+import { EgressService } from '../services/egress.service';
+import { LiveKitService } from '../services/livekit.service';
 
 const router = Router({ mergeParams: true });
 
@@ -204,8 +206,51 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 // POST /api/broadcasts/:broadcastId/stream/start
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { destinationIds, roomName, directDestinations } = req.body;
+    const { destinationIds, roomName, directDestinations, videoTrackId, audioTrackId } = req.body;
     const streamer = RtmpStreamerService.getInstance();
+
+    // Cloud path: LiveKit receives the program track over WebRTC and its Egress
+    // service sends RTMP to the destination. This avoids lossy one-second HTTP
+    // WebM uploads and a second FFmpeg encode on the VPS.
+    if (videoTrackId && roomName) {
+      const rtmpUrls = await streamer.resolveDestinationUrls(destinationIds || [], directDestinations);
+      if (rtmpUrls.length === 0) {
+        res.status(400).json({ success: false, error: 'No valid RTMP destinations found' });
+        return;
+      }
+
+      const egress = EgressService.getInstance();
+      const existingEgressId = egress.getEgressForBroadcast(req.params.broadcastId);
+      if (existingEgressId) {
+        res.status(200).json({ success: true, mode: 'livekit-egress', egressId: existingEgressId, activeDestinations: rtmpUrls.length });
+        return;
+      }
+
+      // A newly published WebRTC track can take a moment to become visible to
+      // LiveKit's egress worker. Starting only after it is visible removes a
+      // common intermittent "track not found" failure on Go Live.
+      const tracks = await new LiveKitService().verifyAndResolveTracks(roomName, videoTrackId, audioTrackId);
+      if (!tracks.videoTrackReady) {
+        res.status(409).json({ success: false, error: 'Program video track is not ready in LiveKit yet. Please try Go Live again.' });
+        return;
+      }
+
+      const { egressId } = await egress.startTrackCompositeEgress(roomName, rtmpUrls, videoTrackId, tracks.audioTrackId);
+      if (!egressId) throw new Error('LiveKit Egress did not return an egress ID');
+      egress.setEgressForBroadcast(req.params.broadcastId, egressId);
+
+      try {
+        await prisma.broadcast.update({
+          where: { id: req.params.broadcastId },
+          data: { status: 'LIVE', startedAt: new Date() },
+        });
+      } catch (dbErr) {
+        console.warn('[Broadcast API] Could not mark egress broadcast LIVE:', dbErr);
+      }
+
+      res.status(200).json({ success: true, mode: 'livekit-egress', egressId, activeDestinations: rtmpUrls.length });
+      return;
+    }
 
     const result = await streamer.startBroadcastStream(
       req.params.broadcastId,
@@ -227,6 +272,20 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
 // GET /api/broadcasts/:broadcastId/stream/status
 router.get('/:broadcastId/stream/status', (req: Request, res: Response): void => {
   try {
+    const egress = EgressService.getInstance();
+    const egressId = egress.getEgressForBroadcast(req.params.broadcastId);
+    if (egressId) {
+      res.status(200).json({
+        success: true,
+        data: {
+          active: true, mode: 'livekit-egress', status: 'LIVE', isConnectedToRtmp: true,
+          egressId, framesSent: 0, currentFps: 30, currentBitrate: 'managed by LiveKit Egress',
+          streamTime: '00:00:00', bytesReceived: 0, chunksReceived: 0, destinationsCount: 1,
+          lastError: null, recentLogs: [],
+        },
+      });
+      return;
+    }
     const streamer = RtmpStreamerService.getInstance();
     const status = streamer.getStatus(req.params.broadcastId);
     res.status(200).json({ success: true, data: status });
@@ -282,6 +341,19 @@ router.post(
 // POST /api/broadcasts/:broadcastId/stream/stop
 router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const egress = EgressService.getInstance();
+    const egressId = egress.getEgressForBroadcast(req.params.broadcastId);
+    if (egressId) {
+      await egress.stopEgress(egressId);
+      egress.removeEgressForBroadcast(req.params.broadcastId);
+      try {
+        await prisma.broadcast.update({ where: { id: req.params.broadcastId }, data: { status: 'ENDED', endedAt: new Date() } });
+      } catch (dbErr) {
+        console.warn('[Broadcast API] Could not mark egress broadcast ENDED:', dbErr);
+      }
+      res.status(200).json({ success: true, mode: 'livekit-egress' });
+      return;
+    }
     const streamer = RtmpStreamerService.getInstance();
     const success = await streamer.stopBroadcastStream(req.params.broadcastId);
     res.status(200).json({ success });
@@ -304,4 +376,3 @@ router.delete('/:broadcastId', async (req: Request, res: Response, next: NextFun
 });
 
 export default router;
-
