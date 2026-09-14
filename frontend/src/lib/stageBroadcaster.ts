@@ -284,10 +284,6 @@ class StageBroadcaster {
 
   public stopStageComposite() {
     this.isBroadcasting = false;
-    try {
-      this.activeVideoTrack?.stop();
-      this.activeAudioTrack?.stop();
-    } catch {}
     this.activeVideoTrack = null;
     this.activeAudioTrack = null;
 
