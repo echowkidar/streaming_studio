@@ -231,7 +231,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           console.log("[Studio GoLive] Publishing stage composite video track...");
           const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
             name: "stage_composite_video",
-            source: Track.Source.ScreenShare,
+            source: Track.Source.Unknown,  // Unknown = no conflict with Camera or ScreenShare
             simulcast: false,
             videoEncoding: {
               maxBitrate: 3_500_000,
@@ -241,19 +241,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           });
           compositeVideoPubRef.current = vPub;
           videoTrackId = vPub.trackSid;
+          console.log("[Studio GoLive] Composite video track published, SID:", videoTrackId);
 
           if (compositeTracks.audioTrack) {
             try {
               console.log("[Studio GoLive] Publishing stage composite audio track...");
               const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
                 name: "stage_composite_audio",
-                source: Track.Source.ScreenShareAudio,
+                source: Track.Source.Unknown,  // Unknown = no conflict with Microphone or ScreenShareAudio
                 dtx: false,
               });
               compositeAudioPubRef.current = aPub;
               audioTrackId = aPub.trackSid;
+              console.log("[Studio GoLive] Composite audio track published, SID:", audioTrackId);
             } catch (audioPubErr) {
-              console.warn("[Studio GoLive] Composite audio publish warning:", audioPubErr);
+              console.warn("[Studio GoLive] Composite audio publish warning (will use mic fallback):", audioPubErr);
             }
           }
 
