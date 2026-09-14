@@ -99,6 +99,17 @@ class StageBroadcaster {
     this.canvas = document.createElement("canvas");
     this.canvas.width = WIDTH;
     this.canvas.height = HEIGHT;
+    this.canvas.style.position = "fixed";
+    this.canvas.style.left = "-9999px";
+    this.canvas.style.top = "-9999px";
+    this.canvas.style.width = "1280px";
+    this.canvas.style.height = "720px";
+    this.canvas.style.pointerEvents = "none";
+    this.canvas.style.opacity = "0";
+    this.canvas.id = "livestudio-composite-render-canvas";
+    if (typeof document !== "undefined" && document.body) {
+      document.body.appendChild(this.canvas);
+    }
     this.ctx = this.canvas.getContext("2d", { alpha: false });
 
     if (!this.ctx) {
@@ -135,6 +146,15 @@ class StageBroadcaster {
       carrier.buffer = noiseBuffer;
       carrier.loop = true;
       carrier.connect(this.audioDestination);
+      
+      // Audible tab flag trick: route at inaudible 0.00001 volume to system speakers so Chrome NEVER throttles background tab timers or WebRTC streams!
+      try {
+        const bgKeepAlive = this.audioCtx.createGain();
+        bgKeepAlive.gain.value = 0.00001;
+        carrier.connect(bgKeepAlive);
+        bgKeepAlive.connect(this.audioCtx.destination);
+      } catch {}
+
       carrier.start();
     } catch (audioErr) {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
@@ -204,6 +224,9 @@ class StageBroadcaster {
       console.warn("[StageBroadcaster] Worker timer fallback:", wErr);
     }
 
+    // 5.5. Draw initial frame BEFORE captureStream so the track starts with valid non-black pixels
+    this.renderStageFrame(container, WIDTH, HEIGHT, performance.now());
+
     // 6. Extract MediaStreamTracks
     const canvasStream = this.canvas.captureStream(30);
     this.activeVideoTrack = canvasStream.getVideoTracks()[0] || null;
@@ -229,6 +252,12 @@ class StageBroadcaster {
     this.isBroadcasting = false;
     this.activeVideoTrack = null;
     this.activeAudioTrack = null;
+
+    if (this.canvas && this.canvas.parentNode) {
+      try {
+        this.canvas.parentNode.removeChild(this.canvas);
+      } catch {}
+    }
 
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
@@ -537,11 +566,13 @@ class StageBroadcaster {
    * Render single frame of the live stage onto the composite canvas using cached layout coordinates
    */
   private renderStageFrame(container: HTMLElement, W: number, H: number, timestamp: number) {
-    const ctx = this.ctx!;
+    if (!this.ctx) return;
+    const ctx = this.ctx;
     const store = useStudioStore.getState();
 
-    // ─────────────────────────────────────────────────────────────
-    // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
+    try {
+      // ─────────────────────────────────────────────────────────────
+      // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
     // ─────────────────────────────────────────────────────────────
     const bgVideo = container.querySelector("video.object-cover") as HTMLVideoElement | null;
     if (bgVideo && bgVideo.readyState >= 2) {
@@ -970,6 +1001,9 @@ class StageBroadcaster {
       ctx.restore();
 
       ctx.restore();
+    }
+    } catch (renderErr) {
+      console.warn("[StageBroadcaster] renderStageFrame catch:", renderErr);
     }
   }
 

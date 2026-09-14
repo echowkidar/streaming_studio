@@ -230,7 +230,6 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
             name: "stage_composite_video",
             simulcast: false,
-            videoCodec: "h264",
             videoEncoding: {
               maxBitrate: 3_500_000,
               maxFramerate: 30,
@@ -249,6 +248,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             audioTrackId = aPub.trackSid;
           }
           console.log("[Studio GoLive] Published composite tracks for RTMP:", { videoTrackId, audioTrackId });
+          
+          // Brief 500ms delay to allow WebRTC keyframe to reach LiveKit SFU before Egress begins encoding
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       } catch (trackErr) {
         console.warn("[Studio GoLive] Track composite publish warning (will fallback to room composite):", trackErr);
