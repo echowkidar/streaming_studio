@@ -83,6 +83,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setAudioDevice,
     setVideoDevice,
     publishStageSync,
+    setParticipantStageStatus,
   } = useLiveKit({
     roomName,
     participantName: hostName,
@@ -117,6 +118,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleMoveToStage = (id: string | number) => {
     moveToStage(id);
+    setParticipantStageStatus(id, "ON_STAGE");
     const nextOnStage = Array.from(
       new Set([...participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id), id])
     );
@@ -125,6 +127,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleMoveToBackstage = (id: string | number) => {
     moveToBackstage(id);
+    setParticipantStageStatus(id, "BACKSTAGE");
     const nextOnStage = participants
       .filter((p) => p.status === "ON_STAGE" && String(p.id) !== String(id))
       .map((p) => p.id);

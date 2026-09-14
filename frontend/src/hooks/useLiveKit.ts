@@ -107,8 +107,15 @@ export function useLiveKit({
       const isMicActive = local.isMicrophoneEnabled || !!localMicTrack;
 
       // Local participant stage status: HOST starts on stage, GUEST starts in Green Room / Backstage
+      let localStoreStatus: Participant["status"] | undefined = undefined;
+      if (typeof window !== "undefined") {
+        try {
+          const stP = useStudioStore.getState().participants.find((p) => String(p.id) === local.identity);
+          if (stP) localStoreStatus = stP.status;
+        } catch {}
+      }
       const existingLocal = participantsRef.current.find((p) => p.id === local.identity);
-      const localStatus = existingLocal ? existingLocal.status : (role === "HOST" ? "ON_STAGE" : "BACKSTAGE");
+      const localStatus = localStoreStatus || (existingLocal ? existingLocal.status : (role === "HOST" ? "ON_STAGE" : "BACKSTAGE"));
 
       // 1. Local Participant Camera / Avatar Tile
       list.push({
@@ -210,10 +217,17 @@ export function useLiveKit({
       const isRemoteMicActive = remote.isMicrophoneEnabled || !!remoteAudio;
 
       // StreamYard rule: preserve existing status if host placed them ON_STAGE/BACKSTAGE,
-      // otherwise new guests default to BACKSTAGE!
+      // otherwise check studio store, then default new guests to BACKSTAGE
+      let storeStatus: Participant["status"] | undefined = undefined;
+      if (typeof window !== "undefined") {
+        try {
+          const stP = useStudioStore.getState().participants.find((p) => String(p.id) === remote.identity);
+          if (stP) storeStatus = stP.status;
+        } catch {}
+      }
       const existing = participantsRef.current.find((p) => p.id === remote.identity);
       const isHostRole = parsedRole === "host" || parsedRole === "co_host";
-      const remoteStatus = existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE");
+      const remoteStatus = storeStatus || (existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE"));
 
       // Remote Participant Camera Tile
       list.push({
@@ -449,7 +463,18 @@ export function useLiveKit({
                     useStudioStore.getState().setLayoutSplitRatio(data.layoutSplitRatio);
                   }
                   if (Array.isArray(data.stageParticipantIds)) {
-                    useStudioStore.getState().setStageParticipants(data.stageParticipantIds);
+                    const stageIds = data.stageParticipantIds.map(String);
+                    useStudioStore.getState().setStageParticipants(stageIds);
+                    const stageSet = new Set(stageIds);
+                    participantsRef.current = participantsRef.current.map((p) => {
+                      const isHost = p.role === "HOST" || p.role === "host" || p.role === "CO_HOST";
+                      const onStage = stageSet.has(String(p.id)) || (isHost && stageSet.size === 0);
+                      return {
+                        ...p,
+                        status: onStage ? "ON_STAGE" : "BACKSTAGE",
+                      };
+                    });
+                    setLiveParticipants([...participantsRef.current]);
                   }
                   if (data.participantBounds && typeof data.participantBounds === "object") {
                     useStudioStore.getState().setAllParticipantBounds(data.participantBounds);
@@ -678,6 +703,17 @@ export function useLiveKit({
     []
   );
 
+  // Explicit stage status updater for host
+  const setParticipantStageStatus = useCallback((id: string | number, status: "ON_STAGE" | "BACKSTAGE") => {
+    const key = String(id);
+    participantsRef.current = participantsRef.current.map((p) =>
+      String(p.id) === key ? { ...p, status } : p
+    );
+    setLiveParticipants((prev) =>
+      prev.map((p) => (String(p.id) === key ? { ...p, status } : p))
+    );
+  }, []);
+
   return {
     room,
     isConnected,
@@ -693,6 +729,7 @@ export function useLiveKit({
     screenTrack,
     liveParticipants,
     participants: liveParticipants,
+    setParticipantStageStatus,
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,

@@ -445,54 +445,114 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
                     Live Stage Feed
                   </div>
-                  {onStageParticipants.length === 0 ? (
-                    activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf") ? (
-                      <div className="w-full h-full min-h-0 flex items-center justify-center bg-black">
-                        {activeMedia.type === "video" ? (
-                          <video src={activeMedia.url} autoPlay playsInline controls loop={activeMedia.loop ?? true} className="w-full h-full object-contain" />
-                        ) : (
-                          <img src={activeMedia.url} alt={activeMedia.name} className="w-full h-full object-contain" />
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-slate-500 gap-1.5 text-xs">
-                        <Tv className="w-5 h-5 text-slate-600" />
-                        <span>Host has not placed anyone on stage yet</span>
-                      </div>
-                    )
-                  ) : onStageParticipants.length === 1 ? (
-                    <div className="w-full h-full min-h-0">
-                      <VideoTrackView
-                        id={onStageParticipants[0].id}
-                        track={onStageParticipants[0].videoTrack}
-                        audioTrack={onStageParticipants[0].audioTrack}
-                        name={onStageParticipants[0].name || "Host"}
-                        isSpeaking={onStageParticipants[0].isSpeaking}
-                        micOn={onStageParticipants[0].micOn}
-                        camOn={onStageParticipants[0].camOn}
-                        isLocal={onStageParticipants[0].isLocal}
-                        role={onStageParticipants[0].role}
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-full h-full flex flex-col gap-1 min-h-0 p-1">
-                      {onStageParticipants.map((p) => (
-                        <div key={p.id} className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10 relative">
+                  {(() => {
+                    const hasVisualMedia = Boolean(
+                      activeMedia &&
+                        (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                    );
+
+                    if (hasVisualMedia && activeMedia) {
+                      return (
+                        <div className="w-full h-full min-h-0 relative flex items-center justify-center bg-black">
+                          {activeMedia.type === "video" ? (
+                            <video
+                              src={activeMedia.url}
+                              autoPlay
+                              playsInline
+                              controls
+                              loop={activeMedia.loop ?? true}
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <img
+                              src={activeMedia.url}
+                              alt={activeMedia.name}
+                              className="w-full h-full object-contain"
+                            />
+                          )}
+                          <div className="absolute top-2 right-2 z-10 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md border border-white/10 text-[9px] font-mono text-emerald-400 flex items-center gap-1 pointer-events-none">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span className="truncate max-w-[120px]">{activeMedia.name}</span>
+                          </div>
+                          {/* Floating Picture-in-Picture speakers overlay */}
+                          {onStageParticipants.length > 0 && (
+                            <div className="absolute bottom-2 right-2 z-20 flex gap-1.5 max-w-[60%] h-[38%] pointer-events-auto">
+                              {onStageParticipants.slice(0, 2).map((p) => (
+                                <div
+                                  key={p.id}
+                                  className="h-full aspect-video rounded-lg overflow-hidden border border-indigo-400/50 shadow-2xl bg-slate-950 relative"
+                                >
+                                  <VideoTrackView
+                                    id={p.id}
+                                    track={p.videoTrack}
+                                    audioTrack={p.audioTrack}
+                                    name={p.name || "Speaker"}
+                                    isSpeaking={p.isSpeaking}
+                                    micOn={p.micOn}
+                                    camOn={p.camOn}
+                                    isLocal={p.isLocal}
+                                    role={p.role}
+                                  />
+                                </div>
+                              ))}
+                              {onStageParticipants.length > 2 && (
+                                <div className="h-full px-1.5 rounded-lg bg-black/80 border border-white/20 text-[10px] text-white flex items-center justify-center font-bold">
+                                  +{onStageParticipants.length - 2}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    if (onStageParticipants.length === 0) {
+                      return (
+                        <div className="flex flex-col items-center justify-center text-slate-500 gap-1.5 text-xs">
+                          <Tv className="w-5 h-5 text-slate-600" />
+                          <span>Host has not placed anyone on stage yet</span>
+                        </div>
+                      );
+                    }
+
+                    if (onStageParticipants.length === 1) {
+                      return (
+                        <div className="w-full h-full min-h-0">
                           <VideoTrackView
-                            id={p.id}
-                            track={p.videoTrack}
-                            audioTrack={p.audioTrack}
-                            name={p.name || "Guest"}
-                            isSpeaking={p.isSpeaking}
-                            micOn={p.micOn}
-                            camOn={p.camOn}
-                            isLocal={p.isLocal}
-                            role={p.role}
+                            id={onStageParticipants[0].id}
+                            track={onStageParticipants[0].videoTrack}
+                            audioTrack={onStageParticipants[0].audioTrack}
+                            name={onStageParticipants[0].name || "Host"}
+                            isSpeaking={onStageParticipants[0].isSpeaking}
+                            micOn={onStageParticipants[0].micOn}
+                            camOn={onStageParticipants[0].camOn}
+                            isLocal={onStageParticipants[0].isLocal}
+                            role={onStageParticipants[0].role}
                           />
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    }
+
+                    return (
+                      <div className="w-full h-full flex flex-col gap-1 min-h-0 p-1">
+                        {onStageParticipants.map((p) => (
+                          <div key={p.id} className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10 relative">
+                            <VideoTrackView
+                              id={p.id}
+                              track={p.videoTrack}
+                              audioTrack={p.audioTrack}
+                              name={p.name || "Guest"}
+                              isSpeaking={p.isSpeaking}
+                              micOn={p.micOn}
+                              camOn={p.camOn}
+                              isLocal={p.isLocal}
+                              role={p.role}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 2. Guest Self Camera Preview (Bottom 50% - Big HD Preview) */}
@@ -674,61 +734,64 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   {/* Mobile Screen-Fill View (sm:hidden) */}
                   {mobileViewMode === "fill" && (
                     <div className="w-full h-full flex flex-col sm:hidden p-1.5 gap-1.5 min-h-0">
-                      {onStageParticipants.length === 1 ? (
-                        <div className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
-                          <VideoTrackView
-                            id={onStageParticipants[0].id}
-                            track={onStageParticipants[0].videoTrack}
-                            audioTrack={onStageParticipants[0].audioTrack}
-                            name={onStageParticipants[0].name || "Guest"}
-                            isSpeaking={onStageParticipants[0].isSpeaking}
-                            micOn={onStageParticipants[0].micOn}
-                            camOn={onStageParticipants[0].camOn}
-                            isLocal={onStageParticipants[0].isLocal}
-                            role={onStageParticipants[0].role}
-                          />
-                        </div>
-                      ) : onStageParticipants.length === 2 ? (
-                        onStageParticipants.map((p) => (
-                          <div key={p.id} className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10">
-                            <VideoTrackView
-                              id={p.id}
-                              track={p.videoTrack}
-                              audioTrack={p.audioTrack}
-                              name={p.name || "Guest"}
-                              isSpeaking={p.isSpeaking}
-                              micOn={p.micOn}
-                              camOn={p.camOn}
-                              isLocal={p.isLocal}
-                              role={p.role}
-                            />
-                          </div>
-                        ))
-                      ) : (
-                        (() => {
-                          const screenP = onStageParticipants.find((p) => p.isScreen || p.role === "screen");
-                          const cameraP = onStageParticipants.filter((p) => !p.isScreen && p.role !== "screen");
-                          if (screenP && cameraP.length > 0) {
-                            return (
-                              <div className="w-full h-full flex flex-col gap-1.5 min-h-0">
-                                {/* Screen share on top (large & clear) */}
-                                <div className="flex-[1.2] w-full min-h-0 rounded-xl overflow-hidden border border-white/10 relative">
+                      {(() => {
+                        const hasVisualMedia = Boolean(
+                          activeMedia &&
+                            (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                        );
+
+                        if (hasVisualMedia && activeMedia) {
+                          return (
+                            <div className="w-full h-full flex flex-col gap-1.5 min-h-0">
+                              {/* Media Player Top Container */}
+                              <div
+                                className={cn(
+                                  "w-full min-h-0 rounded-xl overflow-hidden border border-indigo-500/40 bg-black relative shadow-lg flex items-center justify-center",
+                                  onStageParticipants.length > 0 ? "flex-[1.4]" : "flex-1"
+                                )}
+                              >
+                                {activeMedia.type === "video" ? (
+                                  <video
+                                    src={activeMedia.url}
+                                    autoPlay
+                                    playsInline
+                                    controls
+                                    loop={activeMedia.loop ?? true}
+                                    className="w-full h-full object-contain"
+                                  />
+                                ) : (
+                                  <img
+                                    src={activeMedia.url}
+                                    alt={activeMedia.name}
+                                    className="w-full h-full object-contain"
+                                  />
+                                )}
+                                <div className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md border border-white/10 text-[9px] font-mono text-emerald-400 flex items-center gap-1.5 pointer-events-none">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="truncate max-w-[140px]">{activeMedia.name}</span>
+                                </div>
+                              </div>
+
+                              {/* On-Stage Speakers Bottom Container */}
+                              {onStageParticipants.length === 1 && (
+                                <div className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10">
                                   <VideoTrackView
-                                    id={screenP.id}
-                                    track={screenP.videoTrack}
-                                    audioTrack={screenP.audioTrack}
-                                    name={screenP.name || "Screen"}
-                                    isSpeaking={screenP.isSpeaking}
-                                    micOn={screenP.micOn}
-                                    camOn={screenP.camOn}
-                                    isLocal={screenP.isLocal}
-                                    isScreen={true}
-                                    role="screen"
+                                    id={onStageParticipants[0].id}
+                                    track={onStageParticipants[0].videoTrack}
+                                    audioTrack={onStageParticipants[0].audioTrack}
+                                    name={onStageParticipants[0].name || "Speaker"}
+                                    isSpeaking={onStageParticipants[0].isSpeaking}
+                                    micOn={onStageParticipants[0].micOn}
+                                    camOn={onStageParticipants[0].camOn}
+                                    isLocal={onStageParticipants[0].isLocal}
+                                    role={onStageParticipants[0].role}
                                   />
                                 </div>
-                                {/* Human speakers side by side on bottom */}
+                              )}
+
+                              {onStageParticipants.length === 2 && (
                                 <div className="flex-1 w-full flex gap-1.5 min-h-0">
-                                  {cameraP.map((p) => (
+                                  {onStageParticipants.map((p) => (
                                     <div key={p.id} className="flex-1 h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
                                       <VideoTrackView
                                         id={p.id}
@@ -744,30 +807,128 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                                     </div>
                                   ))}
                                 </div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div className="grid grid-cols-2 auto-rows-fr w-full h-full gap-1.5 min-h-0">
-                              {onStageParticipants.map((p) => (
-                                <div key={p.id} className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
-                                  <VideoTrackView
-                                    id={p.id}
-                                    track={p.videoTrack}
-                                    audioTrack={p.audioTrack}
-                                    name={p.name || "Guest"}
-                                    isSpeaking={p.isSpeaking}
-                                    micOn={p.micOn}
-                                    camOn={p.camOn}
-                                    isLocal={p.isLocal}
-                                    role={p.role}
-                                  />
+                              )}
+
+                              {onStageParticipants.length > 2 && (
+                                <div className="flex-1 w-full grid grid-cols-2 gap-1.5 min-h-0">
+                                  {onStageParticipants.map((p) => (
+                                    <div key={p.id} className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                                      <VideoTrackView
+                                        id={p.id}
+                                        track={p.videoTrack}
+                                        audioTrack={p.audioTrack}
+                                        name={p.name || "Speaker"}
+                                        isSpeaking={p.isSpeaking}
+                                        micOn={p.micOn}
+                                        camOn={p.camOn}
+                                        isLocal={p.isLocal}
+                                        role={p.role}
+                                      />
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              )}
                             </div>
                           );
-                        })()
-                      )}
+                        }
+
+                        // No media active: standard mobile fill view
+                        if (onStageParticipants.length === 1) {
+                          return (
+                            <div className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                              <VideoTrackView
+                                id={onStageParticipants[0].id}
+                                track={onStageParticipants[0].videoTrack}
+                                audioTrack={onStageParticipants[0].audioTrack}
+                                name={onStageParticipants[0].name || "Guest"}
+                                isSpeaking={onStageParticipants[0].isSpeaking}
+                                micOn={onStageParticipants[0].micOn}
+                                camOn={onStageParticipants[0].camOn}
+                                isLocal={onStageParticipants[0].isLocal}
+                                role={onStageParticipants[0].role}
+                              />
+                            </div>
+                          );
+                        }
+
+                        if (onStageParticipants.length === 2) {
+                          return onStageParticipants.map((p) => (
+                            <div key={p.id} className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                              <VideoTrackView
+                                id={p.id}
+                                track={p.videoTrack}
+                                audioTrack={p.audioTrack}
+                                name={p.name || "Guest"}
+                                isSpeaking={p.isSpeaking}
+                                micOn={p.micOn}
+                                camOn={p.camOn}
+                                isLocal={p.isLocal}
+                                role={p.role}
+                              />
+                            </div>
+                          ));
+                        }
+
+                        const screenP = onStageParticipants.find((p) => p.isScreen || p.role === "screen");
+                        const cameraP = onStageParticipants.filter((p) => !p.isScreen && p.role !== "screen");
+                        if (screenP && cameraP.length > 0) {
+                          return (
+                            <div className="w-full h-full flex flex-col gap-1.5 min-h-0">
+                              <div className="flex-[1.2] w-full min-h-0 rounded-xl overflow-hidden border border-white/10 relative">
+                                <VideoTrackView
+                                  id={screenP.id}
+                                  track={screenP.videoTrack}
+                                  audioTrack={screenP.audioTrack}
+                                  name={screenP.name || "Screen"}
+                                  isSpeaking={screenP.isSpeaking}
+                                  micOn={screenP.micOn}
+                                  camOn={screenP.camOn}
+                                  isLocal={screenP.isLocal}
+                                  isScreen={true}
+                                  role="screen"
+                                />
+                              </div>
+                              <div className="flex-1 w-full flex gap-1.5 min-h-0">
+                                {cameraP.map((p) => (
+                                  <div key={p.id} className="flex-1 h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                                    <VideoTrackView
+                                      id={p.id}
+                                      track={p.videoTrack}
+                                      audioTrack={p.audioTrack}
+                                      name={p.name || "Speaker"}
+                                      isSpeaking={p.isSpeaking}
+                                      micOn={p.micOn}
+                                      camOn={p.camOn}
+                                      isLocal={p.isLocal}
+                                      role={p.role}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="grid grid-cols-2 auto-rows-fr w-full h-full gap-1.5 min-h-0">
+                            {onStageParticipants.map((p) => (
+                              <div key={p.id} className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                                <VideoTrackView
+                                  id={p.id}
+                                  track={p.videoTrack}
+                                  audioTrack={p.audioTrack}
+                                  name={p.name || "Guest"}
+                                  isSpeaking={p.isSpeaking}
+                                  micOn={p.micOn}
+                                  camOn={p.camOn}
+                                  isLocal={p.isLocal}
+                                  role={p.role}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
