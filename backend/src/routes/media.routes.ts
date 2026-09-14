@@ -74,6 +74,94 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     const workspaceId = await resolveWorkspaceId(req);
     const mimeType = req.file.mimetype || 'application/octet-stream';
     const assetType = resolveAssetType(mimeType);
+
+    // --- STRICT VPS STORAGE QUOTA ENFORCEMENT ---
+
+    // 1. VIDEO: Max 2 videos, max 5 minutes (300s), max 720p resolution
+    if (assetType === 'VIDEO') {
+      const videoCount = await prisma.mediaAsset.count({
+        where: { workspaceId, assetType: 'VIDEO' },
+      });
+      if (videoCount >= 2) {
+        res.status(400).json({
+          success: false,
+          error: 'Video quota exceeded: Maximum 2 videos allowed in media library to preserve VPS storage. Please delete an existing video first.',
+        });
+        return;
+      }
+      if (req.body.duration && Number(req.body.duration) > 300) {
+        res.status(400).json({
+          success: false,
+          error: 'Video duration exceeds limit: Maximum 5 minutes (300 seconds) allowed.',
+        });
+        return;
+      }
+      if (req.body.height && Number(req.body.height) > 720) {
+        res.status(400).json({
+          success: false,
+          error: 'Video resolution exceeds limit: Maximum 720p resolution allowed.',
+        });
+        return;
+      }
+    }
+
+    // 2. AUDIO: Max 2 audios, MP3 only, max 15 minutes (900s)
+    if (assetType === 'AUDIO') {
+      const isMp3 =
+        mimeType === 'audio/mpeg' ||
+        mimeType === 'audio/mp3' ||
+        req.file.originalname.toLowerCase().endsWith('.mp3');
+      if (!isMp3) {
+        res.status(400).json({
+          success: false,
+          error: 'Format not allowed: Only MP3 audio files are permitted to save VPS storage.',
+        });
+        return;
+      }
+      const audioCount = await prisma.mediaAsset.count({
+        where: { workspaceId, assetType: 'AUDIO' },
+      });
+      if (audioCount >= 2) {
+        res.status(400).json({
+          success: false,
+          error: 'Audio quota exceeded: Maximum 2 audio files allowed in media library. Please delete an existing audio first.',
+        });
+        return;
+      }
+      if (req.body.duration && Number(req.body.duration) > 900) {
+        res.status(400).json({
+          success: false,
+          error: 'Audio duration exceeds limit: Maximum 15 minutes (900 seconds) allowed.',
+        });
+        return;
+      }
+    }
+
+    // 3. IMAGE / PDF: Max 2 files combined, max 2MB each
+    if (assetType === 'IMAGE' || assetType === 'PDF') {
+      const maxSizeBytes = 2 * 1024 * 1024; // 2 MB
+      if (req.file.size > maxSizeBytes) {
+        res.status(400).json({
+          success: false,
+          error: `File size exceeds limit: Maximum 2MB allowed for images and PDFs. Uploaded file is ${(req.file.size / (1024 * 1024)).toFixed(1)}MB.`,
+        });
+        return;
+      }
+      const docCount = await prisma.mediaAsset.count({
+        where: {
+          workspaceId,
+          assetType: { in: ['IMAGE', 'PDF'] },
+        },
+      });
+      if (docCount >= 2) {
+        res.status(400).json({
+          success: false,
+          error: 'Image/PDF quota exceeded: Maximum 2 documents/images allowed. Please delete an existing file first.',
+        });
+        return;
+      }
+    }
+
     const cleanFilename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
     const storageKey = `media/${workspaceId}/${Date.now()}-${cleanFilename}`;
 
@@ -96,6 +184,11 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
         mimeType,
         fileSize: BigInt(req.file.size),
         storagePath: storageKey,
+        metadata: {
+          duration: req.body.duration ? Number(req.body.duration) : undefined,
+          width: req.body.width ? Number(req.body.width) : undefined,
+          height: req.body.height ? Number(req.body.height) : undefined,
+        },
       },
     });
 

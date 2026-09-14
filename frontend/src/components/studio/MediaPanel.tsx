@@ -77,17 +77,125 @@ export const MediaPanel: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const fileUrl = URL.createObjectURL(file);
     let type: "video" | "audio" | "image" | "pdf" = "video";
     if (file.type.startsWith("audio/")) type = "audio";
     else if (file.type.startsWith("image/")) type = "image";
-    else if (file.type.includes("pdf")) type = "pdf";
+    else if (file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf")) type = "pdf";
+
+    const uploadedVideos = mediaList.filter((m) => m.type === "video" && m.isUploaded);
+    const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
+    const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
+
+    let videoDuration = 0;
+    let videoWidth = 0;
+    let videoHeight = 0;
+    let audioDuration = 0;
+
+    // 1. Video validation: Max 2 videos, max 5 minutes (300s), max 720p
+    if (type === "video") {
+      if (uploadedVideos.length >= 2) {
+        alert("Video quota full! Maximum 2 videos allowed in VPS media library. Pehle purani video delete karein.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      const tempUrl = URL.createObjectURL(file);
+      try {
+        const tempVideo = document.createElement("video");
+        tempVideo.preload = "metadata";
+        tempVideo.src = tempUrl;
+        await new Promise<void>((resolve, reject) => {
+          tempVideo.onloadedmetadata = () => resolve();
+          tempVideo.onerror = () => reject(new Error("Unable to read video file"));
+        });
+
+        videoDuration = Math.round(tempVideo.duration || 0);
+        videoWidth = tempVideo.videoWidth || 0;
+        videoHeight = tempVideo.videoHeight || 0;
+        URL.revokeObjectURL(tempUrl);
+
+        if (videoDuration > 300) {
+          alert(`Video duration (${Math.floor(videoDuration / 60)}m ${videoDuration % 60}s) exceeds limit! Maximum 5 minutes (300s) allowed.`);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          return;
+        }
+
+        if (videoHeight > 720 || videoWidth > 1280) {
+          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 720p (1280x720) allowed to preserve VPS resources.`);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          return;
+        }
+      } catch {
+        URL.revokeObjectURL(tempUrl);
+      }
+    }
+
+    // 2. Audio validation: Max 2 audios, MP3 only, max 15 minutes
+    if (type === "audio") {
+      const isMp3 = file.type === "audio/mpeg" || file.type === "audio/mp3" || file.name.toLowerCase().endsWith(".mp3");
+      if (!isMp3) {
+        alert("Format not allowed! Sirf MP3 audio files permitted hain.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      if (uploadedAudios.length >= 2) {
+        alert("Audio quota full! Maximum 2 audio files allowed in VPS media library. Pehle purani audio delete karein.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      const tempUrl = URL.createObjectURL(file);
+      try {
+        const tempAudio = document.createElement("audio");
+        tempAudio.preload = "metadata";
+        tempAudio.src = tempUrl;
+        await new Promise<void>((resolve, reject) => {
+          tempAudio.onloadedmetadata = () => resolve();
+          tempAudio.onerror = () => reject(new Error("Unable to read audio file"));
+        });
+
+        audioDuration = Math.round(tempAudio.duration || 0);
+        URL.revokeObjectURL(tempUrl);
+
+        if (audioDuration > 900) {
+          alert(`Audio duration (${Math.floor(audioDuration / 60)}m) exceeds limit! Maximum 15 minutes allowed.`);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          return;
+        }
+      } catch {
+        URL.revokeObjectURL(tempUrl);
+      }
+    }
+
+    // 3. Image / PDF validation: Max 2 files, max 2MB each
+    if (type === "image" || type === "pdf") {
+      if (uploadedDocs.length >= 2) {
+        alert("Image/PDF quota full! Maximum 2 files (PDF/Image) allowed in VPS media library. Pehle purani file delete karein.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      if (file.size > 2 * 1024 * 1024) {
+        alert(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds limit! Maximum 2MB allowed for images and PDFs.`);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+    }
+
+    const fileUrl = URL.createObjectURL(file);
+    const durationLabel =
+      type === "video" && videoDuration > 0
+        ? `${Math.floor(videoDuration / 60)}:${(videoDuration % 60).toString().padStart(2, "0")}`
+        : type === "audio" && audioDuration > 0
+        ? `${Math.floor(audioDuration / 60)}:${(audioDuration % 60).toString().padStart(2, "0")}`
+        : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
     const newItem: MediaFileItem = {
       id: `media-${Date.now()}`,
       name: file.name,
       type,
-      duration: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+      duration: durationLabel,
       url: fileUrl,
       isUploaded: true,
     };
@@ -101,6 +209,10 @@ export const MediaPanel: React.FC = () => {
       formData.append("file", file);
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
+      if (videoDuration > 0) formData.append("duration", videoDuration.toString());
+      if (videoWidth > 0) formData.append("width", videoWidth.toString());
+      if (videoHeight > 0) formData.append("height", videoHeight.toString());
+      if (audioDuration > 0) formData.append("duration", audioDuration.toString());
 
       const res = await fetch("/api/media/upload", {
         method: "POST",
@@ -111,17 +223,23 @@ export const MediaPanel: React.FC = () => {
         const json = await res.json();
         if (json.success && json.data?.url) {
           const serverUrl = json.data.url;
+          const serverId = json.data.id || newItem.id;
           setMediaList((prev) =>
-            prev.map((m) => (m.id === newItem.id ? { ...m, url: serverUrl } : m))
+            prev.map((m) => (m.id === newItem.id ? { ...m, id: serverId, url: serverUrl } : m))
           );
           const currentActive = useStudioStore.getState().activeMedia;
           if (currentActive?.id === newItem.id) {
             setActiveMedia({
               ...currentActive,
+              id: serverId,
               url: serverUrl,
             });
           }
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        alert(errJson.error || "Upload failed due to quota restrictions.");
+        setMediaList((prev) => prev.filter((m) => m.id !== newItem.id));
       }
     } catch (err) {
       console.warn("Backend MinIO upload skipped or errored, local preview active:", err);
@@ -192,12 +310,22 @@ export const MediaPanel: React.FC = () => {
     }
   };
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (activeMedia?.id === id) setActiveMedia(null);
     if (activeStageOverlay?.id === id) setStageOverlay(null);
     setMediaList((prev) => prev.filter((m) => m.id !== id));
+
+    try {
+      await fetch(`/api/media/${id}`, { method: "DELETE" });
+    } catch (err) {
+      console.warn("Failed to delete media asset from backend:", err);
+    }
   };
+
+  const uploadedVideos = mediaList.filter((m) => m.type === "video" && m.isUploaded);
+  const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
+  const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
 
   return (
     <div className="h-full flex flex-col justify-between bg-[#0b0b12]">
@@ -229,6 +357,28 @@ export const MediaPanel: React.FC = () => {
           className="hidden"
           onChange={handleFileUpload}
         />
+      </div>
+
+      {/* VPS Storage Quota Status Bar */}
+      <div className="px-3 py-2 border-b border-white/5 bg-slate-950/60 flex items-center justify-between gap-1.5 text-[10px]">
+        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Videos (720p, ≤5m)</span>
+          <span className={cn("font-mono font-bold mt-0.5", uploadedVideos.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
+            {uploadedVideos.length} / 2
+          </span>
+        </div>
+        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Audio (MP3, ≤15m)</span>
+          <span className={cn("font-mono font-bold mt-0.5", uploadedAudios.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
+            {uploadedAudios.length} / 2
+          </span>
+        </div>
+        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Image/PDF (≤2MB)</span>
+          <span className={cn("font-mono font-bold mt-0.5", uploadedDocs.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
+            {uploadedDocs.length} / 2
+          </span>
+        </div>
       </div>
 
       {/* Active Stage Media Banner */}
@@ -365,9 +515,9 @@ export const MediaPanel: React.FC = () => {
       </div>
 
       {/* Footer Info */}
-      <div className="p-3 border-t border-white/5 bg-[#09090f] text-[10px] text-slate-500 flex items-center justify-between">
-        <span>Supported: MP4, WebM, MP3, PNG, PDF</span>
-        <span className="text-indigo-400 font-mono">1080p Ready</span>
+      <div className="p-2.5 border-t border-white/5 bg-[#09090f] text-[10px] text-slate-500 flex items-center justify-between">
+        <span>VPS Disk Protection Active</span>
+        <span className="text-emerald-400 font-mono">Quota Enforced</span>
       </div>
     </div>
   );
