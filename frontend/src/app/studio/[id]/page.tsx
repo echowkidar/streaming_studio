@@ -219,66 +219,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleGoLive = async (destinationIds: string[]) => {
     try {
-      // 1. Start Stage Canvas Composite (30 FPS render loop for tickers, banners, logos, backgrounds, participant videos)
-      let videoTrackId: string | undefined;
-      let audioTrackId: string | undefined;
-
-      try {
-        const stageEl = document.getElementById("livestudio-stage-container");
-        const compositeTracks = stageBroadcaster.startStageComposite(stageEl);
-
-        if (compositeTracks && room?.localParticipant) {
-          console.log("[Studio GoLive] Publishing stage composite video track...");
-          const vPub = await room.localParticipant.publishTrack(compositeTracks.videoTrack, {
-            name: "stage_composite_video",
-            source: Track.Source.Unknown,  // Unknown = no conflict with Camera or ScreenShare
-            simulcast: false,
-            videoEncoding: {
-              maxBitrate: 3_500_000,
-              maxFramerate: 30,
-            },
-            degradationPreference: "maintain-resolution",
-          });
-          compositeVideoPubRef.current = vPub;
-          videoTrackId = vPub.trackSid;
-          console.log("[Studio GoLive] Composite video track published, SID:", videoTrackId);
-
-          if (compositeTracks.audioTrack) {
-            try {
-              console.log("[Studio GoLive] Publishing stage composite audio track...");
-              const aPub = await room.localParticipant.publishTrack(compositeTracks.audioTrack, {
-                name: "stage_composite_audio",
-                source: Track.Source.Unknown,  // Unknown = no conflict with Microphone or ScreenShareAudio
-                dtx: false,
-              });
-              compositeAudioPubRef.current = aPub;
-              audioTrackId = aPub.trackSid;
-              console.log("[Studio GoLive] Composite audio track published, SID:", audioTrackId);
-            } catch (audioPubErr) {
-              console.warn("[Studio GoLive] Composite audio publish warning (will use mic fallback):", audioPubErr);
-            }
-          }
-
-          // Fallback: If composite audioTrack wasn't published or has no trackSid, use the host's published microphone track
-          if (!audioTrackId && room.localParticipant) {
-            room.localParticipant.trackPublications.forEach((pub) => {
-              if (!audioTrackId && pub.kind === Track.Kind.Audio && pub.trackSid) {
-                audioTrackId = pub.trackSid;
-                console.log("[Studio GoLive] Using host microphone audio track for RTMP stream:", audioTrackId);
-              }
-            });
-          }
-
-          console.log("[Studio GoLive] Stage composite tracks ready for RTMP:", { videoTrackId, audioTrackId });
-          
-          // 1500ms delay to allow WebRTC keyframe & SDP negotiation to reach LiveKit SFU before Egress starts encoding
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        }
-      } catch (trackErr) {
-        console.error("[Studio GoLive] Track composite publish error:", trackErr);
-      }
-
-      // 2. Gather any direct destinations from local custom storage
+      // 1. Gather any direct destinations from local custom storage
       let directDestinations: Array<{ rtmpUrl: string; streamKey?: string }> = [];
       if (typeof window !== "undefined") {
         try {
@@ -299,7 +240,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         }
       }
 
-      // 3. Tell backend to start LiveKit Egress RTMP streaming (with composite track IDs)
+      // 2. Start FFmpeg RTMP broadcast session on backend
       const res = await fetch(`/api/broadcasts/${params.id}/stream/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -307,45 +248,47 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           destinationIds,
           roomName,
           directDestinations,
-          videoTrackId,
-          audioTrackId,
         }),
       });
 
       const result = await res.json();
       if (!result.success) {
-        console.error("Failed to start egress stream:", result.error);
-        alert(`❌ Live Stream Error: ${result.error || "Could not connect to RTMP destination. Please verify your YouTube Stream Key."}`);
+        console.error("Failed to start RTMP stream:", result.error);
+        alert(
+          `❌ Live Stream Error: ${result.error || "Could not connect to RTMP destination. Please verify your YouTube Stream Key."}`
+        );
+        return;
+      }
+
+      // 3. Start stage canvas recording & chunk streaming directly to backend
+      const stageEl = document.getElementById("livestudio-stage-container");
+      const started = await stageBroadcaster.start(stageEl, params.id);
+      if (!started) {
+        console.warn("[Studio GoLive] Canvas broadcaster failed to start, stopping backend session");
+        await fetch(`/api/broadcasts/${params.id}/stream/stop`, { method: "POST" });
+        alert("❌ Failed to capture studio screen for live stream.");
         return;
       }
 
       startLive();
     } catch (e) {
       console.error("Failed to start RTMP stream:", e);
-      alert(`❌ Connection Error: ${e instanceof Error ? e.message : "Could not reach streaming server."}`);
+      alert(
+        `❌ Connection Error: ${e instanceof Error ? e.message : "Could not reach streaming server."}`
+      );
     }
   };
 
   const handleEndBroadcast = async () => {
     if (!confirm("Are you sure you want to end this live broadcast?")) return;
     try {
-      // 1. Tell backend to stop LiveKit Egress RTMP streaming
+      // 1. Stop stage canvas recording & chunk upload
+      stageBroadcaster.stop();
+
+      // 2. Stop backend FFmpeg RTMP session
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
-
-      // 2. Unpublish composite tracks from LiveKit room
-      if (room?.localParticipant) {
-        if (compositeVideoPubRef.current?.track) {
-          await room.localParticipant.unpublishTrack(compositeVideoPubRef.current.track).catch(() => {});
-          compositeVideoPubRef.current = null;
-        }
-        if (compositeAudioPubRef.current?.track) {
-          await room.localParticipant.unpublishTrack(compositeAudioPubRef.current.track).catch(() => {});
-          compositeAudioPubRef.current = null;
-        }
-      }
-      stageBroadcaster.stopStageComposite();
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {

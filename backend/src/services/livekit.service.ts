@@ -68,6 +68,29 @@ export class LiveKitService {
     }
   }
 
+  /**
+   * Generate a subscriber-only token for the LiveKit Web Egress headless browser.
+   * The browser joins the room, subscribes to all tracks, renders the composite,
+   * and LiveKit Cloud captures the page and streams it to RTMP.
+   */
+  public async generateEgressToken(roomName: string): Promise<string> {
+    const at = new AccessToken(this.apiKey, this.apiSecret, {
+      identity: `egress-bot-${Date.now()}`,
+      name: 'LiveStudio Egress',
+      ttl: 10800, // 3 hours — enough for any live stream
+    });
+
+    at.addGrant({
+      roomJoin: true,
+      room: roomName,
+      canPublish: false,      // observer only — no publishing
+      canSubscribe: true,     // must subscribe to participant tracks
+      canPublishData: false,
+    });
+
+    return at.toJwt();
+  }
+
   public async createRoom(input: RoomInput): Promise<ServiceResponse<unknown>> {
     try {
       const validated = RoomSchema.parse(input);

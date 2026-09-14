@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
@@ -203,118 +203,66 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 // POST /api/broadcasts/:broadcastId/stream/start
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { destinationIds, roomName, directDestinations, videoTrackId, audioTrackId } = req.body;
-    
-    // Resolve RTMP URLs (handles decryption of stored stream keys)
+    const { destinationIds, roomName, directDestinations } = req.body;
     const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
-    const rtmpUrls = await streamer.resolveDestinationUrls(destinationIds || [], directDestinations);
-    
-    if (rtmpUrls.length === 0) {
-      res.status(400).json({ success: false, error: 'No valid RTMP destinations found' });
-      return;
-    }
 
-    // Start LiveKit Egress: if videoTrackId is provided, stream the studio canvas composite directly!
-    const { EgressService } = await import('../services/egress.service');
-    const { LiveKitService } = await import('../services/livekit.service');
-    const egress = EgressService.getInstance();
-    const lkService = new LiveKitService();
-    const actualRoomName = roomName || `studio-${req.params.broadcastId}`;
-    
-    let resolvedVideoTrackId = videoTrackId;
-    let resolvedAudioTrackId = audioTrackId;
+    const result = await streamer.startBroadcastStream(
+      req.params.broadcastId,
+      roomName || `studio-${req.params.broadcastId}`,
+      destinationIds || [],
+      directDestinations
+    );
 
-    if (resolvedVideoTrackId) {
-      console.log(`[Broadcast API] Verifying video track "${resolvedVideoTrackId}" in LiveKit room "${actualRoomName}"...`);
-      const { videoTrackReady, audioTrackId: detectedAudioId } = await lkService.verifyAndResolveTracks(
-        actualRoomName,
-        resolvedVideoTrackId,
-        resolvedAudioTrackId,
-        4000
-      );
-      if (detectedAudioId) {
-        resolvedAudioTrackId = detectedAudioId;
-      }
-      console.log(`[Broadcast API] Track verification result: videoReady=${videoTrackReady}, audioTrackId=${resolvedAudioTrackId || 'none'}`);
-    }
-
-    let result: { egressId: string };
-    if (resolvedVideoTrackId) {
-      console.log(`[Broadcast API] Starting Track Composite Egress for canvas track: ${resolvedVideoTrackId}, audio: ${resolvedAudioTrackId || 'none'}`);
-      try {
-        result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, resolvedVideoTrackId, resolvedAudioTrackId);
-      } catch (trackEgressErr) {
-        console.warn(`[Broadcast API] Track Composite Egress attempt 1 failed (${trackEgressErr instanceof Error ? trackEgressErr.message : trackEgressErr}), retrying in 1.5s...`);
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        try {
-          result = await egress.startTrackCompositeEgress(actualRoomName, rtmpUrls, resolvedVideoTrackId, resolvedAudioTrackId);
-        } catch (retryErr) {
-          console.error(`[Broadcast API] Track Composite Egress retry failed (${retryErr instanceof Error ? retryErr.message : retryErr}). Falling back to Room Composite Egress as last resort...`);
-          result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
-        }
-      }
-    } else {
-      console.log(`[Broadcast API] No videoTrackId provided, starting Room Composite Egress`);
-      result = await egress.startRoomCompositeEgress(actualRoomName, rtmpUrls);
-    }
-    
-    // Track in memory
-    egress.setEgressForBroadcast(req.params.broadcastId, result.egressId);
-
-    // Store egressId in broadcast DB (non-blocking if record doesn't exist yet)
-    await prisma.broadcast.update({
-      where: { id: req.params.broadcastId },
-      data: {
-        status: 'LIVE',
-        startedAt: new Date(),
-        settings: {
-          egressId: result.egressId,
-          rtmpUrls,
-        },
-      },
-    }).catch((dbErr) => {
-      console.warn(`[Broadcast DB] Could not update broadcast ${req.params.broadcastId} status in DB:`, dbErr?.message);
-    });
-
-    res.status(200).json({ success: true, egressId: result.egressId, activeDestinations: rtmpUrls.length });
+    res.status(result.success ? 200 : 400).json(result);
   } catch (error) {
     console.error(`[Broadcast API] /stream/start error:`, error);
-    res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Failed to start RTMP egress stream' 
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to start RTMP broadcast stream',
     });
   }
 });
 
+// POST /api/broadcasts/:broadcastId/stream/chunk
+router.post(
+  '/:broadcastId/stream/chunk',
+  express.raw({ type: '*/*', limit: '50mb' }),
+  (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      const broadcastId = req.params.broadcastId;
+      const { RtmpStreamerService } = require('../services/rtmp-streamer.service');
+      const streamer = RtmpStreamerService.getInstance();
+
+      if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+        streamer.pushChunk(broadcastId, req.body);
+        res.status(200).json({ success: true });
+        return;
+      }
+
+      req.on('data', (chunk: Buffer) => {
+        streamer.pushChunk(broadcastId, chunk);
+      });
+
+      req.on('end', () => {
+        res.status(200).json({ success: true });
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // POST /api/broadcasts/:broadcastId/stream/stop
 router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const broadcast = await prisma.broadcast.findUnique({
-      where: { id: req.params.broadcastId },
-    }).catch(() => null);
-    
-    const settings = (broadcast?.settings as Record<string, unknown>) || {};
-    const { EgressService } = await import('../services/egress.service');
-    const egress = EgressService.getInstance();
-    const egressId = (settings.egressId as string) || egress.getEgressForBroadcast(req.params.broadcastId);
-    
-    if (egressId) {
-      await egress.stopEgress(egressId).catch((err) => {
-        console.warn(`[Egress] Error stopping egress ${egressId}:`, err?.message);
-      });
-      egress.removeEgressForBroadcast(req.params.broadcastId);
-    }
-    
-    await prisma.broadcast.update({
-      where: { id: req.params.broadcastId },
-      data: { status: 'ENDED', endedAt: new Date() },
-    }).catch(() => null);
-    
-    res.status(200).json({ success: true });
+    const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
+    const streamer = RtmpStreamerService.getInstance();
+    const success = await streamer.stopBroadcastStream(req.params.broadcastId);
+    res.status(200).json({ success });
   } catch (error) {
     console.error(`[Broadcast API] /stream/stop error:`, error);
-    res.status(200).json({ success: true }); // Always return success on stop to prevent UI lockup
+    res.status(200).json({ success: true });
   }
 });
 
