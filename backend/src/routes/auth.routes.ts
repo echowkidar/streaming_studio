@@ -110,20 +110,40 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       where: { email: emailNorm },
     });
 
-    // If database was never seeded and default admin is logging in for the first time
-    if (!user && emailNorm === 'admin@livestudio.io' && data.password === 'AdminPassword123!') {
-      try {
-        const defaultHash = await bcrypt.hash('AdminPassword123!', 10);
-        user = await prisma.user.create({
-          data: {
-            email: 'admin@livestudio.io',
-            passwordHash: defaultHash,
-            name: 'Super Admin',
-            role: 'SUPER_ADMIN',
-          },
-        });
-      } catch {
-        // non-fatal
+    // If user is trying to log in as admin, but the database admin has an auto-generated timestamp email
+    if (!user && (emailNorm === 'admin@livestudio.io' || emailNorm === 'admin')) {
+      const existingSuperAdmin = await prisma.user.findFirst({
+        where: { role: 'SUPER_ADMIN' },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (existingSuperAdmin) {
+        user = existingSuperAdmin;
+        // Normalize their email to clean admin@livestudio.io in database
+        await prisma.user.update({
+          where: { id: existingSuperAdmin.id },
+          data: { email: 'admin@livestudio.io' },
+        }).catch(() => null);
+        user.email = 'admin@livestudio.io';
+      }
+    }
+
+    // If database was completely empty and default admin is logging in for the very first time
+    if (!user && emailNorm === 'admin@livestudio.io') {
+      const anyUserCount = await prisma.user.count().catch(() => 0);
+      if (anyUserCount === 0 && data.password === 'AdminPassword123!') {
+        try {
+          const defaultHash = await bcrypt.hash('AdminPassword123!', 10);
+          user = await prisma.user.create({
+            data: {
+              email: 'admin@livestudio.io',
+              passwordHash: defaultHash,
+              name: 'Super Admin',
+              role: 'SUPER_ADMIN',
+            },
+          });
+        } catch {
+          // non-fatal
+        }
       }
     }
 
@@ -214,25 +234,39 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
 router.post('/change-password', async (req: Request, res: Response): Promise<void> => {
   try {
     const data = ChangePasswordSchema.parse(req.body);
-    try {
-      const user = await prisma.user.findUnique({ where: { email: data.email } });
-      if (user) {
-        if (user.passwordHash && user.passwordHash !== 'seeded') {
-          const isValid = await bcrypt.compare(data.currentPassword, user.passwordHash);
-          if (!isValid) {
-            res.status(400).json({ success: false, error: 'Current password is incorrect' });
-            return;
-          }
-        }
-        const newHash = await bcrypt.hash(data.newPassword, 10);
-        await prisma.user.update({
-          where: { email: data.email },
-          data: { passwordHash: newHash },
-        });
-      }
-    } catch (dbErr) {
-      console.warn('[ChangePassword DB warning]:', dbErr);
+    const emailNorm = data.email.toLowerCase().trim();
+
+    let user = await prisma.user.findUnique({ where: { email: emailNorm } });
+    if (!user) {
+      user = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN' } });
     }
+
+    if (!user) {
+      res.status(404).json({ success: false, error: 'User account not found' });
+      return;
+    }
+
+    if (user.passwordHash && user.passwordHash !== 'seeded') {
+      const isValid = await bcrypt.compare(data.currentPassword, user.passwordHash);
+      if (!isValid) {
+        res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        return;
+      }
+    } else if (user.passwordHash === 'seeded') {
+      if (data.currentPassword !== 'AdminPassword123!') {
+        res.status(400).json({ success: false, error: 'Current password is incorrect' });
+        return;
+      }
+    }
+
+    const newHash = await bcrypt.hash(data.newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        ...(user.role === 'SUPER_ADMIN' && user.email.startsWith('admin-') ? { email: 'admin@livestudio.io' } : {}),
+      },
+    });
 
     res.status(200).json({
       success: true,
