@@ -60,6 +60,11 @@ class StageBroadcaster {
   private cachedOverlayUrl: string | null = null;
   private overlayImage: HTMLImageElement | null = null;
 
+  // A single cross-origin image/video makes a canvas permanently tainted and
+  // Chrome then rejects captureStream(). Cache the probe result per source so
+  // the 30fps compositor can safely skip unexportable assets at negligible cost.
+  private readonly originCleanSources = new WeakMap<object, boolean>();
+
   // Background Web Worker Clock (prevents tab throttling to 1 FPS when switching to YouTube Studio tab)
   private workerTimer: Worker | null = null;
   private workerBlobUrl: string | null = null;
@@ -657,25 +662,25 @@ class StageBroadcaster {
 
     try {
       // ─────────────────────────────────────────────────────────────
-      // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
+    // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
     // ─────────────────────────────────────────────────────────────
     const bgVideo = container.querySelector("video.object-cover") as HTMLVideoElement | null;
-    if (bgVideo && bgVideo.readyState >= 2) {
-      ctx.drawImage(bgVideo, 0, 0, W, H);
-    } else if (store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
+    const drewVideoBackground = Boolean(
+      bgVideo && bgVideo.readyState >= 2 && this.drawOriginSafe(ctx, bgVideo, 0, 0, W, H)
+    );
+    if (!drewVideoBackground && store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
       if (this.cachedBgUrl !== store.activeBackgroundUrl) {
         this.cachedBgUrl = store.activeBackgroundUrl;
         this.bgImage = new Image();
         this.bgImage.crossOrigin = "anonymous";
         this.bgImage.src = store.activeBackgroundUrl;
       }
-      if (this.bgImage && this.bgImage.complete && this.bgImage.naturalWidth > 0) {
-        ctx.drawImage(this.bgImage, 0, 0, W, H);
+      if (this.bgImage && this.bgImage.complete && this.bgImage.naturalWidth > 0 && this.drawOriginSafe(ctx, this.bgImage, 0, 0, W, H)) {
       } else {
         ctx.fillStyle = "#07070d";
         ctx.fillRect(0, 0, W, H);
       }
-    } else {
+    } else if (!drewVideoBackground) {
       ctx.fillStyle = "#07070d";
       ctx.fillRect(0, 0, W, H);
     }
@@ -711,7 +716,7 @@ class StageBroadcaster {
             dw = h * vRatio;
             dx = x + (w - dw) / 2;
           }
-          ctx.drawImage(mediaVideo, dx, dy, dw, dh);
+          this.drawOriginSafe(ctx, mediaVideo, dx, dy, dw, dh);
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
           const tRatio = w / h;
@@ -723,7 +728,7 @@ class StageBroadcaster {
             dw = h * iRatio;
             dx = x + (w - dw) / 2;
           }
-          ctx.drawImage(mediaImg, dx, dy, dw, dh);
+          this.drawOriginSafe(ctx, mediaImg, dx, dy, dw, dh);
         }
 
         // Media Name Pill
@@ -762,7 +767,7 @@ class StageBroadcaster {
         const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
 
         if (hasChroma && canvas) {
-          ctx.drawImage(canvas, x, y, w, h);
+          this.drawOriginSafe(ctx, canvas, x, y, w, h);
         } else if (hasVideo && video) {
           const vRatio = video.videoWidth / video.videoHeight;
           const tRatio = w / h;
@@ -779,10 +784,10 @@ class StageBroadcaster {
             ctx.save();
             ctx.translate(x + w, y);
             ctx.scale(-1, 1);
-            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+            this.drawOriginSafe(ctx, video, sx, sy, sw, sh, 0, 0, w, h);
             ctx.restore();
           } else {
-            ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+            this.drawOriginSafe(ctx, video, sx, sy, sw, sh, x, y, w, h);
           }
         } else {
           // Camera is OFF: Avatar Circle + Initials + "Camera Off"
@@ -934,9 +939,9 @@ class StageBroadcaster {
         const imgEl = overlayEl?.querySelector("img") as HTMLImageElement | null;
 
         if (vidEl && vidEl.readyState >= 2) {
-          ctx.drawImage(vidEl, ox, oy, ow, oh);
+          this.drawOriginSafe(ctx, vidEl, ox, oy, ow, oh);
         } else if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
-          ctx.drawImage(imgEl, ox, oy, ow, oh);
+          this.drawOriginSafe(ctx, imgEl, ox, oy, ow, oh);
         } else {
           if (this.cachedOverlayUrl !== overlay.url) {
             this.cachedOverlayUrl = overlay.url;
@@ -945,7 +950,7 @@ class StageBroadcaster {
             this.overlayImage.src = overlay.url;
           }
           if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
-            ctx.drawImage(this.overlayImage, ox, oy, ow, oh);
+            this.drawOriginSafe(ctx, this.overlayImage, ox, oy, ow, oh);
           }
         }
 
@@ -1090,6 +1095,51 @@ class StageBroadcaster {
     }
     } catch (renderErr) {
       console.warn("[StageBroadcaster] renderStageFrame catch:", renderErr);
+    }
+  }
+
+  /**
+   * Draw only sources that can be exported by Canvas. A probe canvas isolates
+   * CORS failures; the program canvas therefore remains usable for WebRTC.
+   */
+  private drawOriginSafe(
+    ctx: CanvasRenderingContext2D,
+    source: CanvasImageSource,
+    ...coords: number[]
+  ): boolean {
+    const key = source as unknown as object;
+    let isClean = this.originCleanSources.get(key);
+
+    if (isClean === undefined) {
+      try {
+        const probe = document.createElement("canvas");
+        probe.width = 1;
+        probe.height = 1;
+        const probeCtx = probe.getContext("2d", { willReadFrequently: true });
+        if (!probeCtx) return false;
+        probeCtx.drawImage(source, 0, 0, 1, 1);
+        probeCtx.getImageData(0, 0, 1, 1);
+        isClean = true;
+      } catch {
+        isClean = false;
+        console.warn("[StageBroadcaster] Skipping cross-origin asset in broadcast output.");
+      }
+      this.originCleanSources.set(key, isClean);
+    }
+
+    if (!isClean) return false;
+
+    try {
+      if (coords.length === 4) {
+        ctx.drawImage(source, coords[0], coords[1], coords[2], coords[3]);
+      } else if (coords.length === 8) {
+        ctx.drawImage(source, coords[0], coords[1], coords[2], coords[3], coords[4], coords[5], coords[6], coords[7]);
+      } else {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
