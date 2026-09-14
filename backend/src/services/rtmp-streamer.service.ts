@@ -36,12 +36,13 @@ export class RtmpStreamerService extends EventEmitter {
   private spawnFfmpegProcess(broadcastId: string, targetUrl: string): ChildProcess {
     // Broadcast-grade low-CPU configuration with CFR fps filter to prevent macroblock tearing
     const args = [
+      '-fflags', '+nobuffer+genpts',
       '-f', 'webm',
       '-i', 'pipe:0',
       '-c:v', 'libx264',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
-      '-b:v', '2000k',
+      '-b:v', '2500k',
       '-maxrate', '2500k',
       '-bufsize', '5000k',
       '-pix_fmt', 'yuv420p',
@@ -51,12 +52,15 @@ export class RtmpStreamerService extends EventEmitter {
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
+      '-af', 'aresample=async=1:first_pts=0',
       '-f', 'flv',
       '-flvflags', 'no_duration_filesize',
+      '-rtmp_live', 'live',
       targetUrl,
     ];
 
-    console.log(`[FFmpeg RTMP]: Spawning stream pipeline for ${broadcastId}`);
+    const maskedUrl = targetUrl.length > 15 ? targetUrl.substring(0, targetUrl.length - 8) + '********' : 'rtmp://...';
+    console.log(`[FFmpeg RTMP]: Spawning stream pipeline for ${broadcastId} -> ${maskedUrl}`);
     const proc = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
 
     // Handle stdin errors to prevent Node process unhandled EPIPE crashes

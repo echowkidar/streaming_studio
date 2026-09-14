@@ -44,10 +44,11 @@ import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { GoLiveModal } from "@/components/studio/GoLiveModal";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
-import { HardDrive, Calendar } from "lucide-react";
+import { HardDrive, Calendar, Tv } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
 import { useAuthStore } from "@/stores/auth.store";
+import { StreamMonitor } from "@/components/studio/StreamMonitor";
 import { Track } from "livekit-client";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
@@ -185,6 +186,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   // Picture-in-Picture Floating Mini Studio
   const [isPiPActive, setIsPiPActive] = useState(false);
+  const [showMonitor, setShowMonitor] = useState(false);
 
   const handleTogglePiP = async () => {
     try {
@@ -270,6 +272,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         return;
       }
 
+      setShowMonitor(true);
       startLive();
     } catch (e) {
       console.error("Failed to start RTMP stream:", e);
@@ -284,6 +287,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     try {
       // 1. Stop stage canvas recording & chunk upload
       stageBroadcaster.stop();
+      setShowMonitor(false);
 
       // 2. Stop backend FFmpeg RTMP session
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
@@ -806,6 +810,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                 <PictureInPicture className="w-4 h-4 sm:mr-1.5 text-cyan-400" />
                 <span className="hidden lg:inline">{isPiPActive ? "Close Mini" : "Mini Studio"}</span>
               </Button>
+
+              {/* Live Program Stream Monitor Button */}
+              <Button
+                variant={showMonitor ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setShowMonitor(!showMonitor)}
+                className={cn(
+                  "h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs sm:text-sm transition-all hidden sm:inline-flex",
+                  showMonitor ? "border-indigo-500 bg-indigo-500/20 text-indigo-300 shadow-md shadow-indigo-500/20" : "text-slate-300 hover:text-white"
+                )}
+                title="Live Stream Program Monitor (Preview exact feed going to YouTube)"
+              >
+                <Tv className="w-4 h-4 sm:mr-1.5 text-indigo-400" />
+                <span className="hidden lg:inline">{showMonitor ? "Hide Monitor" : "Monitor"}</span>
+              </Button>
             </div>
 
             {/* Quick Layout, Guests & Settings */}
@@ -891,6 +910,13 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         onClose={() => setIsGoLiveModalOpen(false)}
         broadcastTitle={broadcastTitle}
         onGoLive={handleGoLive}
+      />
+
+      {/* Live Stream Program Output Monitor */}
+      <StreamMonitor
+        isOpen={showMonitor}
+        onClose={() => setShowMonitor(false)}
+        isLive={isLive}
       />
     </div>
   );

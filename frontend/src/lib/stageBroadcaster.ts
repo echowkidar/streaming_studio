@@ -76,6 +76,18 @@ class StageBroadcaster {
     return this.isBroadcasting;
   }
 
+  public getCanvas(): HTMLCanvasElement | null {
+    return this.canvas;
+  }
+
+  public getCompositeStream(): MediaStream | null {
+    if (!this.canvas) return null;
+    const tracks: MediaStreamTrack[] = [];
+    if (this.activeVideoTrack) tracks.push(this.activeVideoTrack);
+    if (this.activeAudioTrack) tracks.push(this.activeAudioTrack);
+    return tracks.length > 0 ? new MediaStream(tracks) : null;
+  }
+
   /**
    * Start 30 FPS Canvas render loop & Web Audio mix, returning live MediaStreamTracks for WebRTC
    * This allows LiveKit to stream the exact stage (with overlays, tickers, banners, backgrounds) to YouTube!
@@ -337,15 +349,35 @@ class StageBroadcaster {
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.audioCtx = new AudioContextClass();
+      if (this.audioCtx.state === "suspended") {
+        this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume warning:", e));
+      }
       this.audioDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Silent baseline carrier tone (amplitude 0.0001) to keep RTMP audio stream alive
-      const osc = this.audioCtx.createOscillator();
-      this.silentGain = this.audioCtx.createGain();
-      this.silentGain.gain.value = 0.0001;
-      osc.connect(this.silentGain);
-      this.silentGain.connect(this.audioDestination);
-      osc.start();
+      // Continuous gentle carrier (amplitude 0.0002) to guarantee active stereo audio packets 24/7 without silence suppression
+      const sampleRate = this.audioCtx.sampleRate || 48000;
+      const bufferSize = sampleRate * 2;
+      const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const channelData = noiseBuffer.getChannelData(ch);
+        for (let i = 0; i < bufferSize; i++) {
+          channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+        }
+      }
+      const carrier = this.audioCtx.createBufferSource();
+      carrier.buffer = noiseBuffer;
+      carrier.loop = true;
+      carrier.connect(this.audioDestination);
+
+      // Route at inaudible volume to speakers to keep browser tab active
+      try {
+        const bgKeepAlive = this.audioCtx.createGain();
+        bgKeepAlive.gain.value = 0.00001;
+        carrier.connect(bgKeepAlive);
+        bgKeepAlive.connect(this.audioCtx.destination);
+      } catch {}
+
+      carrier.start();
     } catch (audioErr) {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
     }
