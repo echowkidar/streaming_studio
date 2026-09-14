@@ -202,16 +202,15 @@ export default function AdminPage() {
   }
 
   const containers = [
-    { name: "livestudio-frontend", status: "HEALTHY", port: "3000", uptime: "4 days, 12 hrs", memory: "128 MB" },
-    { name: "livestudio-api", status: "HEALTHY", port: "4000", uptime: "4 days, 12 hrs", memory: "214 MB" },
-    { name: "livestudio-websocket", status: "HEALTHY", port: "4001", uptime: "4 days, 12 hrs", memory: "86 MB" },
-    { name: "livestudio-worker", status: "HEALTHY", port: "-", uptime: "4 days, 12 hrs", memory: "310 MB" },
-    { name: "livestudio-postgres", status: "HEALTHY", port: "5432", uptime: "18 days", memory: "195 MB" },
-    { name: "livestudio-redis", status: "HEALTHY", port: "6379", uptime: "18 days", memory: "42 MB" },
-    { name: "livestudio-minio", status: "HEALTHY", port: "9000/9001", uptime: "18 days", memory: "160 MB" },
-    { name: "livestudio-livekit", status: "HEALTHY", port: "7880/7881", uptime: "18 days", memory: "180 MB" },
-    { name: "livestudio-coturn", status: "HEALTHY", port: "3478/5349", uptime: "18 days", memory: "35 MB" },
-    { name: "livestudio-nginx", status: "HEALTHY", port: "80/443", uptime: "18 days", memory: "24 MB" },
+    { name: "livestudio-frontend", type: "Docker Container", status: "HEALTHY", port: "3000", uptime: "Running", memory: "128 MB" },
+    { name: "livestudio-api", type: "Docker Container", status: "HEALTHY", port: "4000", uptime: "Running", memory: "214 MB" },
+    { name: "livestudio-websocket", type: "Docker Container", status: "HEALTHY", port: "4001", uptime: "Running", memory: "86 MB" },
+    { name: "livestudio-worker", type: "Docker Container", status: "HEALTHY", port: "Queue", uptime: "Running", memory: "310 MB" },
+    { name: "livestudio-postgres", type: "Docker Container", status: "HEALTHY", port: "5432", uptime: "Running", memory: "195 MB" },
+    { name: "livestudio-redis", type: "Docker Container", status: "HEALTHY", port: "6379", uptime: "Running", memory: "42 MB" },
+    { name: "livestudio-minio", type: "Docker Container", status: "HEALTHY", port: "9000/9001", uptime: "Running", memory: "160 MB" },
+    { name: "livestudio-nginx", type: "Docker Container", status: "HEALTHY", port: "80/443", uptime: "Running", memory: "24 MB" },
+    { name: "livekit-cloud-sfu", type: "Cloud Service", status: "CONNECTED", port: "WSS", uptime: "Global Anycast", memory: "Managed Cloud" },
   ];
 
   return (
@@ -276,7 +275,7 @@ export default function AdminPage() {
         <CardHeader className="p-0 mb-4 flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Server className="w-5 h-5 text-indigo-400" />
-            Portainer / Docker Services (10 Containers)
+            Docker Containers & Infrastructure (8 Containers + LiveKit Cloud)
           </CardTitle>
           <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4" /> All Services Operational
@@ -287,9 +286,10 @@ export default function AdminPage() {
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-white/5 text-slate-400">
-                <th className="py-3 px-4 font-semibold">Service Container</th>
+                <th className="py-3 px-4 font-semibold">Service</th>
+                <th className="py-3 px-4 font-semibold">Type</th>
                 <th className="py-3 px-4 font-semibold">Status</th>
-                <th className="py-3 px-4 font-semibold">Ports</th>
+                <th className="py-3 px-4 font-semibold">Ports / Endpoint</th>
                 <th className="py-3 px-4 font-semibold">Memory</th>
                 <th className="py-3 px-4 font-semibold">Uptime</th>
               </tr>
@@ -298,8 +298,11 @@ export default function AdminPage() {
               {containers.map((c, idx) => (
                 <tr key={idx} className="hover:bg-white/[0.02] text-slate-300">
                   <td className="py-3 px-4 font-mono font-medium text-white">{c.name}</td>
+                  <td className="py-3 px-4 text-slate-400">{c.type}</td>
                   <td className="py-3 px-4">
-                    <Badge variant="success" size="sm">{c.status}</Badge>
+                    <Badge variant={c.status === "CONNECTED" ? "purple" : "success"} size="sm">
+                      {c.status}
+                    </Badge>
                   </td>
                   <td className="py-3 px-4 font-mono text-slate-400">{c.port}</td>
                   <td className="py-3 px-4 font-mono">{c.memory}</td>
