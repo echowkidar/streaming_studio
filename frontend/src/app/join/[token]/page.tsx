@@ -26,6 +26,7 @@ import {
   Maximize2,
   Minimize2,
   Layers,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -77,6 +78,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
     toggleMicrophone,
     toggleScreenShare,
     flipCamera,
+    connect,
     disconnect,
   } = useLiveKit({
     roomName,
@@ -179,6 +181,81 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
   const isGuestOnStage = localParticipant?.status === "ON_STAGE";
   const onStageParticipants = liveParticipants.filter((p) => p.status === "ON_STAGE");
   const backstageParticipants = liveParticipants.filter((p) => p.status === "BACKSTAGE");
+
+  // 1. Host Disconnection Protection: Track host presence and handle 5-minute grace period
+  const [hostGraceSeconds, setHostGraceSeconds] = useState<number | null>(null);
+  const [hostReconnectedAlert, setHostReconnectedAlert] = useState(false);
+  const [isHostTimeoutClosed, setIsHostTimeoutClosed] = useState(false);
+  const hadHostEverRef = useRef(false);
+
+  const hasHostInRoom = liveParticipants.some(
+    (p) => !p.isLocal && (p.role === "host" || p.role === "HOST" || p.role === "CO_HOST")
+  );
+
+  useEffect(() => {
+    if (step !== "stage") return;
+
+    if (hasHostInRoom) {
+      if (hadHostEverRef.current && hostGraceSeconds !== null) {
+        // Host has successfully reconnected!
+        setHostGraceSeconds(null);
+        setHostReconnectedAlert(true);
+        setTimeout(() => setHostReconnectedAlert(false), 6000);
+      }
+      hadHostEverRef.current = true;
+    } else if (hadHostEverRef.current && !hasHostInRoom && !isHostTimeoutClosed) {
+      // Host was previously present, but has now disconnected (power outage, network drop, etc.)
+      if (hostGraceSeconds === null) {
+        setHostGraceSeconds(300); // 5-minute grace period
+      }
+    }
+  }, [hasHostInRoom, step, hostGraceSeconds, isHostTimeoutClosed]);
+
+  // Host grace period countdown
+  useEffect(() => {
+    if (hostGraceSeconds === null) return;
+    if (hostGraceSeconds <= 0) {
+      disconnect();
+      setIsHostTimeoutClosed(true);
+      setHostGraceSeconds(null);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setHostGraceSeconds((sec) => (sec !== null ? sec - 1 : null));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [hostGraceSeconds, disconnect]);
+
+  // 2. Pre-Live Idle Protection for Guest: If in backstage for 5 minutes and no host arrives
+  const [guestIdleSeconds, setGuestIdleSeconds] = useState(300);
+  const [isGuestIdleDisconnected, setIsGuestIdleDisconnected] = useState(false);
+
+  useEffect(() => {
+    if (step !== "stage" || hadHostEverRef.current || isGuestIdleDisconnected) return;
+
+    const interval = setInterval(() => {
+      setGuestIdleSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          disconnect();
+          setIsGuestIdleDisconnected(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [step, isGuestIdleDisconnected, disconnect]);
+
+  const handleReconnectGuest = () => {
+    setIsGuestIdleDisconnected(false);
+    setIsHostTimeoutClosed(false);
+    setGuestIdleSeconds(300);
+    connect();
+  };
 
   return (
     <div className="min-h-screen w-screen bg-[#07070b] flex flex-col text-slate-200 select-none overflow-hidden">
@@ -376,6 +453,29 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
               </Button>
             </div>
           </header>
+
+          {/* Host Disconnection Protection Alert Banner */}
+          {hostGraceSeconds !== null && (
+            <div className="bg-amber-500/25 border-b border-amber-500/40 px-3 py-2 text-center text-xs text-amber-200 flex items-center justify-between gap-2 shrink-0 animate-pulse z-30">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>Disconnection Protection Active:</strong> Host has temporarily disconnected. Studio will wait{" "}
+                  <strong className="font-mono text-white underline">
+                    {Math.floor(hostGraceSeconds / 60)}:{(hostGraceSeconds % 60).toString().padStart(2, "0")}
+                  </strong>{" "}
+                  for host to reconnect.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {hostReconnectedAlert && (
+            <div className="bg-emerald-500/20 border-b border-emerald-500/40 px-3 py-2 text-center text-xs text-emerald-300 flex items-center justify-center gap-2 shrink-0 animate-in fade-in z-30">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>✅ <strong>Host has reconnected!</strong> Studio control restored.</span>
+            </div>
+          )}
 
           {/* Backstage Advisory Banner if guest is not on stage */}
           {!isGuestOnStage && (
@@ -1212,6 +1312,40 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
       {/* Synchronized Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
         <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} />
+      )}
+
+      {/* Host Grace Period Timeout Overlay */}
+      {isHostTimeoutClosed && (
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-xl">
+            <Clock className="w-7 h-7" />
+          </div>
+          <h3 className="text-xl font-bold text-white tracking-tight">Broadcast Session Closed</h3>
+          <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+            The host did not reconnect within the 5-minute grace period. The studio was closed to preserve cloud streaming resources.
+          </p>
+          <Button variant="primary" size="default" onClick={() => window.location.reload()} className="px-5 shadow-lg shadow-indigo-500/20">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Check Again
+          </Button>
+        </div>
+      )}
+
+      {/* Guest Pre-Live Idle Disconnected Overlay */}
+      {isGuestIdleDisconnected && (
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-xl">
+            <Clock className="w-7 h-7" />
+          </div>
+          <h3 className="text-xl font-bold text-white tracking-tight">Studio Disconnected (Idle Protection)</h3>
+          <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+            You were in the backstage for 5 minutes before the host entered. Connection was paused to preserve cloud minutes.
+          </p>
+          <Button variant="primary" size="default" onClick={handleReconnectGuest} className="px-5 shadow-lg shadow-indigo-500/20">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Reconnect to Studio
+          </Button>
+        </div>
       )}
     </div>
   );

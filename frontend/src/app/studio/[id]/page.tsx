@@ -29,7 +29,10 @@ import {
   X,
   RefreshCw,
   PictureInPicture,
-  ChevronLeft
+  ChevronLeft,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -84,6 +87,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setVideoDevice,
     publishStageSync,
     setParticipantStageStatus,
+    connect,
+    disconnect,
   } = useLiveKit({
     roomName,
     participantName: hostName,
@@ -185,6 +190,134 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
     return () => clearInterval(interval);
   }, [isLive]);
+
+  // 1. Session Reconnection Recovery: Check if broadcast is already LIVE on backend upon host mount/reboot
+  const [reconnectAlert, setReconnectAlert] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const checkActiveBroadcast = async () => {
+      try {
+        const [statusRes, broadcastRes] = await Promise.all([
+          fetch(`/api/broadcasts/${params.id}/stream/status`).catch(() => null),
+          fetch(`/api/broadcasts/${params.id}`).catch(() => null),
+        ]);
+
+        if (!isMounted) return;
+
+        const statusData = statusRes ? await statusRes.json().catch(() => null) : null;
+        const broadcastData = broadcastRes ? await broadcastRes.json().catch(() => null) : null;
+
+        const isStreamActive =
+          Boolean(statusData?.active) ||
+          Boolean(statusData?.data?.active) ||
+          broadcastData?.data?.status === "LIVE";
+
+        if (isStreamActive) {
+          console.log("[Studio Reconnect] Active stream detected on backend, re-attaching host to session!");
+          startLive();
+          setShowMonitor(true);
+
+          // Calculate elapsed duration if startedAt is available
+          const startedAtStr = broadcastData?.data?.startedAt || statusData?.data?.startedAt;
+          if (startedAtStr) {
+            const elapsed = Math.floor((Date.now() - new Date(startedAtStr).getTime()) / 1000);
+            if (elapsed > 0) setLiveDurationSec(elapsed);
+          }
+
+          // Resume stage canvas capture if element is ready
+          setTimeout(async () => {
+            const stageEl = document.getElementById("livestudio-stage-container");
+            if (stageEl && !stageBroadcaster.isStreaming()) {
+              stageBroadcaster.ensureAudioContext();
+              await stageBroadcaster.start(stageEl, params.id);
+            }
+          }, 1200);
+
+          setReconnectAlert("✅ Reconnected to Active Live Broadcast! You have resumed studio control.");
+          setTimeout(() => setReconnectAlert(null), 8000);
+        }
+      } catch (err) {
+        console.warn("[Studio Reconnect] Error checking active stream status:", err);
+      }
+    };
+
+    checkActiveBroadcast();
+    return () => {
+      isMounted = false;
+    };
+  }, [params.id, startLive]);
+
+  // 2. Pre-Live Inactivity Protection (5-minute countdown if not live)
+  const [idleSeconds, setIdleSeconds] = useState(300);
+  const [isIdleDisconnected, setIsIdleDisconnected] = useState(false);
+
+  useEffect(() => {
+    if (isLive || isIdleDisconnected) return;
+
+    const interval = setInterval(() => {
+      setIdleSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          disconnect();
+          setIsIdleDisconnected(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isLive, isIdleDisconnected, disconnect]);
+
+  const handleExtendIdleTime = () => {
+    setIdleSeconds((prev) => prev + 300);
+  };
+
+  const handleReconnectIdle = () => {
+    setIsIdleDisconnected(false);
+    setIdleSeconds(300);
+    connect();
+  };
+
+  // 3. Post-Stream Wrap-Up / Debrief Timer
+  const [wrapUpSeconds, setWrapUpSeconds] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (wrapUpSeconds === null) return;
+    if (wrapUpSeconds <= 0) {
+      disconnect();
+      setWrapUpSeconds(null);
+      return;
+    }
+    const timer = setInterval(() => {
+      setWrapUpSeconds((s) => (s !== null ? s - 1 : null));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [wrapUpSeconds, disconnect]);
+
+  const handleCloseStudioNow = () => {
+    disconnect();
+    setWrapUpSeconds(null);
+    router.push("/dashboard");
+  };
+
+  // 4. Disconnection Protection: If host closes tab while LIVE and ALONE -> stop stream immediately!
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const isCurrentlyLive = useStudioStore.getState().isLive;
+      const remoteParticipants = liveParticipants.filter((p) => !p.isLocal);
+
+      if (isCurrentlyLive && remoteParticipants.length === 0) {
+        // Host was alone! Stop stream immediately to save resources
+        navigator.sendBeacon(`/api/broadcasts/${params.id}/stream/stop`);
+      }
+      // If remoteParticipants.length > 0, do NOT stop stream! 5-minute grace period protects the broadcast!
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [liveParticipants, params.id]);
 
   // Picture-in-Picture Floating Mini Studio
   const [isPiPActive, setIsPiPActive] = useState(false);
@@ -307,6 +440,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       console.error("Failed to stop stream:", e);
     } finally {
       endLive();
+      setWrapUpSeconds(60);
     }
   };
 
@@ -504,6 +638,18 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             ) : (
               <Badge variant="neutral" size="sm" className="shrink-0 text-[10px] sm:text-xs">READY</Badge>
             )}
+
+            {!isLive && isConnected && (
+              <button
+                type="button"
+                onClick={handleExtendIdleTime}
+                className="hidden lg:flex items-center gap-1 text-[10px] text-slate-400 hover:text-amber-300 bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded-md border border-white/5 transition-colors shrink-0"
+                title="Cloud Minute Saver: Studio auto-disconnects if idle for 5 minutes. Click to add +5m"
+              >
+                <Clock className="w-3 h-3 text-amber-400" />
+                <span>Idle: {Math.floor(idleSeconds / 60)}:{(idleSeconds % 60).toString().padStart(2, "0")}</span>
+              </button>
+            )}
           </div>
 
           <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400 pl-2 border-l border-white/10 shrink-0">
@@ -600,8 +746,73 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         </div>
       </header>
 
+      {/* ─── Notification & Lifecycle Banners ───────────────────── */}
+      {reconnectAlert && (
+        <div className="bg-emerald-500/20 border-b border-emerald-500/30 px-4 py-2 text-xs text-emerald-300 flex items-center justify-between shrink-0 animate-in fade-in z-40">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{reconnectAlert}</span>
+          </div>
+          <button onClick={() => setReconnectAlert(null)} className="p-1 text-emerald-400 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {wrapUpSeconds !== null && (
+        <div className="bg-indigo-500/20 border-b border-indigo-500/40 px-4 py-2 text-xs text-indigo-200 flex items-center justify-between shrink-0 z-40">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>
+              <strong>Broadcast Ended.</strong> Post-stream debrief: Studio will auto-disconnect in{" "}
+              <strong className="font-mono text-white underline">
+                {Math.floor(wrapUpSeconds / 60)}:{(wrapUpSeconds % 60).toString().padStart(2, "0")}
+              </strong>{" "}
+              to preserve cloud resources.
+            </span>
+          </div>
+          <Button variant="danger" size="sm" onClick={handleCloseStudioNow} className="h-6 px-2.5 text-[11px]">
+            Close Studio Now
+          </Button>
+        </div>
+      )}
+
+      {!isLive && isConnected && idleSeconds <= 120 && (
+        <div className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2 text-xs text-amber-200 flex items-center justify-between shrink-0 z-40 animate-pulse">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Inactivity Warning:</strong> Studio is not live yet. Disconnecting in{" "}
+              <strong className="font-mono text-white underline">
+                {Math.floor(idleSeconds / 60)}:{(idleSeconds % 60).toString().padStart(2, "0")}
+              </strong>{" "}
+              to save LiveKit Cloud minutes.
+            </span>
+          </div>
+          <Button variant="secondary" size="sm" onClick={handleExtendIdleTime} className="h-6 px-2.5 text-[11px] border-amber-400/40 text-amber-300">
+            +5m Keep Studio Open
+          </Button>
+        </div>
+      )}
+
       {/* ─── Main Workspace ─────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden relative">
+        {/* Idle Disconnected Overlay */}
+        {isIdleDisconnected && (
+          <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-xl">
+              <Clock className="w-7 h-7" />
+            </div>
+            <h3 className="text-lg font-bold text-white tracking-tight">Studio Disconnected (Idle Protection)</h3>
+            <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+              To save your LiveKit Cloud resources, the studio was automatically paused after 5 minutes of inactivity without going live.
+            </p>
+            <Button variant="primary" size="default" onClick={handleReconnectIdle} className="px-5 shadow-lg shadow-indigo-500/20">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Reconnect Studio
+            </Button>
+          </div>
+        )}
         {/* Left Vertical Icon Bar */}
         <div className="w-12 sm:w-14 border-r border-white/5 bg-[#090910] flex flex-col items-center py-2 sm:py-3 gap-1.5 sm:gap-2 z-30 shrink-0">
           {[
