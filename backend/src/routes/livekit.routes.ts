@@ -34,10 +34,16 @@ router.post('/token', async (req: Request, res: Response, next: NextFunction): P
       return;
     }
 
+    const rawHost = process.env.LIVEKIT_URL || process.env.LIVEKIT_WS_URL || '';
+    const serverUrl = rawHost
+      ? rawHost.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://')
+      : undefined;
+
     res.status(200).json({
       success: true,
       data: {
         token: tokenResult.data,
+        serverUrl,
         roomName,
         identity: participantId,
         participantName,

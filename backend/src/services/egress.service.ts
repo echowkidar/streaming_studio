@@ -13,7 +13,8 @@ export class EgressService {
   private activeEgresses: Map<string, string>; // broadcastId -> egressId
 
   private constructor() {
-    const host = process.env.LIVEKIT_HTTP_URL || 'http://livekit:7880';
+    const rawHost = process.env.LIVEKIT_URL || process.env.LIVEKIT_HTTP_URL || process.env.LIVEKIT_HOST || 'http://livekit:7880';
+    const host = rawHost.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://');
     const apiKey = process.env.LIVEKIT_API_KEY || 'APIxxxxxxxxxx';
     const apiSecret = process.env.LIVEKIT_API_SECRET || 'CHANGE_ME_LIVEKIT_SECRET';
 

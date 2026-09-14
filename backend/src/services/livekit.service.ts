@@ -27,7 +27,8 @@ export class LiveKitService {
   private readonly host: string;
 
   constructor() {
-    this.host = process.env.LIVEKIT_HTTP_URL || process.env.LIVEKIT_HOST || 'http://livekit:7880';
+    const rawHost = process.env.LIVEKIT_URL || process.env.LIVEKIT_HTTP_URL || process.env.LIVEKIT_HOST || 'http://livekit:7880';
+    this.host = rawHost.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://');
     this.apiKey = process.env.LIVEKIT_API_KEY || 'APIxxxxxxxxxx';
     this.apiSecret = process.env.LIVEKIT_API_SECRET || 'CHANGE_ME_LIVEKIT_SECRET';
 

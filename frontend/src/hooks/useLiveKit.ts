@@ -20,6 +20,7 @@ interface UseLiveKitOptions {
   roomName: string;
   participantName: string;
   identity?: string;
+  serverUrl?: string;
   role?: "HOST" | "GUEST" | "CO_HOST";
   autoConnect?: boolean;
 }
@@ -28,6 +29,7 @@ export function useLiveKit({
   roomName,
   participantName,
   identity,
+  serverUrl: customServerUrl,
   role = "GUEST",
   autoConnect = true,
 }: UseLiveKitOptions) {
@@ -309,9 +311,15 @@ export function useLiveKit({
 
       const token = data.data.token;
 
-      // 2. Resolve WebSocket URL for LiveKit
+      // 2. Resolve WebSocket URL for LiveKit (Cloud URL or self-hosted)
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const livekitWsUrl = `${protocol}//${window.location.host}/livekit/`;
+      const defaultLocalWs = `${protocol}//${window.location.host}/livekit/`;
+      const livekitWsUrl =
+        customServerUrl ||
+        data.data?.serverUrl ||
+        process.env.NEXT_PUBLIC_LIVEKIT_URL ||
+        process.env.NEXT_PUBLIC_LIVEKIT_WS_URL ||
+        defaultLocalWs;
 
       // 3. Create LiveKit Room with resilient config & echo cancellation
       const newRoom = new Room({
