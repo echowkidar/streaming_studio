@@ -31,7 +31,7 @@ export function StreamMonitor({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [fps, setFps] = useState(30);
-  const [bitrate, setBitrate] = useState("2.5 Mbps");
+  const [bitrate, setBitrate] = useState("3.0 Mbps");
   const [streamTime, setStreamTime] = useState("00:00:00");
   const [chunksSent, setChunksSent] = useState(0);
   const [bytesSent, setBytesSent] = useState(0);

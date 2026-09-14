@@ -511,7 +511,7 @@ class StageBroadcaster {
       console.log(`[StageBroadcaster] Starting MediaRecorder with MIME: ${mimeType}`);
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: 1800000, // 1.8 Mbps clean 720p HD streaming without network choke
+        videoBitsPerSecond: 2800000, // 2.8 Mbps crisp 720p HD streaming
         audioBitsPerSecond: 128000,  // 128 kbps stereo AAC
       });
 
