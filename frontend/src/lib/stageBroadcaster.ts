@@ -25,6 +25,7 @@ interface CachedTileLayout {
   isLocal: boolean;
   isScreen: boolean;
   role: string;
+  fitMode?: string;
 }
 
 class StageBroadcaster {
@@ -580,6 +581,11 @@ class StageBroadcaster {
         const isLocal = tile.getAttribute("data-participant-local") === "true";
         const isScreen = tile.getAttribute("data-participant-screen") === "true";
         const role = tile.getAttribute("data-participant-role") || "";
+        const fitMode =
+          tile.getAttribute("data-participant-fit") ||
+          tile.querySelector("[data-participant-fit]")?.getAttribute("data-participant-fit") ||
+          (tile.querySelector("video") as HTMLVideoElement | null)?.style.objectFit ||
+          "cover";
 
         nextLayouts.push({
           element: tile,
@@ -596,6 +602,7 @@ class StageBroadcaster {
           isLocal,
           isScreen,
           role,
+          fitMode,
         });
       });
 
@@ -807,26 +814,57 @@ class StageBroadcaster {
         } else if (hasVideo && video) {
           const vRatio = video.videoWidth / video.videoHeight;
           const tRatio = w / h;
-          let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-          if (vRatio > tRatio) {
-            sw = video.videoHeight * tRatio;
-            sx = (video.videoWidth - sw) / 2;
-          } else {
-            sh = video.videoWidth / tRatio;
-            sy = (video.videoHeight - sh) / 2;
-          }
+          const isContain =
+            tile.fitMode === "contain" ||
+            tile.isScreen ||
+            (video.videoHeight > video.videoWidth * 1.05 && tile.fitMode !== "cover");
 
-          try {
-            if (tile.isLocal && !tile.isScreen) {
-              ctx.save();
-              ctx.translate(x + w, y);
-              ctx.scale(-1, 1);
-              ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
-              ctx.restore();
+          if (isContain) {
+            // Auto-adjust Fit / Pillarbox (StreamYard standard for vertical mobile phones & screen shares):
+            // Preserves 100% of the video without chopping off heads, chins, or content
+            let dw = w, dh = h, dx = x, dy = y;
+            if (vRatio > tRatio) {
+              dh = w / vRatio;
+              dy = y + (h - dh) / 2;
             } else {
-              ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+              dw = h * vRatio;
+              dx = x + (w - dw) / 2;
             }
-          } catch {}
+
+            try {
+              if (tile.isLocal && !tile.isScreen) {
+                ctx.save();
+                ctx.translate(dx + dw, dy);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, dw, dh);
+                ctx.restore();
+              } else {
+                ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, dx, dy, dw, dh);
+              }
+            } catch {}
+          } else {
+            // Fill / Cover mode: crop center to fill slot
+            let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+            if (vRatio > tRatio) {
+              sw = video.videoHeight * tRatio;
+              sx = (video.videoWidth - sw) / 2;
+            } else {
+              sh = video.videoWidth / tRatio;
+              sy = (video.videoHeight - sh) / 2;
+            }
+
+            try {
+              if (tile.isLocal && !tile.isScreen) {
+                ctx.save();
+                ctx.translate(x + w, y);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+                ctx.restore();
+              } else {
+                ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+              }
+            } catch {}
+          }
         } else {
           // Camera is OFF: Avatar Circle + Initials + "Camera Off"
           const centerX = x + w / 2;

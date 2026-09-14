@@ -51,8 +51,42 @@ export function VideoTrackView({
   } = useStudioStore();
 
   const tileId = String(id || name || "tile");
+
+  // Dynamic Orientation Detection (Auto-adjusts for mobile vertical vs horizontal phones, StreamYard standard)
+  const [detectedPortrait, setDetectedPortrait] = useState(false);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl) return;
+
+    const checkOrientation = () => {
+      if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        const isPortrait = videoEl.videoHeight > videoEl.videoWidth * 1.05;
+        setDetectedPortrait(isPortrait);
+      }
+    };
+
+    videoEl.addEventListener("loadedmetadata", checkOrientation);
+    videoEl.addEventListener("resize", checkOrientation);
+    checkOrientation();
+
+    const timer = setTimeout(checkOrientation, 350);
+
+    return () => {
+      clearTimeout(timer);
+      videoEl.removeEventListener("loadedmetadata", checkOrientation);
+      videoEl.removeEventListener("resize", checkOrientation);
+    };
+  }, [track, mediaStream]);
+
+  const explicitFitMode = tileTransforms[tileId]?.fitMode;
+  // If user hasn't explicitly set fitMode:
+  // Screen shares & vertical mobile phone streams automatically default to "contain" (safe fit, no cropping!)
+  // Horizontal cameras/phones default to "cover" (full frame fill)
+  const effectiveFitMode = explicitFitMode || (isScreen || detectedPortrait ? "contain" : "cover");
+
   const transform = tileTransforms[tileId] || {
-    fitMode: isScreen ? "contain" : "cover",
+    fitMode: effectiveFitMode,
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -61,7 +95,8 @@ export function VideoTrackView({
     flipV: false,
   };
 
-  const { fitMode, zoom, panX, panY, rotation, flipH, flipV } = transform;
+  const { zoom, panX, panY, rotation, flipH, flipV } = transform;
+  const fitMode = effectiveFitMode;
 
   // Drag-to-Pan State when zoomed in
   const [isDraggingPan, setIsDraggingPan] = useState(false);
@@ -121,7 +156,7 @@ export function VideoTrackView({
 
   // Transform Handlers
   const toggleFitMode = () => {
-    const next = fitMode === "contain" ? "cover" : "contain";
+    const next = effectiveFitMode === "contain" ? "cover" : "contain";
     setTileTransform(tileId, { fitMode: next });
   };
 
@@ -207,6 +242,8 @@ export function VideoTrackView({
   return (
     <div
       ref={containerRef}
+      data-participant-fit={fitMode}
+      data-participant-orientation={detectedPortrait ? "portrait" : "landscape"}
       onMouseDown={handlePanMouseDown}
       onMouseMove={handlePanMouseMove}
       onMouseUp={handlePanMouseUp}
