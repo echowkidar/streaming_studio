@@ -20,6 +20,8 @@ import {
   Radio,
   Clock,
   Shield,
+  Smartphone,
+  Tv,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -40,6 +42,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [step, setStep] = useState<"setup" | "stage">("setup");
+  const [mobileViewMode, setMobileViewMode] = useState<"fill" | "broadcast">("fill");
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -314,7 +317,8 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
             </div>
 
             {/* Stage Status Pill (Backstage vs On Stage) */}
-            <div className="flex items-center gap-2">
+            {/* Stage Status Pill & Mobile View Switcher */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {isGuestOnStage ? (
                 <div className="px-2.5 sm:px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-[10px] sm:text-xs font-semibold flex items-center gap-1.5 animate-pulse">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -326,6 +330,26 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   BACKSTAGE
                 </div>
               )}
+
+              {/* Mobile View Toggle: Fill Screen vs 16:9 Broadcast */}
+              <button
+                type="button"
+                onClick={() => setMobileViewMode((m) => (m === "fill" ? "broadcast" : "fill"))}
+                className="sm:hidden px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] text-slate-300 flex items-center gap-1 border border-white/10 transition-colors"
+                title={mobileViewMode === "fill" ? "Switch to 16:9 Broadcast View" : "Switch to Mobile Screen Fill"}
+              >
+                {mobileViewMode === "fill" ? (
+                  <>
+                    <Tv className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="font-semibold text-[10px]">16:9</span>
+                  </>
+                ) : (
+                  <>
+                    <Smartphone className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <span className="font-semibold text-[10px]">Fill</span>
+                  </>
+                )}
+              </button>
             </div>
 
             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -358,8 +382,15 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
           {/* Main Stage & Layout Area */}
           <div className="flex-1 p-2 sm:p-4 overflow-hidden flex flex-col items-center justify-center relative min-h-0">
-            {/* Fixed 16:9 Broadcast Stage Container */}
-            <div className="w-full aspect-video max-w-6xl max-h-full rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl flex flex-col justify-center mx-auto my-auto">
+            {/* Stage Container: Full Height Fill on Mobile (default) vs 16:9 Broadcast */}
+            <div
+              className={cn(
+                "rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl flex flex-col justify-center mx-auto my-auto transition-all duration-200",
+                mobileViewMode === "fill"
+                  ? "w-full flex-1 max-h-full sm:aspect-video sm:flex-initial sm:max-w-6xl"
+                  : "w-full aspect-video max-w-6xl max-h-full"
+              )}
+            >
               {liveParticipants.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-slate-400 gap-3">
                   <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -367,12 +398,12 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                 </div>
               ) : onStageParticipants.length === 0 ? (
                 /* Green Room Standby: All connected participants see each other */
-                <div className="w-full h-full p-3 sm:p-4 flex flex-col justify-between">
+                <div className="w-full h-full p-2.5 sm:p-4 flex flex-col justify-between min-h-0">
                   <div className="px-3 py-1.5 rounded-xl bg-indigo-950/70 border border-indigo-500/30 flex items-center justify-between shrink-0 mb-2">
                     <div className="flex items-center gap-2 text-xs text-indigo-200">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      <span>
-                        <strong className="text-white">Green Room Active:</strong> Host is preparing the live stage. You can see and talk with fellow speakers below.
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                      <span className="truncate">
+                        <strong className="text-white">Green Room:</strong> Host is preparing the live stage.
                       </span>
                     </div>
                     <span className="text-[11px] font-mono text-indigo-300 font-bold hidden sm:inline">
@@ -382,19 +413,29 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
                   <div
                     className={cn(
-                      "flex-1 grid gap-2.5 items-center justify-center min-h-0",
-                      liveParticipants.length === 1 && "grid-cols-1",
-                      liveParticipants.length === 2 && "grid-cols-2",
-                      liveParticipants.length >= 3 && "grid-cols-2 sm:grid-cols-3"
+                      "flex-1 grid gap-2 items-center justify-center min-h-0 w-full",
+                      mobileViewMode === "fill" ? (
+                        liveParticipants.length === 1
+                          ? "grid-cols-1"
+                          : liveParticipants.length === 2
+                          ? "grid-cols-1 grid-rows-2 sm:grid-cols-2 sm:grid-rows-1"
+                          : "grid-cols-2 auto-rows-fr sm:grid-cols-3"
+                      ) : (
+                        liveParticipants.length === 1
+                          ? "grid-cols-1"
+                          : liveParticipants.length === 2
+                          ? "grid-cols-2"
+                          : "grid-cols-2 sm:grid-cols-3"
+                      )
                     )}
                   >
                     {liveParticipants.map((p) => (
-                      <div key={p.id} className="w-full h-full min-h-0 min-w-0">
+                      <div key={p.id} className="w-full h-full min-h-0 min-w-0 rounded-xl overflow-hidden border border-white/10">
                         <VideoTrackView
                           id={p.id}
                           track={p.videoTrack}
                           audioTrack={p.audioTrack}
-                          name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
+                          name={p.name || "Guest"}
                           isSpeaking={p.isSpeaking}
                           micOn={p.micOn}
                           camOn={p.camOn}
@@ -406,50 +447,113 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   </div>
                 </div>
               ) : (
-                /* Live Broadcast Stage: On-stage participants with real-time sync of custom layout & bounds */
-                <div className="w-full h-full p-2 relative select-none">
-                  {onStageParticipants.map((p, idx) => {
-                    const defaultBounds = getDefaultSlotBounds(
-                      activeLayout,
-                      idx,
-                      onStageParticipants.length,
-                      layoutSplitRatio
-                    );
-                    const bounds =
-                      participantBounds[p.id] ||
-                      (p.isLocal && participantBounds["local-host"]) ||
-                      (p.isScreen && participantBounds["screen-share"]) ||
-                      participantBounds[`slot-${idx}`] ||
-                      defaultBounds;
-                    return (
-                      <div
-                        key={p.id}
-                        style={{
-                          position: "absolute",
-                          left: `${bounds.x}%`,
-                          top: `${bounds.y}%`,
-                          width: `${bounds.width}%`,
-                          height: `${bounds.height}%`,
-                          zIndex: bounds.zIndex || 10,
-                          transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
-                        }}
-                        className="rounded-2xl overflow-hidden border border-white/10"
-                      >
-                        <VideoTrackView
-                          id={p.id}
-                          track={p.videoTrack}
-                          audioTrack={p.audioTrack}
-                          name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
-                          isSpeaking={p.isSpeaking}
-                          micOn={p.micOn}
-                          camOn={p.camOn}
-                          isLocal={p.isLocal}
-                          role={p.role}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                /* Live Broadcast Stage: Mobile Fill View vs Broadcast Aspect-Ratio Stage */
+                <>
+                  {/* Mobile Screen-Fill View (sm:hidden) */}
+                  {mobileViewMode === "fill" && (
+                    <div className="w-full h-full flex flex-col sm:hidden p-1.5 gap-1.5 min-h-0">
+                      {onStageParticipants.length === 1 ? (
+                        <div className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                          <VideoTrackView
+                            id={onStageParticipants[0].id}
+                            track={onStageParticipants[0].videoTrack}
+                            audioTrack={onStageParticipants[0].audioTrack}
+                            name={onStageParticipants[0].name || "Guest"}
+                            isSpeaking={onStageParticipants[0].isSpeaking}
+                            micOn={onStageParticipants[0].micOn}
+                            camOn={onStageParticipants[0].camOn}
+                            isLocal={onStageParticipants[0].isLocal}
+                            role={onStageParticipants[0].role}
+                          />
+                        </div>
+                      ) : onStageParticipants.length === 2 ? (
+                        onStageParticipants.map((p) => (
+                          <div key={p.id} className="flex-1 w-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                            <VideoTrackView
+                              id={p.id}
+                              track={p.videoTrack}
+                              audioTrack={p.audioTrack}
+                              name={p.name || "Guest"}
+                              isSpeaking={p.isSpeaking}
+                              micOn={p.micOn}
+                              camOn={p.camOn}
+                              isLocal={p.isLocal}
+                              role={p.role}
+                            />
+                          </div>
+                        ))
+                      ) : (
+                        <div className="grid grid-cols-2 auto-rows-fr w-full h-full gap-1.5 min-h-0">
+                          {onStageParticipants.map((p) => (
+                            <div key={p.id} className="w-full h-full min-h-0 rounded-xl overflow-hidden border border-white/10">
+                              <VideoTrackView
+                                id={p.id}
+                                track={p.videoTrack}
+                                audioTrack={p.audioTrack}
+                                name={p.name || "Guest"}
+                                isSpeaking={p.isSpeaking}
+                                micOn={p.micOn}
+                                camOn={p.camOn}
+                                isLocal={p.isLocal}
+                                role={p.role}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Desktop / 16:9 Broadcast Stage: On-stage participants with real-time sync of custom layout & bounds */}
+                  <div
+                    className={cn(
+                      "w-full h-full p-2 relative select-none",
+                      mobileViewMode === "fill" ? "hidden sm:block" : "block"
+                    )}
+                  >
+                    {onStageParticipants.map((p, idx) => {
+                      const defaultBounds = getDefaultSlotBounds(
+                        activeLayout,
+                        idx,
+                        onStageParticipants.length,
+                        layoutSplitRatio
+                      );
+                      const bounds =
+                        participantBounds[p.id] ||
+                        (p.isLocal && participantBounds["local-host"]) ||
+                        (p.isScreen && participantBounds["screen-share"]) ||
+                        participantBounds[`slot-${idx}`] ||
+                        defaultBounds;
+                      return (
+                        <div
+                          key={p.id}
+                          style={{
+                            position: "absolute",
+                            left: `${bounds.x}%`,
+                            top: `${bounds.y}%`,
+                            width: `${bounds.width}%`,
+                            height: `${bounds.height}%`,
+                            zIndex: bounds.zIndex || 10,
+                            transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+                          }}
+                          className="rounded-2xl overflow-hidden border border-white/10"
+                        >
+                          <VideoTrackView
+                            id={p.id}
+                            track={p.videoTrack}
+                            audioTrack={p.audioTrack}
+                            name={p.name || "Guest"}
+                            isSpeaking={p.isSpeaking}
+                            micOn={p.micOn}
+                            camOn={p.camOn}
+                            isLocal={p.isLocal}
+                            role={p.role}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 
@@ -464,13 +568,13 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   {backstageParticipants.map((p) => (
                     <div
                       key={p.id}
-                      className="w-32 sm:w-40 aspect-video rounded-lg overflow-hidden border border-white/15 bg-black shrink-0 relative shadow-md"
+                      className="w-28 sm:w-40 aspect-video rounded-lg overflow-hidden border border-white/15 bg-black shrink-0 relative shadow-md"
                     >
                       <VideoTrackView
                         id={p.id}
                         track={p.videoTrack}
                         audioTrack={p.audioTrack}
-                        name={p.isLocal ? `${p.name || "Guest"} (You)` : (p.name || "Guest")}
+                        name={p.name || "Guest"}
                         isSpeaking={p.isSpeaking}
                         micOn={p.micOn}
                         camOn={p.camOn}

@@ -736,8 +736,9 @@ class StageBroadcaster {
           ctx.fillText("Camera Off", centerX, pillY);
         }
 
-        // Participant Name Pill
-        const displayName = `${tile.name}${tile.isLocal ? " (You)" : ""}`;
+        // Participant Name Pill (Clean name for broadcast stream, no '(You)')
+        const cleanName = (tile.name || "Guest").replace(/\s*\(You\)\s*/gi, "").trim();
+        const displayName = cleanName || "Guest";
         ctx.font = "bold 11px Inter, system-ui, sans-serif";
         const pillW = Math.min(180, displayName.length * 7 + 36);
         const pillH = 24;
