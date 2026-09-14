@@ -2,6 +2,7 @@ import express, { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
+import { RtmpStreamerService } from '../services/rtmp-streamer.service';
 
 const router = Router({ mergeParams: true });
 
@@ -204,7 +205,6 @@ router.post('/:broadcastId/state', async (req: Request, res: Response, next: Nex
 router.post('/:broadcastId/stream/start', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { destinationIds, roomName, directDestinations } = req.body;
-    const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
 
     const result = await streamer.startBroadcastStream(
@@ -231,24 +231,36 @@ router.post(
   (req: Request, res: Response, next: NextFunction): void => {
     try {
       const broadcastId = req.params.broadcastId;
-      const { RtmpStreamerService } = require('../services/rtmp-streamer.service');
       const streamer = RtmpStreamerService.getInstance();
 
-      if (Buffer.isBuffer(req.body) && req.body.length > 0) {
-        streamer.pushChunk(broadcastId, req.body);
-        res.status(200).json({ success: true });
+      const chunkBuffer = Buffer.isBuffer(req.body)
+        ? req.body
+        : typeof req.body === 'string'
+        ? Buffer.from(req.body)
+        : null;
+
+      if (chunkBuffer && chunkBuffer.length > 0) {
+        streamer.pushChunk(broadcastId, chunkBuffer);
+        res.status(200).json({ success: true, size: chunkBuffer.length });
         return;
       }
 
+      // Stream fallback if body parser did not buffer
+      const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => {
-        streamer.pushChunk(broadcastId, chunk);
+        chunks.push(chunk);
       });
 
       req.on('end', () => {
-        res.status(200).json({ success: true });
+        const total = Buffer.concat(chunks);
+        if (total.length > 0) {
+          streamer.pushChunk(broadcastId, total);
+        }
+        res.status(200).json({ success: true, size: total.length });
       });
     } catch (error) {
-      next(error);
+      console.error(`[Stream Chunk Error - ${req.params.broadcastId}]:`, error);
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
   }
 );
@@ -256,7 +268,6 @@ router.post(
 // POST /api/broadcasts/:broadcastId/stream/stop
 router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
     const streamer = RtmpStreamerService.getInstance();
     const success = await streamer.stopBroadcastStream(req.params.broadcastId);
     res.status(200).json({ success });

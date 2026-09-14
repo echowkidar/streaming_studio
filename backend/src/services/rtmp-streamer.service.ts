@@ -65,9 +65,9 @@ export class RtmpStreamerService extends EventEmitter {
     });
 
     proc.stderr?.on('data', (data) => {
-      const msg = data.toString();
-      if (msg.includes('error') || msg.includes('Error')) {
-        console.error(`[FFmpeg RTMP Error - ${broadcastId}]:`, msg);
+      const msg = data.toString().trim();
+      if (msg) {
+        console.log(`[FFmpeg RTMP - ${broadcastId}]:`, msg);
       }
     });
 
@@ -257,23 +257,29 @@ export class RtmpStreamerService extends EventEmitter {
    */
   public pushChunk(broadcastId: string, chunk: Buffer): boolean {
     const session = this.activeSessions.get(broadcastId);
-    if (!session || session.status !== 'LIVE') return false;
+    if (!session || session.status !== 'LIVE') {
+      console.warn(`[RTMP] pushChunk ignored: session "${broadcastId}" not found or status is "${session?.status}"`);
+      return false;
+    }
 
     // Cache initial WebM header for recovery
     if (!this.headerBuffers.has(broadcastId)) {
       this.headerBuffers.set(broadcastId, chunk);
+      console.log(`[RTMP] Received & cached initial WebM stream header (${chunk.length} bytes) for broadcast ${broadcastId}`);
     }
 
+    let written = 0;
     for (const proc of session.ffmpegProcesses) {
       if (proc.stdin && proc.stdin.writable && !proc.killed) {
         try {
           proc.stdin.write(chunk);
+          written++;
         } catch (e) {
           console.warn('Error writing chunk to FFmpeg:', e);
         }
       }
     }
-    return true;
+    return written > 0;
   }
 
   /**

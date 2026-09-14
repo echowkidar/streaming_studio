@@ -1060,10 +1060,11 @@ class StageBroadcaster {
           if (res.ok) {
             uploaded = true;
           } else {
+            console.error(`[StageBroadcaster] Chunk upload HTTP ${res.status}:`, await res.text().catch(() => ""));
             await new Promise((r) => setTimeout(r, 200));
           }
         } catch (err) {
-          console.warn(`[StageBroadcaster] Chunk upload retry #${retries}:`, err);
+          console.warn(`[StageBroadcaster] Chunk upload network retry #${retries}:`, err);
           await new Promise((r) => setTimeout(r, 200));
         }
       }
