@@ -60,11 +60,6 @@ class StageBroadcaster {
   private cachedOverlayUrl: string | null = null;
   private overlayImage: HTMLImageElement | null = null;
 
-  // A single cross-origin image/video makes a canvas permanently tainted and
-  // Chrome then rejects captureStream(). Cache the probe result per source so
-  // the 30fps compositor can safely skip unexportable assets at negligible cost.
-  private readonly originCleanSources = new WeakMap<object, boolean>();
-
   // Background Web Worker Clock (prevents tab throttling to 1 FPS when switching to YouTube Studio tab)
   private workerTimer: Worker | null = null;
   private workerBlobUrl: string | null = null;
@@ -230,33 +225,11 @@ class StageBroadcaster {
     this.animFrameId = requestAnimationFrame(render);
 
     // Background Web Worker Clock: Prevents Chrome from throttling/pausing loop to 1 FPS when switching tabs
-    try {
-      const workerCode = `
-        let timer = null;
-        self.onmessage = function(e) {
-          if (e.data === 'start') {
-            if (timer) clearInterval(timer);
-            timer = setInterval(function() {
-              self.postMessage('tick');
-            }, 33);
-          } else if (e.data === 'stop') {
-            if (timer) clearInterval(timer);
-            timer = null;
-          }
-        };
-      `;
-      const blob = new Blob([workerCode], { type: "application/javascript" });
-      this.workerBlobUrl = URL.createObjectURL(blob);
-      this.workerTimer = new Worker(this.workerBlobUrl);
-      this.workerTimer.onmessage = () => {
-        if (this.isBroadcasting) {
-          doRenderFrame(performance.now());
-        }
-      };
-      this.workerTimer.postMessage("start");
-    } catch (wErr) {
-      console.warn("[StageBroadcaster] Worker timer fallback:", wErr);
-    }
+    this.startWorkerClock(() => {
+      if (this.isBroadcasting) {
+        doRenderFrame(performance.now());
+      }
+    });
 
     // 5.5. Draw initial frame BEFORE captureStream so the track starts with valid non-black pixels
     this.renderStageFrame(container, WIDTH, HEIGHT, performance.now());
@@ -298,19 +271,7 @@ class StageBroadcaster {
       this.animFrameId = null;
     }
 
-    if (this.workerTimer) {
-      try {
-        this.workerTimer.postMessage("stop");
-        this.workerTimer.terminate();
-      } catch {}
-      this.workerTimer = null;
-    }
-    if (this.workerBlobUrl) {
-      try {
-        URL.revokeObjectURL(this.workerBlobUrl);
-      } catch {}
-      this.workerBlobUrl = null;
-    }
+    this.stopWorkerClock();
 
     if (this.audioCtx) {
       try {
@@ -329,6 +290,65 @@ class StageBroadcaster {
     this.cachedOverlayUrl = null;
     this.overlayImage = null;
     console.log("[StageBroadcaster] Stage composite stopped and resources freed.");
+  }
+
+  /**
+   * Dedicated Web Worker clock: Chrome aggressively throttles timers (requestAnimationFrame to 0 FPS,
+   * setInterval to 1 FPS) in background or unfocused tabs. Web Workers run in a separate thread and are
+   * immune to background tab throttling, ensuring a steady 30 FPS stream even when user switches to YouTube Studio.
+   */
+  private startWorkerClock(onTick: () => void) {
+    this.stopWorkerClock();
+    try {
+      const workerCode = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (timer) clearInterval(timer);
+            timer = setInterval(function() {
+              self.postMessage('tick');
+            }, 33);
+          } else if (e.data === 'stop') {
+            if (timer) clearInterval(timer);
+            timer = null;
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: "application/javascript" });
+      this.workerBlobUrl = URL.createObjectURL(blob);
+      this.workerTimer = new Worker(this.workerBlobUrl);
+      this.workerTimer.onmessage = () => {
+        onTick();
+      };
+      this.workerTimer.postMessage("start");
+      console.log("[StageBroadcaster] Web Worker background 30 FPS clock active.");
+    } catch (err) {
+      console.warn("[StageBroadcaster] Web Worker clock unavailable, using interval fallback:", err);
+      if (this.bgIntervalId) clearInterval(this.bgIntervalId);
+      this.bgIntervalId = setInterval(() => {
+        onTick();
+      }, 33);
+    }
+  }
+
+  private stopWorkerClock() {
+    if (this.workerTimer) {
+      try {
+        this.workerTimer.postMessage("stop");
+        this.workerTimer.terminate();
+      } catch {}
+      this.workerTimer = null;
+    }
+    if (this.workerBlobUrl) {
+      try {
+        URL.revokeObjectURL(this.workerBlobUrl);
+      } catch {}
+      this.workerBlobUrl = null;
+    }
+    if (this.bgIntervalId) {
+      clearInterval(this.bgIntervalId);
+      this.bgIntervalId = null;
+    }
   }
 
   /**
@@ -422,50 +442,45 @@ class StageBroadcaster {
     // 4. Initial layout snapshot
     this.updateLayoutCache(container, WIDTH, HEIGHT);
 
-    // 5. Start Throttled 30 FPS Canvas Render Loop
+    // 5. Start Resilient 30 FPS Canvas Render Loop (Dual clock: VSync rAF + Web Worker background clock)
     this.lastTickerTime = performance.now();
     this.lastFrameTime = performance.now();
 
-    const render = (time: number) => {
+    const doRenderFrame = (now: number) => {
       if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
 
-      // Throttle strictly to 30 FPS to prevent GPU/CPU saturation
-      const elapsed = time - this.lastFrameTime;
+      const elapsed = now - this.lastFrameTime;
       if (elapsed >= this.FRAME_INTERVAL) {
-        this.lastFrameTime = time - (elapsed % this.FRAME_INTERVAL);
+        this.lastFrameTime = now - (elapsed % this.FRAME_INTERVAL);
 
         // Refresh layout snapshot every 250ms (never every frame to avoid layout thrashing)
-        if (time - this.lastLayoutCacheTime > 250) {
-          this.updateLayoutCache(container, WIDTH, HEIGHT);
-          this.lastLayoutCacheTime = time;
-        }
-
-        this.renderStageFrame(container, WIDTH, HEIGHT, time);
-      }
-
-      this.animFrameId = requestAnimationFrame(render);
-    };
-
-    this.animFrameId = requestAnimationFrame(render);
-
-    // 5b. Resilient Dual-Clock: Backup interval timer (ensures 30fps rendering even when user switches to YouTube tab or screenshare)
-    if (this.bgIntervalId) clearInterval(this.bgIntervalId);
-    this.bgIntervalId = setInterval(() => {
-      if (!this.isBroadcasting || !this.ctx || !this.canvas) {
-        if (this.bgIntervalId) clearInterval(this.bgIntervalId);
-        return;
-      }
-      const now = performance.now();
-      // If requestAnimationFrame was paused/throttled by browser (>45ms), trigger render immediately
-      if (now - this.lastFrameTime >= 40) {
-        this.lastFrameTime = now;
         if (now - this.lastLayoutCacheTime > 250) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
+          this.refreshAudioConnections();
           this.lastLayoutCacheTime = now;
         }
+
         this.renderStageFrame(container, WIDTH, HEIGHT, now);
       }
-    }, 33);
+    };
+
+    // Foreground VSync Loop
+    const render = (time: number) => {
+      if (!this.isBroadcasting) return;
+      doRenderFrame(time);
+      this.animFrameId = requestAnimationFrame(render);
+    };
+    this.animFrameId = requestAnimationFrame(render);
+
+    // Background Web Worker Clock (Unthrottled by Chrome when tab is in background or minimized)
+    this.startWorkerClock(() => {
+      if (this.isBroadcasting) {
+        doRenderFrame(performance.now());
+      }
+    });
+
+    // Draw initial frame immediately BEFORE captureStream
+    this.renderStageFrame(container, WIDTH, HEIGHT, performance.now());
 
     // 6. Combine Video Track from Canvas + Audio Track from Web Audio Destination
     try {
@@ -658,28 +673,38 @@ class StageBroadcaster {
 
     try {
       // ─────────────────────────────────────────────────────────────
-    // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
-    // ─────────────────────────────────────────────────────────────
-    const bgVideo = container.querySelector("video.object-cover") as HTMLVideoElement | null;
-    const drewVideoBackground = Boolean(
-      bgVideo && bgVideo.readyState >= 2 && this.drawOriginSafe(ctx, bgVideo, 0, 0, W, H)
-    );
-    if (!drewVideoBackground && store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
-      if (this.cachedBgUrl !== store.activeBackgroundUrl) {
-        this.cachedBgUrl = store.activeBackgroundUrl;
-        this.bgImage = new Image();
-        this.bgImage.crossOrigin = "anonymous";
-        this.bgImage.src = store.activeBackgroundUrl;
+      // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
+      // ─────────────────────────────────────────────────────────────
+      const bgVideo = container.querySelector("video.object-cover") as HTMLVideoElement | null;
+      let drewVideoBackground = false;
+      if (bgVideo && bgVideo.readyState >= 2) {
+        try {
+          ctx.drawImage(bgVideo, 0, 0, W, H);
+          drewVideoBackground = true;
+        } catch {}
       }
-      if (this.bgImage && this.bgImage.complete && this.bgImage.naturalWidth > 0 && this.drawOriginSafe(ctx, this.bgImage, 0, 0, W, H)) {
-      } else {
+      if (!drewVideoBackground && store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
+        if (this.cachedBgUrl !== store.activeBackgroundUrl) {
+          this.cachedBgUrl = store.activeBackgroundUrl;
+          this.bgImage = new Image();
+          this.bgImage.crossOrigin = "anonymous";
+          this.bgImage.src = store.activeBackgroundUrl;
+        }
+        if (this.bgImage && this.bgImage.complete && this.bgImage.naturalWidth > 0) {
+          try {
+            ctx.drawImage(this.bgImage, 0, 0, W, H);
+          } catch {
+            ctx.fillStyle = "#07070d";
+            ctx.fillRect(0, 0, W, H);
+          }
+        } else {
+          ctx.fillStyle = "#07070d";
+          ctx.fillRect(0, 0, W, H);
+        }
+      } else if (!drewVideoBackground) {
         ctx.fillStyle = "#07070d";
         ctx.fillRect(0, 0, W, H);
       }
-    } else if (!drewVideoBackground) {
-      ctx.fillStyle = "#07070d";
-      ctx.fillRect(0, 0, W, H);
-    }
 
     // ─────────────────────────────────────────────────────────────
     // 2. Draw All Stage Tiles from Cached Layouts (Zero DOM Thrashing)
@@ -712,7 +737,9 @@ class StageBroadcaster {
             dw = h * vRatio;
             dx = x + (w - dw) / 2;
           }
-          this.drawOriginSafe(ctx, mediaVideo, dx, dy, dw, dh);
+          try {
+            ctx.drawImage(mediaVideo, dx, dy, dw, dh);
+          } catch {}
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
           const tRatio = w / h;
@@ -724,7 +751,9 @@ class StageBroadcaster {
             dw = h * iRatio;
             dx = x + (w - dw) / 2;
           }
-          this.drawOriginSafe(ctx, mediaImg, dx, dy, dw, dh);
+          try {
+            ctx.drawImage(mediaImg, dx, dy, dw, dh);
+          } catch {}
         }
 
         // Media Name Pill
@@ -763,7 +792,9 @@ class StageBroadcaster {
         const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
 
         if (hasChroma && canvas) {
-          this.drawOriginSafe(ctx, canvas, x, y, w, h);
+          try {
+            ctx.drawImage(canvas, x, y, w, h);
+          } catch {}
         } else if (hasVideo && video) {
           const vRatio = video.videoWidth / video.videoHeight;
           const tRatio = w / h;
@@ -776,15 +807,17 @@ class StageBroadcaster {
             sy = (video.videoHeight - sh) / 2;
           }
 
-          if (tile.isLocal && !tile.isScreen) {
-            ctx.save();
-            ctx.translate(x + w, y);
-            ctx.scale(-1, 1);
-            this.drawOriginSafe(ctx, video, sx, sy, sw, sh, 0, 0, w, h);
-            ctx.restore();
-          } else {
-            this.drawOriginSafe(ctx, video, sx, sy, sw, sh, x, y, w, h);
-          }
+          try {
+            if (tile.isLocal && !tile.isScreen) {
+              ctx.save();
+              ctx.translate(x + w, y);
+              ctx.scale(-1, 1);
+              ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+              ctx.restore();
+            } else {
+              ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+            }
+          } catch {}
         } else {
           // Camera is OFF: Avatar Circle + Initials + "Camera Off"
           const centerX = x + w / 2;
@@ -935,9 +968,13 @@ class StageBroadcaster {
         const imgEl = overlayEl?.querySelector("img") as HTMLImageElement | null;
 
         if (vidEl && vidEl.readyState >= 2) {
-          this.drawOriginSafe(ctx, vidEl, ox, oy, ow, oh);
+          try {
+            ctx.drawImage(vidEl, ox, oy, ow, oh);
+          } catch {}
         } else if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
-          this.drawOriginSafe(ctx, imgEl, ox, oy, ow, oh);
+          try {
+            ctx.drawImage(imgEl, ox, oy, ow, oh);
+          } catch {}
         } else {
           if (this.cachedOverlayUrl !== overlay.url) {
             this.cachedOverlayUrl = overlay.url;
@@ -946,7 +983,9 @@ class StageBroadcaster {
             this.overlayImage.src = overlay.url;
           }
           if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
-            this.drawOriginSafe(ctx, this.overlayImage, ox, oy, ow, oh);
+            try {
+              ctx.drawImage(this.overlayImage, ox, oy, ow, oh);
+            } catch {}
           }
         }
 
@@ -1094,50 +1133,6 @@ class StageBroadcaster {
     }
   }
 
-  /**
-   * Draw only sources that can be exported by Canvas. A probe canvas isolates
-   * CORS failures; the program canvas therefore remains usable for WebRTC.
-   */
-  private drawOriginSafe(
-    ctx: CanvasRenderingContext2D,
-    source: CanvasImageSource,
-    ...coords: number[]
-  ): boolean {
-    const key = source as unknown as object;
-    let isClean = this.originCleanSources.get(key);
-
-    if (isClean === undefined) {
-      try {
-        const probe = document.createElement("canvas");
-        probe.width = 1;
-        probe.height = 1;
-        const probeCtx = probe.getContext("2d", { willReadFrequently: true });
-        if (!probeCtx) return false;
-        probeCtx.drawImage(source, 0, 0, 1, 1);
-        probeCtx.getImageData(0, 0, 1, 1);
-        isClean = true;
-      } catch {
-        isClean = false;
-        console.warn("[StageBroadcaster] Skipping cross-origin asset in broadcast output.");
-      }
-      this.originCleanSources.set(key, isClean);
-    }
-
-    if (!isClean) return false;
-
-    try {
-      if (coords.length === 4) {
-        ctx.drawImage(source, coords[0], coords[1], coords[2], coords[3]);
-      } else if (coords.length === 8) {
-        ctx.drawImage(source, coords[0], coords[1], coords[2], coords[3], coords[4], coords[5], coords[6], coords[7]);
-      } else {
-        return false;
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   private drawRoundedRect(
     ctx: CanvasRenderingContext2D,
@@ -1239,10 +1234,7 @@ class StageBroadcaster {
       this.audioCtx = null;
     }
 
-    if (this.bgIntervalId) {
-      clearInterval(this.bgIntervalId);
-      this.bgIntervalId = null;
-    }
+    this.stopWorkerClock();
 
     if (this.canvas && this.canvas.parentElement) {
       this.canvas.remove();
