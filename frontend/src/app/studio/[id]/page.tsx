@@ -220,6 +220,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   }, [lkScreen]);
 
   const handleGoLive = async (destinationIds: string[]) => {
+    // 0. Immediately activate Web Audio context on user gesture
+    stageBroadcaster.ensureAudioContext();
+
     try {
       // 1. Gather any direct destinations from local custom storage
       let directDestinations: Array<{ rtmpUrl: string; streamKey?: string }> = [];

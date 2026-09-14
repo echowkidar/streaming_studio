@@ -71,6 +71,23 @@ class StageBroadcaster {
   // Tracks for LiveKit WebRTC transmission
   private activeVideoTrack: MediaStreamTrack | null = null;
   private activeAudioTrack: MediaStreamTrack | null = null;
+  private bgIntervalId: NodeJS.Timeout | null = null;
+
+  public ensureAudioContext(): void {
+    try {
+      if (!this.audioCtx) {
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioCtx = new AudioContextClass();
+      }
+      if (this.audioCtx.state === "suspended") {
+        this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume error:", e));
+      }
+    } catch (e) {
+      console.warn("[StageBroadcaster] AudioContext init error:", e);
+    }
+  }
 
   public isStreaming(): boolean {
     return this.isBroadcasting;
@@ -314,8 +331,8 @@ class StageBroadcaster {
    */
   public async start(stageElement: HTMLElement | null, broadcastId: string): Promise<boolean> {
     if (this.isBroadcasting) {
-      console.warn("[StageBroadcaster] Already broadcasting");
-      return true;
+      console.warn("[StageBroadcaster] Resetting active broadcast before starting new session");
+      this.stop();
     }
 
     const container = stageElement || document.getElementById("livestudio-stage-container");
@@ -335,6 +352,19 @@ class StageBroadcaster {
     this.canvas = document.createElement("canvas");
     this.canvas.width = WIDTH;
     this.canvas.height = HEIGHT;
+    this.canvas.style.position = "fixed";
+    this.canvas.style.left = "-9999px";
+    this.canvas.style.top = "-9999px";
+    this.canvas.style.width = "1280px";
+    this.canvas.style.height = "720px";
+    this.canvas.style.pointerEvents = "none";
+    this.canvas.style.opacity = "0";
+    this.canvas.id = "livestudio-composite-render-canvas";
+    if (typeof document !== "undefined" && document.body) {
+      const oldCanvas = document.getElementById("livestudio-composite-render-canvas");
+      if (oldCanvas) oldCanvas.remove();
+      document.body.appendChild(this.canvas);
+    }
     this.ctx = this.canvas.getContext("2d", { alpha: false });
 
     if (!this.ctx) {
@@ -345,39 +375,38 @@ class StageBroadcaster {
 
     // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
     try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioCtx = new AudioContextClass();
-      if (this.audioCtx.state === "suspended") {
-        this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume warning:", e));
-      }
-      this.audioDestination = this.audioCtx.createMediaStreamDestination();
-
-      // Continuous gentle carrier (amplitude 0.0002) to guarantee active stereo audio packets 24/7 without silence suppression
-      const sampleRate = this.audioCtx.sampleRate || 48000;
-      const bufferSize = sampleRate * 2;
-      const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
-      for (let ch = 0; ch < 2; ch++) {
-        const channelData = noiseBuffer.getChannelData(ch);
-        for (let i = 0; i < bufferSize; i++) {
-          channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+      this.ensureAudioContext();
+      if (this.audioCtx) {
+        if (this.audioCtx.state === "suspended") {
+          await this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume error:", e));
         }
+        this.audioDestination = this.audioCtx.createMediaStreamDestination();
+
+        // Continuous gentle carrier (amplitude 0.0002) to guarantee active stereo audio packets 24/7 without silence suppression
+        const sampleRate = this.audioCtx.sampleRate || 48000;
+        const bufferSize = sampleRate * 2;
+        const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+          const channelData = noiseBuffer.getChannelData(ch);
+          for (let i = 0; i < bufferSize; i++) {
+            channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+          }
+        }
+        const carrier = this.audioCtx.createBufferSource();
+        carrier.buffer = noiseBuffer;
+        carrier.loop = true;
+        carrier.connect(this.audioDestination);
+
+        // Route at inaudible volume to speakers to keep browser tab active
+        try {
+          const bgKeepAlive = this.audioCtx.createGain();
+          bgKeepAlive.gain.value = 0.00001;
+          carrier.connect(bgKeepAlive);
+          bgKeepAlive.connect(this.audioCtx.destination);
+        } catch {}
+
+        carrier.start();
       }
-      const carrier = this.audioCtx.createBufferSource();
-      carrier.buffer = noiseBuffer;
-      carrier.loop = true;
-      carrier.connect(this.audioDestination);
-
-      // Route at inaudible volume to speakers to keep browser tab active
-      try {
-        const bgKeepAlive = this.audioCtx.createGain();
-        bgKeepAlive.gain.value = 0.00001;
-        carrier.connect(bgKeepAlive);
-        bgKeepAlive.connect(this.audioCtx.destination);
-      } catch {}
-
-      carrier.start();
     } catch (audioErr) {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
     }
@@ -414,6 +443,25 @@ class StageBroadcaster {
 
     this.animFrameId = requestAnimationFrame(render);
 
+    // 5b. Resilient Dual-Clock: Backup interval timer (ensures 30fps rendering even when user switches to YouTube tab or screenshare)
+    if (this.bgIntervalId) clearInterval(this.bgIntervalId);
+    this.bgIntervalId = setInterval(() => {
+      if (!this.isBroadcasting || !this.ctx || !this.canvas) {
+        if (this.bgIntervalId) clearInterval(this.bgIntervalId);
+        return;
+      }
+      const now = performance.now();
+      // If requestAnimationFrame was paused/throttled by browser (>45ms), trigger render immediately
+      if (now - this.lastFrameTime >= 40) {
+        this.lastFrameTime = now;
+        if (now - this.lastLayoutCacheTime > 250) {
+          this.updateLayoutCache(container, WIDTH, HEIGHT);
+          this.lastLayoutCacheTime = now;
+        }
+        this.renderStageFrame(container, WIDTH, HEIGHT, now);
+      }
+    }, 33);
+
     // 6. Combine Video Track from Canvas + Audio Track from Web Audio Destination
     try {
       const canvasStream = this.canvas.captureStream(30);
@@ -449,6 +497,7 @@ class StageBroadcaster {
 
       this.mediaRecorder.ondataavailable = (e: BlobEvent) => {
         if (e.data && e.data.size > 0 && this.activeBroadcastId) {
+          console.log(`[StageBroadcaster] WebM Chunk emitted (${e.data.size} bytes) for ${this.activeBroadcastId}`);
           this.enqueueChunk(e.data);
         }
       };
@@ -1138,6 +1187,15 @@ class StageBroadcaster {
         // ignore
       }
       this.audioCtx = null;
+    }
+
+    if (this.bgIntervalId) {
+      clearInterval(this.bgIntervalId);
+      this.bgIntervalId = null;
+    }
+
+    if (this.canvas && this.canvas.parentElement) {
+      this.canvas.remove();
     }
 
     this.connectedAudioTracks.clear();

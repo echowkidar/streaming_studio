@@ -3,6 +3,7 @@ import { Radio, Youtube, Twitch, Facebook, Globe, Check, AlertCircle, Plus, Penc
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { stageBroadcaster } from "@/lib/stageBroadcaster";
 
 interface Destination {
   id: string;
@@ -57,7 +58,32 @@ export function GoLiveModal({
   const saveLocalDestinations = (items: Destination[]) => {
     if (typeof window === "undefined") return;
     try {
-      localStorage.setItem("livestudio_custom_destinations", JSON.stringify(items));
+      const existingRaw = localStorage.getItem("livestudio_custom_destinations");
+      const keyMap = new Map<string, string>();
+      if (existingRaw) {
+        try {
+          const parsed = JSON.parse(existingRaw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((d: Destination) => {
+              if (d.id && d.streamKey && !d.streamKey.includes("••••")) {
+                keyMap.set(d.id, d.streamKey);
+              }
+            });
+          }
+        } catch {}
+      }
+
+      const merged = items.map((d) => {
+        if (d.streamKey && d.streamKey.includes("••••")) {
+          const preservedKey = keyMap.get(d.id);
+          if (preservedKey) {
+            return { ...d, streamKey: preservedKey };
+          }
+        }
+        return d;
+      });
+
+      localStorage.setItem("livestudio_custom_destinations", JSON.stringify(merged));
     } catch {
       // ignore
     }
@@ -253,6 +279,7 @@ export function GoLiveModal({
     }
     try {
       setStarting(true);
+      stageBroadcaster.ensureAudioContext();
       await onGoLive(selectedIds);
       onClose();
     } catch (e) {
