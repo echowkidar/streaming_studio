@@ -220,6 +220,11 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   }, [lkScreen]);
 
   const handleGoLive = async (destinationIds: string[]) => {
+    if (isLive || stageBroadcaster.isStreaming()) {
+      console.warn("[Studio] Already live, ignoring duplicate Go Live request");
+      return;
+    }
+
     // 0. Immediately activate Web Audio context on user gesture
     stageBroadcaster.ensureAudioContext();
 

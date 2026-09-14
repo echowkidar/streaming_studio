@@ -331,8 +331,8 @@ class StageBroadcaster {
    */
   public async start(stageElement: HTMLElement | null, broadcastId: string): Promise<boolean> {
     if (this.isBroadcasting) {
-      console.warn("[StageBroadcaster] Resetting active broadcast before starting new session");
-      this.stop();
+      console.warn("[StageBroadcaster] Broadcast is already active, ignoring duplicate start request");
+      return true;
     }
 
     const container = stageElement || document.getElementById("livestudio-stage-container");
