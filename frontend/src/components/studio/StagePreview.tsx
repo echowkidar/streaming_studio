@@ -58,7 +58,16 @@ export const StagePreview: React.FC = () => {
     setSelectedParticipantId,
     bringToFront,
     sendToBack,
+    tileTransforms,
+    setTileTransform,
   } = useStudioStore();
+
+  const mediaFitMode = (tileTransforms["active-media"]?.fitMode as "contain" | "cover") || "contain";
+
+  const handleToggleMediaCrop = () => {
+    const next = mediaFitMode === "contain" ? "cover" : "contain";
+    setTileTransform("active-media", { fitMode: next });
+  };
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
   const hasAnyCustomBounds = Object.keys(participantBounds).length > 0;
@@ -705,6 +714,7 @@ export const StagePreview: React.FC = () => {
         data-stage-tile="true"
         data-stage-media="true"
         data-media-name={activeMedia.name}
+        data-participant-fit={mediaFitMode}
         className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group"
       >
         {activeMedia.type === "video" && (
@@ -715,7 +725,8 @@ export const StagePreview: React.FC = () => {
             controls
             playsInline
             crossOrigin="anonymous"
-            className="w-full h-full object-contain"
+            style={{ objectFit: mediaFitMode }}
+            className="w-full h-full"
           />
         )}
         {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
@@ -723,19 +734,50 @@ export const StagePreview: React.FC = () => {
             src={activeMedia.url}
             alt={activeMedia.name}
             crossOrigin="anonymous"
-            className="w-full h-full object-contain"
+            style={{ objectFit: mediaFitMode }}
+            className="w-full h-full"
           />
         )}
-        <div className="absolute top-3 left-3 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white">
+        <div className="absolute top-3 left-3 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-10">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="truncate max-w-[180px]">{activeMedia.name}</span>
         </div>
-        <button
-          onClick={() => setActiveMedia(null)}
-          className="absolute top-3 right-3 px-2 py-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white text-[10px] font-medium border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity z-20"
-        >
-          Remove Media
-        </button>
+
+        {/* Floating Quick Crop / Fit Button on Tile Hover */}
+        <div className="absolute top-3 right-3 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggleMediaCrop();
+            }}
+            className={cn(
+              "px-2.5 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-lg backdrop-blur-md transition-all",
+              mediaFitMode === "cover"
+                ? "bg-amber-500 text-black font-bold border-amber-400"
+                : "bg-black/80 hover:bg-black border-white/20 text-slate-200"
+            )}
+            title={
+              mediaFitMode === "cover"
+                ? "Currently: Cropped to Fill Window (Click to Fit 100%)"
+                : "Currently: Fit 100% in Window (Click to Crop & Fill Window)"
+            }
+          >
+            <Crop className="w-3 h-3" />
+            <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Crop"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveMedia(null);
+            }}
+            className="px-2 py-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white text-[10px] font-medium border border-white/20 transition-colors shadow-lg backdrop-blur-md"
+            title="Remove Media from Stage"
+          >
+            ✕
+          </button>
+        </div>
       </div>
     );
   };
@@ -846,6 +888,26 @@ export const StagePreview: React.FC = () => {
                 >
                   {mediaBounds.isLockedRatio !== false ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
                   <span>{mediaBounds.isLockedRatio !== false ? "16:9" : "Free"}</span>
+                </button>
+
+                {/* Crop vs Fit Toggle Button */}
+                <button
+                  type="button"
+                  onClick={handleToggleMediaCrop}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
+                    mediaFitMode === "cover"
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
+                      : "bg-white/10 text-slate-300 border-white/20"
+                  )}
+                  title={
+                    mediaFitMode === "cover"
+                      ? "Currently: Cropped to Fill Window (Click to Fit 100%)"
+                      : "Currently: Fit 100% in Window (Click to Crop & Fill)"
+                  }
+                >
+                  <Crop className="w-3 h-3 text-amber-400" />
+                  <span>{mediaFitMode === "cover" ? "Cropped" : "Fit"}</span>
                 </button>
 
                 {/* Center on Stage */}

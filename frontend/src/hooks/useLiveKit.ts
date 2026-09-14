@@ -389,6 +389,8 @@ export function useLiveKit({
                       activeLayout: currentStore.activeLayout,
                       layoutSplitRatio: currentStore.layoutSplitRatio,
                       participantBounds: currentStore.participantBounds || {},
+                      activeMedia: currentStore.activeMedia || null,
+                      tileTransforms: currentStore.tileTransforms || {},
                     });
                     newRoom.localParticipant
                       .publishData(new TextEncoder().encode(payload), { reliable: true })
@@ -451,6 +453,14 @@ export function useLiveKit({
                   }
                   if (data.participantBounds && typeof data.participantBounds === "object") {
                     useStudioStore.getState().setAllParticipantBounds(data.participantBounds);
+                  }
+                  if (data.activeMedia !== undefined) {
+                    useStudioStore.getState().setActiveMedia(data.activeMedia);
+                  }
+                  if (data.tileTransforms && typeof data.tileTransforms === "object") {
+                    Object.entries(data.tileTransforms).forEach(([tid, trans]: [string, any]) => {
+                      useStudioStore.getState().setTileTransform(tid, trans);
+                    });
                   }
                 } catch {
                   // ignore
@@ -624,19 +634,24 @@ export function useLiveKit({
       stageParticipantIds: (string | number)[],
       layout?: string,
       splitRatio?: number,
-      bounds?: Record<string, any>
+      bounds?: Record<string, any>,
+      media?: any
     ) => {
       if (!roomRef.current?.localParticipant || roomRef.current.state !== "connected") return;
       try {
         let activeL = layout;
         let splitR = splitRatio;
         let pBounds = bounds;
+        let activeM = media;
+        let tTransforms = undefined;
         if (typeof window !== "undefined") {
           try {
             const st = useStudioStore.getState();
             if (!activeL) activeL = st.activeLayout;
             if (splitR === undefined) splitR = st.layoutSplitRatio;
             if (!pBounds) pBounds = st.participantBounds;
+            if (activeM === undefined) activeM = st.activeMedia;
+            tTransforms = st.tileTransforms;
           } catch {
             // ignore
           }
@@ -648,6 +663,8 @@ export function useLiveKit({
           activeLayout: activeL,
           layoutSplitRatio: splitR ?? 50,
           participantBounds: pBounds || {},
+          activeMedia: activeM || null,
+          tileTransforms: tTransforms || {},
         });
         await roomRef.current.localParticipant
           .publishData(new TextEncoder().encode(payload), { reliable: true })

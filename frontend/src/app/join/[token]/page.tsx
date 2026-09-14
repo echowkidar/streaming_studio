@@ -42,6 +42,8 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
   const layoutSplitRatio = typeof rawSplit === "number" ? rawSplit : 50;
   const participantBounds = useStudioStore((s) => s.participantBounds) || {};
   const activeLayout = useStudioStore((s) => s.activeLayout) || "side-by-side";
+  const activeMedia = useStudioStore((s) => s.activeMedia);
+  const tileTransforms = useStudioStore((s) => s.tileTransforms) || {};
   const [displayName, setDisplayName] = useState("");
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -444,10 +446,20 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                     Live Stage Feed
                   </div>
                   {onStageParticipants.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center text-slate-500 gap-1.5 text-xs">
-                      <Tv className="w-5 h-5 text-slate-600" />
-                      <span>Host has not placed anyone on stage yet</span>
-                    </div>
+                    activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf") ? (
+                      <div className="w-full h-full min-h-0 flex items-center justify-center bg-black">
+                        {activeMedia.type === "video" ? (
+                          <video src={activeMedia.url} autoPlay playsInline controls className="w-full h-full object-contain" />
+                        ) : (
+                          <img src={activeMedia.url} alt={activeMedia.name} className="w-full h-full object-contain" />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-slate-500 gap-1.5 text-xs">
+                        <Tv className="w-5 h-5 text-slate-600" />
+                        <span>Host has not placed anyone on stage yet</span>
+                      </div>
+                    )
                   ) : onStageParticipants.length === 1 ? (
                     <div className="w-full h-full min-h-0">
                       <VideoTrackView
@@ -606,7 +618,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   <p className="text-xs">Connecting to live studio stream...</p>
                 </div>
-              ) : onStageParticipants.length === 0 ? (
+              ) : onStageParticipants.length === 0 && (!activeMedia || activeMedia.type === "audio") ? (
                 /* Green Room Standby: All connected participants see each other */
                 <div className="w-full h-full p-2.5 sm:p-4 flex flex-col justify-between min-h-0">
                   <div className="px-3 py-1.5 rounded-xl bg-indigo-950/70 border border-indigo-500/30 flex items-center justify-between shrink-0 mb-2">
@@ -766,13 +778,74 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                       mobileViewMode === "fill" ? "hidden sm:block" : "block"
                     )}
                   >
-                    {onStageParticipants.map((p, idx) => {
-                      const defaultBounds = getDefaultSlotBounds(
-                        activeLayout,
-                        idx,
-                        onStageParticipants.length,
-                        layoutSplitRatio
+                    {/* Synchronized Stage Active Media (Video, Slides, PDF, Image) */}
+                    {activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf") && (() => {
+                      const defaultMediaBounds = onStageParticipants.length === 0
+                        ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+                        : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
+                      const mBounds = participantBounds["active-media"] || defaultMediaBounds;
+                      const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || "contain";
+
+                      return (
+                        <div
+                          key="guest-active-media"
+                          style={{
+                            position: "absolute",
+                            left: `${mBounds.x}%`,
+                            top: `${mBounds.y}%`,
+                            width: `${mBounds.width}%`,
+                            height: `${mBounds.height}%`,
+                            zIndex: mBounds.zIndex || 10,
+                            transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+                          }}
+                          className="rounded-2xl overflow-hidden border border-indigo-500/40 bg-black/95 shadow-2xl flex items-center justify-center relative"
+                        >
+                          {activeMedia.type === "video" && (
+                            <video
+                              src={activeMedia.url}
+                              autoPlay
+                              playsInline
+                              controls
+                              style={{ objectFit: mediaFit }}
+                              className="w-full h-full"
+                            />
+                          )}
+                          {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
+                            <img
+                              src={activeMedia.url}
+                              alt={activeMedia.name}
+                              style={{ objectFit: mediaFit }}
+                              className="w-full h-full"
+                            />
+                          )}
+                          <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span className="truncate max-w-[150px]">{activeMedia.name}</span>
+                          </div>
+                        </div>
                       );
+                    })()}
+
+                    {onStageParticipants.map((p, idx) => {
+                      const hasVisualMedia = Boolean(
+                        activeMedia &&
+                          (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                      );
+                      const defaultBounds = hasVisualMedia
+                        ? {
+                            x: 72,
+                            y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, onStageParticipants.length))),
+                            width: 26,
+                            height: Math.min(92, Math.max(22, 88 / Math.max(1, onStageParticipants.length))),
+                            zIndex: 10,
+                            isLockedRatio: true,
+                          }
+                        : getDefaultSlotBounds(
+                            activeLayout,
+                            idx,
+                            onStageParticipants.length,
+                            layoutSplitRatio
+                          );
                       const bounds =
                         participantBounds[p.id] ||
                         (p.isLocal && participantBounds["local-host"]) ||
@@ -972,6 +1045,11 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
             </Button>
           </footer>
         </div>
+      )}
+
+      {/* Synchronized Background Audio Stream */}
+      {activeMedia && activeMedia.type === "audio" && (
+        <audio src={activeMedia.url} autoPlay loop />
       )}
     </div>
   );

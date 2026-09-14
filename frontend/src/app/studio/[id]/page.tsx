@@ -109,6 +109,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     moveToStage,
     moveToBackstage,
     removeParticipant,
+    activeMedia,
   } = useStudioStore();
 
   const compositeVideoPubRef = React.useRef<any>(null);
@@ -119,7 +120,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = Array.from(
       new Set([...participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id), id])
     );
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
   };
 
   const handleMoveToBackstage = (id: string | number) => {
@@ -127,23 +128,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = participants
       .filter((p) => p.status === "ON_STAGE" && String(p.id) !== String(id))
       .map((p) => p.id);
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
   };
 
-  // Sync layout and freeform bounds changes to all guests (debounced so mouse dragging never floods WebRTC channel)
+  // Sync layout, freeform bounds, and active media changes to all guests
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
         const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
-        if (onStageIds.length > 0) {
-          publishStageSync(onStageIds, activeLayout, layoutSplitRatio, participantBounds);
-        }
+        publishStageSync(onStageIds, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
       } catch (err) {
         console.warn("Stage sync broadcast error:", err);
       }
-    }, 350);
+    }, 150);
     return () => clearTimeout(timer);
-  }, [activeLayout, layoutSplitRatio, participantBounds]);
+  }, [activeLayout, layoutSplitRatio, participantBounds, participants, activeMedia, publishStageSync]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>(null);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -319,7 +318,6 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   }, [liveParticipants]);
 
   // Refresh broadcast audio when active media (video/audio) is played or stopped
-  const activeMedia = useStudioStore((s) => s.activeMedia);
   useEffect(() => {
     if (stageBroadcaster.isStreaming()) {
       const t = setTimeout(() => {
