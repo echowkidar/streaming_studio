@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, Lock, Eye, EyeOff, AlertCircle, Sparkles, X } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,7 +15,6 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showDemoBox, setShowDemoBox] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +23,6 @@ export default function LoginPage() {
       router.replace("/");
     }
   }, [user, token, router]);
-
-  const handleDemoFill = () => {
-    setEmail("admin@livestudio.io");
-    setPassword("AdminPassword123!");
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,20 +49,10 @@ export default function LoginPage() {
         });
         router.push("/");
       } else {
-        // Fallback for standalone demo mode
-        const isSuper = email.toLowerCase().trim() === "admin@livestudio.io";
-        setToken("mock-jwt-token");
-        setUser({
-          id: isSuper ? "usr-admin" : `usr-${Date.now()}`,
-          name: email.split("@")[0],
-          email,
-          role: isSuper ? "SUPER_ADMIN" : "USER",
-          createdAt: new Date().toISOString(),
-        });
-        router.push("/");
+        setError(res.error || "Invalid email or password. Please try again.");
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Invalid credentials. Please try again.");
+      setError(err instanceof Error ? err.message : "Invalid email or password. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -78,36 +62,6 @@ export default function LoginPage() {
     <div className="glass-strong rounded-2xl p-8 border-t border-white/20">
       <h2 className="text-2xl font-semibold text-white mb-2">Welcome back</h2>
       <p className="text-xs text-slate-400 mb-5">Sign in to your LiveStudio account</p>
-
-      {/* Demo Credentials Helper (Optional / Collapsible) */}
-      {showDemoBox && (
-        <div className="mb-5 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs flex items-center justify-between animate-in fade-in duration-200">
-          <div>
-            <p className="font-semibold text-indigo-300 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              Demo Admin Credentials
-            </p>
-            <p className="text-[11px] text-slate-400 mt-0.5 font-mono">admin@livestudio.io • AdminPassword123!</p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleDemoFill}
-              className="px-2.5 py-1 text-[11px] font-medium text-indigo-300 hover:text-white bg-indigo-500/20 hover:bg-indigo-500/30 rounded-lg transition-colors"
-            >
-              Auto-fill
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowDemoBox(false)}
-              className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              title="Close demo credentials banner"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {error && (
         <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
@@ -178,21 +132,9 @@ export default function LoginPage() {
           </label>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-6">
-          <Button variant="primary" type="submit" size="lg" isLoading={isLoading} className="w-full">
-            Sign In
-          </Button>
-          <Button
-            variant="secondary"
-            type="button"
-            size="lg"
-            onClick={handleDemoFill}
-            className="w-full border-indigo-500/30 text-indigo-300 hover:text-white hover:bg-indigo-500/20"
-          >
-            <Sparkles className="w-4 h-4 mr-2 text-indigo-400" />
-            Auto-fill Admin
-          </Button>
-        </div>
+        <Button variant="primary" type="submit" className="w-full mt-6" size="lg" isLoading={isLoading}>
+          Sign In
+        </Button>
       </form>
 
       <div className="mt-6">
@@ -224,19 +166,6 @@ export default function LoginPage() {
           Sign up
         </Link>
       </p>
-
-      {!showDemoBox && (
-        <div className="mt-4 pt-4 border-t border-white/5 text-center">
-          <button
-            type="button"
-            onClick={() => setShowDemoBox(true)}
-            className="text-[11px] text-slate-500 hover:text-indigo-400 transition-colors inline-flex items-center gap-1.5"
-          >
-            <Sparkles className="w-3 h-3 text-indigo-400" />
-            Show Demo Credentials (Testing)
-          </button>
-        </div>
-      )}
     </div>
   );
 }

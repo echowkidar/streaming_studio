@@ -65,16 +65,63 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
 router.post('/login', async (req: Request, res: Response): Promise<void> => {
   try {
     const data = LoginSchema.parse(req.body);
-    const isSuperAdmin = data.email.toLowerCase().trim() === 'admin@livestudio.io';
-    const mockId = isSuperAdmin ? 'usr_1' : 'usr_' + Date.now().toString(36);
+    const emailNorm = data.email.toLowerCase().trim();
+
+    // 1. Look up user in database
+    let user = await prisma.user.findUnique({
+      where: { email: emailNorm },
+    });
+
+    // If database was never seeded and default admin is logging in for the first time
+    if (!user && emailNorm === 'admin@livestudio.io' && data.password === 'AdminPassword123!') {
+      try {
+        const defaultHash = await bcrypt.hash('AdminPassword123!', 10);
+        user = await prisma.user.create({
+          data: {
+            email: 'admin@livestudio.io',
+            passwordHash: defaultHash,
+            name: 'Super Admin',
+            role: 'SUPER_ADMIN',
+          },
+        });
+      } catch {
+        // non-fatal
+      }
+    }
+
+    if (!user) {
+      res.status(401).json({ success: false, error: 'Invalid email or password' });
+      return;
+    }
+
+    // 2. Real cryptographic password verification
+    if (user.passwordHash && user.passwordHash !== 'seeded') {
+      const isValid = await bcrypt.compare(data.password, user.passwordHash);
+      if (!isValid) {
+        res.status(401).json({ success: false, error: 'Invalid email or password' });
+        return;
+      }
+    } else if (user.passwordHash === 'seeded') {
+      if (data.password !== 'AdminPassword123!') {
+        res.status(401).json({ success: false, error: 'Invalid email or password' });
+        return;
+      }
+      // Upgrade seed placeholder to real bcrypt hash
+      const upgradedHash = await bcrypt.hash('AdminPassword123!', 10);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: upgradedHash },
+      });
+    }
+
     res.status(200).json({
       success: true,
       data: {
         user: {
-          id: mockId,
-          email: data.email,
-          name: data.email.split('@')[0] || 'User',
-          role: isSuperAdmin ? 'SUPER_ADMIN' : 'USER',
+          id: user.id,
+          email: user.email,
+          name: user.name || user.email.split('@')[0] || 'User',
+          role: user.role,
         },
         tokens: {
           accessToken: 'jwt_' + Math.random().toString(36).substring(2),
