@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showDemoBox, setShowDemoBox] = useState(false);
+  const [showDemoBox, setShowDemoBox] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,9 +178,21 @@ export default function LoginPage() {
           </label>
         </div>
 
-        <Button variant="primary" type="submit" className="w-full mt-6" size="lg" isLoading={isLoading}>
-          Sign In
-        </Button>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-6">
+          <Button variant="primary" type="submit" size="lg" isLoading={isLoading} className="w-full">
+            Sign In
+          </Button>
+          <Button
+            variant="secondary"
+            type="button"
+            size="lg"
+            onClick={handleDemoFill}
+            className="w-full border-indigo-500/30 text-indigo-300 hover:text-white hover:bg-indigo-500/20"
+          >
+            <Sparkles className="w-4 h-4 mr-2 text-indigo-400" />
+            Auto-fill Admin
+          </Button>
+        </div>
       </form>
 
       <div className="mt-6">
