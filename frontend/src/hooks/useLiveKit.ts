@@ -23,6 +23,7 @@ interface UseLiveKitOptions {
   serverUrl?: string;
   role?: "HOST" | "GUEST" | "CO_HOST";
   autoConnect?: boolean;
+  inviteToken?: string;
 }
 
 export function useLiveKit({
@@ -32,6 +33,7 @@ export function useLiveKit({
   serverUrl: customServerUrl,
   role = "GUEST",
   autoConnect = true,
+  inviteToken,
 }: UseLiveKitOptions) {
   const [room, setRoom] = useState<Room | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -315,6 +317,7 @@ export function useLiveKit({
           participantName,
           identity,
           role,
+          inviteToken,
         }),
       });
 
@@ -560,7 +563,7 @@ export function useLiveKit({
       setIsConnecting(false);
       setIsConnected(false);
     }
-  }, [roomName, participantName, role, syncParticipants]);
+  }, [roomName, participantName, role, identity, inviteToken, syncParticipants]);
 
   const toggleCamera = useCallback(async () => {
     if (!roomRef.current) return false;

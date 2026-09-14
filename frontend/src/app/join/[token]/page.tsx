@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Mic,
   MicOff,
@@ -38,7 +39,7 @@ import { AudioMeter } from "@/components/studio/AudioMeter";
 import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds } from "@/lib/layoutBounds";
 
-export default function GuestJoinPage({ params }: { params: { token: string } }) {
+function GuestJoinContent({ params }: { params: { token: string } }) {
   const rawSplit = useStudioStore((s) => s.layoutSplitRatio);
   const layoutSplitRatio = typeof rawSplit === "number" ? rawSplit : 50;
   const participantBounds = useStudioStore((s) => s.participantBounds) || {};
@@ -61,9 +62,71 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
   const previewVideoRef = useRef<HTMLVideoElement>(null);
 
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams?.get("token") || "";
+
   // Normalize room name cleanly (strips any redundant repeated studio- prefixes)
   const cleanTokenId = params.token.replace(/^(studio-)+/, "").replace(/^guest-invite-token-/, "");
   const roomName = `studio-${cleanTokenId}`;
+
+  // StreamYard-Grade Invite Expiration & Host Waiting Gate
+  const [inviteStatus, setInviteStatus] = useState<{
+    loading: boolean;
+    valid: boolean;
+    reason?: string;
+    message?: string;
+    hostPresent: boolean;
+    broadcastTitle?: string;
+  }>({
+    loading: true,
+    valid: true,
+    hostPresent: false,
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkStatus = async () => {
+      try {
+        const queryParams = new URLSearchParams({ roomName });
+        if (inviteToken) queryParams.append("token", inviteToken);
+
+        const res = await fetch(`/api/livekit/invite-status?${queryParams.toString()}`);
+        const data = await res.json();
+
+        if (!isMounted) return;
+
+        if (data.success) {
+          setInviteStatus({
+            loading: false,
+            valid: data.valid !== false,
+            reason: data.reason,
+            message: data.message,
+            hostPresent: Boolean(data.hostPresent),
+            broadcastTitle: data.broadcastTitle,
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to check invite status:", err);
+        if (isMounted) {
+          setInviteStatus((prev) => ({ ...prev, loading: false }));
+        }
+      }
+    };
+
+    checkStatus();
+
+    // If still in setup step and host is not present yet, poll every 3 seconds
+    let interval: NodeJS.Timeout | null = null;
+    if (step === "setup") {
+      interval = setInterval(checkStatus, 3000);
+    }
+
+    return () => {
+      isMounted = false;
+      if (interval) clearInterval(interval);
+    };
+  }, [roomName, inviteToken, step]);
 
   // LiveKit hook activated when guest enters stage
   const {
@@ -85,6 +148,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
     participantName: displayName || "Guest",
     role: "GUEST",
     autoConnect: step === "stage",
+    inviteToken,
   });
 
   // Step 1: Request real browser camera/mic for local hardware test
@@ -143,7 +207,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim()) return;
+    if (!displayName.trim() || !inviteStatus.hostPresent) return;
 
     if (localStream) {
       localStream.getTracks().forEach((t) => t.stop());
@@ -257,6 +321,45 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
     connect();
   };
 
+  // StreamYard-Grade Invite Revoked / Expired / Ended Screen
+  if (!inviteStatus.loading && !inviteStatus.valid) {
+    return (
+      <div className="min-h-screen w-screen bg-[#07070b] flex flex-col items-center justify-center p-6 text-slate-200 select-none">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0e0e17]/95 backdrop-blur-xl p-6 sm:p-8 text-center shadow-2xl space-y-5">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-xl">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold text-white tracking-tight">
+              {inviteStatus.reason === "REVOKED" ? "Invite Link Expired" : "Broadcast Has Ended"}
+            </h2>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              {inviteStatus.message ||
+                (inviteStatus.reason === "REVOKED"
+                  ? "This guest invite link has been reset or revoked by the studio host. Please ask the host for an updated invite link."
+                  : "This live broadcast has ended. The studio is no longer accepting guest participants.")}
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="lg"
+            className="w-full"
+            onClick={() => {
+              if (typeof window !== "undefined" && window.history.length > 1) {
+                window.history.back();
+              } else {
+                window.location.href = "/";
+              }
+            }}
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Return to Homepage
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-screen bg-[#07070b] flex flex-col text-slate-200 select-none overflow-hidden">
       {/* Background Ambient Glow */}
@@ -366,6 +469,21 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                 </p>
               )}
 
+              {/* Host Waiting Gate Advisory */}
+              {!inviteStatus.hostPresent && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center gap-3 text-left">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+                    <Clock className="w-4 h-4 animate-spin" />
+                  </div>
+                  <div className="min-w-0 text-xs">
+                    <div className="font-semibold text-amber-200">Waiting for host to enter studio...</div>
+                    <div className="text-[11px] text-amber-300/80">
+                      The host is not in the studio yet. You can test your camera and mic now; backstage entry will unlock automatically as soon as the host enters.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Join Form */}
               <form onSubmit={handleJoin} className="space-y-3">
                 <Input
@@ -377,9 +495,24 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                   autoFocus
                 />
 
-                <Button variant="primary" size="lg" className="w-full h-11" type="submit">
-                  Enter Backstage
-                  <ArrowRight className="w-4 h-4 ml-2" />
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="w-full h-11"
+                  type="submit"
+                  disabled={!inviteStatus.hostPresent}
+                >
+                  {inviteStatus.hostPresent ? (
+                    <>
+                      Enter Backstage
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Waiting for Host to Enter...
+                    </>
+                  )}
                 </Button>
               </form>
             </div>
@@ -1348,5 +1481,22 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
         </div>
       )}
     </div>
+  );
+}
+
+export default function GuestJoinPage(props: { params: { token: string } }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#07070b] flex items-center justify-center text-slate-400">
+          <div className="flex items-center gap-2 text-xs">
+            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            <span>Connecting to studio...</span>
+          </div>
+        </div>
+      }
+    >
+      <GuestJoinContent {...props} />
+    </Suspense>
   );
 }

@@ -160,6 +160,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [isGoLiveModalOpen, setIsGoLiveModalOpen] = useState(false);
   const [liveDurationSec, setLiveDurationSec] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string>("");
+  const [isRegeneratingInvite, setIsRegeneratingInvite] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState(false);
 
   // Check auth session safely without breaking browser history
   useEffect(() => {
@@ -207,6 +210,11 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
         const statusData = statusRes ? await statusRes.json().catch(() => null) : null;
         const broadcastData = broadcastRes ? await broadcastRes.json().catch(() => null) : null;
+
+        const bSettings = (broadcastData?.data?.settings || {}) as Record<string, any>;
+        if (bSettings?.inviteToken) {
+          setInviteToken(bSettings.inviteToken);
+        }
 
         const isStreamActive =
           Boolean(statusData?.active) ||
@@ -469,8 +477,35 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const backstageParticipants = participants.filter((p) => p.status === "BACKSTAGE");
   const greenRoomParticipants = participants.filter((p) => p.status === "GREEN_ROOM");
 
+  const handleRegenerateInvite = async () => {
+    setIsRegeneratingInvite(true);
+    try {
+      const res = await fetch("/api/livekit/regenerate-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broadcastId: params.id }),
+      });
+      const data = await res.json();
+      if (data.success && data.inviteToken) {
+        setInviteToken(data.inviteToken);
+        const newUrl = `${window.location.origin}/join/${roomName}?token=${data.inviteToken}`;
+        navigator.clipboard.writeText(newUrl);
+        setCopiedLink(true);
+        setResetSuccessMessage(true);
+        setTimeout(() => {
+          setCopiedLink(false);
+          setResetSuccessMessage(false);
+        }, 3000);
+      }
+    } catch (err) {
+      console.error("Failed to regenerate invite link:", err);
+    } finally {
+      setIsRegeneratingInvite(false);
+    }
+  };
+
   const handleCopyInvite = () => {
-    const inviteUrl = `${window.location.origin}/join/${roomName}`;
+    const inviteUrl = `${window.location.origin}/join/${roomName}${inviteToken ? `?token=${inviteToken}` : ""}`;
     navigator.clipboard.writeText(inviteUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -484,10 +519,29 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           Participants ({participants.length})
         </h3>
         <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={handleCopyInvite} className="h-7 px-2 text-xs text-indigo-400 hover:text-indigo-300">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleCopyInvite}
+            className="h-7 px-2 text-xs text-indigo-400 hover:text-indigo-300"
+            title="Copy guest invite link"
+          >
             <Share2 className="w-3 h-3 mr-1" />
-            {copiedLink ? "Copied!" : "Invite"}
+            {copiedLink ? (resetSuccessMessage ? "Reset & Copied!" : "Copied!") : "Invite"}
           </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleRegenerateInvite}
+            disabled={isRegeneratingInvite}
+            className="h-7 px-2 text-[11px] text-slate-400 hover:text-amber-300 flex items-center gap-1 border border-white/5 hover:border-amber-500/30"
+            title="Reset invite link (invalidates older links)"
+          >
+            <RefreshCw className={cn("w-3 h-3", isRegeneratingInvite && "animate-spin text-amber-400")} />
+            <span className="hidden sm:inline">Reset</span>
+          </Button>
+
           {isParticipantsOpen && (
             <button
               onClick={() => setIsParticipantsOpen(false)}
@@ -499,6 +553,13 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           )}
         </div>
       </div>
+
+      {resetSuccessMessage && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-3 py-1.5 text-[11px] text-amber-300 flex items-center gap-1.5 animate-in fade-in">
+          <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span>New invite link generated & copied! Old links are now invalid.</span>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4 custom-scrollbar">
         {/* Section: On Stage */}
