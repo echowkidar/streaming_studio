@@ -1,11 +1,26 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+function getApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://"))) {
+    return envUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+  }
+
+  // In browser, use relative path so requests go through Nginx reverse proxy (/api/...)
+  if (typeof window !== "undefined") {
+    return "";
+  }
+
+  // Server-side fallback
+  return process.env.API_INTERNAL_URL || "http://localhost:4000";
+}
 
 interface RequestOptions extends RequestInit {
   data?: unknown;
 }
 
 export async function apiRequest<T>(endpoint: string, options: RequestOptions = {}): Promise<{ success: boolean; data?: T; error?: string }> {
-  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  const baseUrl = getApiBaseUrl();
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = baseUrl ? `${baseUrl.replace(/\/+$/, "")}${cleanEndpoint}` : cleanEndpoint;
   
   let token = "";
   if (typeof window !== "undefined") {
