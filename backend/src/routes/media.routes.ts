@@ -77,7 +77,7 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 
     // --- STRICT VPS STORAGE QUOTA ENFORCEMENT ---
 
-    // 1. VIDEO: Max 2 videos, max 5 minutes (300s), max 720p resolution
+    // 1. VIDEO: Max 2 videos, max 10 minutes (600s), max 1080p resolution
     if (assetType === 'VIDEO') {
       const videoCount = await prisma.mediaAsset.count({
         where: { workspaceId, assetType: 'VIDEO' },
@@ -89,17 +89,17 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
         });
         return;
       }
-      if (req.body.duration && Number(req.body.duration) > 300) {
+      if (req.body.duration && Number(req.body.duration) > 600) {
         res.status(400).json({
           success: false,
-          error: 'Video duration exceeds limit: Maximum 5 minutes (300 seconds) allowed.',
+          error: 'Video duration exceeds limit: Maximum 10 minutes (600 seconds) allowed.',
         });
         return;
       }
-      if (req.body.height && Number(req.body.height) > 720) {
+      if (req.body.height && Number(req.body.height) > 1080) {
         res.status(400).json({
           success: false,
-          error: 'Video resolution exceeds limit: Maximum 720p resolution allowed.',
+          error: 'Video resolution exceeds limit: Maximum 1080p resolution allowed.',
         });
         return;
       }

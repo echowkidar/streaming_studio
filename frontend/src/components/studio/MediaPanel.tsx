@@ -15,6 +15,7 @@ import {
   Trash2,
   ExternalLink,
   Layers,
+  Repeat,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -41,6 +42,7 @@ export const MediaPanel: React.FC = () => {
   } = useStudioStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [autoRepeat, setAutoRepeat] = useState(true);
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>([
     {
@@ -114,14 +116,14 @@ export const MediaPanel: React.FC = () => {
         videoHeight = tempVideo.videoHeight || 0;
         URL.revokeObjectURL(tempUrl);
 
-        if (videoDuration > 300) {
-          alert(`Video duration (${Math.floor(videoDuration / 60)}m ${videoDuration % 60}s) exceeds limit! Maximum 5 minutes (300s) allowed.`);
+        if (videoDuration > 600) {
+          alert(`Video duration (${Math.floor(videoDuration / 60)}m ${videoDuration % 60}s) exceeds limit! Maximum 10 minutes (600s) allowed.`);
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
 
-        if (videoHeight > 720 || videoWidth > 1280) {
-          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 720p (1280x720) allowed to preserve VPS resources.`);
+        if (videoHeight > 1080 || videoWidth > 1920) {
+          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 1080p (1920x1080) allowed to preserve VPS resources.`);
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
@@ -282,6 +284,7 @@ export const MediaPanel: React.FC = () => {
         name: item.name,
         type: item.type,
         url: item.url,
+        loop: autoRepeat,
       });
     }
   };
@@ -339,16 +342,39 @@ export const MediaPanel: React.FC = () => {
           <p className="text-[10px] text-slate-400">Play videos, slides & music directly on stage</p>
         </div>
 
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isUploading}
-          className="h-7 text-xs px-2.5"
-        >
-          <Upload className="w-3.5 h-3.5 mr-1" />
-          {isUploading ? "Uploading..." : "Upload"}
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !autoRepeat;
+              setAutoRepeat(next);
+              if (activeMedia) {
+                setActiveMedia({ ...activeMedia, loop: next });
+              }
+            }}
+            className={cn(
+              "h-7 px-2 text-[10px] font-semibold rounded-lg border flex items-center gap-1 transition-all",
+              autoRepeat
+                ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
+                : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
+            )}
+            title={autoRepeat ? "Auto-Repeat: ON (Video/audio replays automatically)" : "Auto-Repeat: OFF (Plays once)"}
+          >
+            <Repeat className="w-3 h-3" />
+            <span>Repeat</span>
+          </button>
+
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="h-7 text-xs px-2.5"
+          >
+            <Upload className="w-3.5 h-3.5 mr-1" />
+            {isUploading ? "Uploading..." : "Upload"}
+          </Button>
+        </div>
 
         <input
           ref={fileInputRef}
@@ -362,7 +388,7 @@ export const MediaPanel: React.FC = () => {
       {/* VPS Storage Quota Status Bar */}
       <div className="px-3 py-2 border-b border-white/5 bg-slate-950/60 flex items-center justify-between gap-1.5 text-[10px]">
         <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
-          <span className="text-slate-400 font-medium">Videos (720p, ≤5m)</span>
+          <span className="text-slate-400 font-medium">Videos (1080p, ≤10m)</span>
           <span className={cn("font-mono font-bold mt-0.5", uploadedVideos.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
             {uploadedVideos.length} / 2
           </span>
@@ -387,21 +413,46 @@ export const MediaPanel: React.FC = () => {
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <div className="min-w-0">
-              <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">
-                Playing On Stage:
+              <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>Playing On Stage</span>
+                {activeMedia.loop !== false && (
+                  <span className="text-[9px] text-emerald-400 font-mono font-normal">
+                    (Auto-Repeat)
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-white truncate max-w-[170px]">{activeMedia.name}</p>
+              <p className="text-[11px] text-white truncate max-w-[150px]">{activeMedia.name}</p>
             </div>
           </div>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setActiveMedia(null)}
-            className="h-6 px-2 text-[10px] shrink-0"
-          >
-            <Square className="w-3 h-3 mr-1 fill-current" />
-            Stop
-          </Button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !(activeMedia.loop ?? true);
+                setAutoRepeat(next);
+                setActiveMedia({ ...activeMedia, loop: next });
+              }}
+              className={cn(
+                "h-6 px-1.5 text-[9px] font-medium rounded border flex items-center gap-1 transition-all",
+                (activeMedia.loop ?? true)
+                  ? "bg-indigo-600 text-white border-indigo-400 font-bold"
+                  : "bg-white/10 text-slate-400 border-white/10 hover:text-white"
+              )}
+              title={(activeMedia.loop ?? true) ? "Auto-Repeat ON (Click for 1-Shot)" : "Auto-Repeat OFF (Click to Loop)"}
+            >
+              <Repeat className="w-2.5 h-2.5" />
+              <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
+            </button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setActiveMedia(null)}
+              className="h-6 px-2 text-[10px]"
+            >
+              <Square className="w-2.5 h-2.5 mr-1 fill-current" />
+              Stop
+            </Button>
+          </div>
         </div>
       )}
 

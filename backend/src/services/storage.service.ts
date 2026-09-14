@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { z } from 'zod';
 
@@ -18,6 +18,7 @@ export type FileUploadInput = z.infer<typeof FileUploadSchema>;
 export class StorageService {
   private readonly s3Client: S3Client;
   private readonly defaultBucket: string;
+  private ensuredBuckets = new Set<string>();
 
   constructor() {
     this.defaultBucket = process.env.MINIO_BUCKET || 'livestudio';
@@ -34,9 +35,26 @@ export class StorageService {
     });
   }
 
+  private async ensureBucket(bucket: string): Promise<void> {
+    if (this.ensuredBuckets.has(bucket)) return;
+    try {
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: bucket }));
+      this.ensuredBuckets.add(bucket);
+    } catch (headErr: any) {
+      try {
+        await this.s3Client.send(new CreateBucketCommand({ Bucket: bucket }));
+        this.ensuredBuckets.add(bucket);
+      } catch (createErr) {
+        console.warn(`Could not auto-create bucket ${bucket}:`, createErr);
+      }
+    }
+  }
+
   public async uploadFile(input: Omit<FileUploadInput, 'bucket'> & { bucket?: string }): Promise<ServiceResponse<{ url: string }>> {
     try {
       const bucket = input.bucket ?? this.defaultBucket;
+      await this.ensureBucket(bucket);
+
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: input.key,
@@ -44,7 +62,18 @@ export class StorageService {
         ContentType: input.contentType,
       });
 
-      await this.s3Client.send(command);
+      try {
+        await this.s3Client.send(command);
+      } catch (sendErr: any) {
+        // If error is NoSuchBucket, create bucket and retry once
+        if (sendErr?.name === 'NoSuchBucket' || sendErr?.message?.includes('bucket does not exist')) {
+          await this.s3Client.send(new CreateBucketCommand({ Bucket: bucket }));
+          this.ensuredBuckets.add(bucket);
+          await this.s3Client.send(command);
+        } else {
+          throw sendErr;
+        }
+      }
 
       return { 
         success: true, 

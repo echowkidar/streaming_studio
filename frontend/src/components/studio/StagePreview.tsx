@@ -16,6 +16,7 @@ import {
   ChevronUp,
   ChevronDown,
   Crosshair,
+  Repeat,
 } from "lucide-react";
 import { useStudioStore, ParticipantBounds } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
@@ -724,6 +725,7 @@ export const StagePreview: React.FC = () => {
             autoPlay
             controls
             playsInline
+            loop={activeMedia.loop ?? true}
             crossOrigin="anonymous"
             style={{ objectFit: mediaFitMode }}
             className="w-full h-full"
@@ -741,10 +743,41 @@ export const StagePreview: React.FC = () => {
         <div className="absolute top-3 left-3 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-10">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="truncate max-w-[180px]">{activeMedia.name}</span>
+          {activeMedia.loop !== false && (
+            <span className="text-[9px] text-emerald-400 font-mono font-normal">
+              (Loop)
+            </span>
+          )}
         </div>
 
-        {/* Floating Quick Crop / Fit Button on Tile Hover */}
+        {/* Floating Quick Crop / Repeat / Fit Buttons on Tile Hover */}
         <div className="absolute top-3 right-3 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+          {activeMedia.type === "video" && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveMedia({
+                  ...activeMedia,
+                  loop: !(activeMedia.loop ?? true),
+                });
+              }}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-lg backdrop-blur-md transition-all",
+                (activeMedia.loop ?? true)
+                  ? "bg-indigo-600 text-white border-indigo-400 font-bold"
+                  : "bg-black/80 hover:bg-black border-white/20 text-slate-300"
+              )}
+              title={
+                (activeMedia.loop ?? true)
+                  ? "Auto-Repeat ON (Video will loop continuously)"
+                  : "Auto-Repeat OFF (Video will play once)"
+              }
+            >
+              <Repeat className="w-3 h-3" />
+              <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={(e) => {
@@ -909,6 +942,33 @@ export const StagePreview: React.FC = () => {
                   <Crop className="w-3 h-3 text-amber-400" />
                   <span>{mediaFitMode === "cover" ? "Cropped" : "Fit"}</span>
                 </button>
+
+                {/* Auto-Repeat Toggle Button for Video */}
+                {activeMedia.type === "video" && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActiveMedia({
+                        ...activeMedia,
+                        loop: !(activeMedia.loop ?? true),
+                      })
+                    }
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
+                      (activeMedia.loop ?? true)
+                        ? "bg-indigo-500/30 text-indigo-300 border-indigo-400 font-bold"
+                        : "bg-white/10 text-slate-300 border-white/20"
+                    )}
+                    title={
+                      (activeMedia.loop ?? true)
+                        ? "Auto-Repeat ON (Click to play once)"
+                        : "Auto-Repeat OFF (Click to loop)"
+                    }
+                  >
+                    <Repeat className="w-3 h-3 text-indigo-400" />
+                    <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
+                  </button>
+                )}
 
                 {/* Center on Stage */}
                 <button
@@ -1663,7 +1723,7 @@ export const StagePreview: React.FC = () => {
       {/* Active Stage Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
         <>
-          <audio src={activeMedia.url} autoPlay loop />
+          <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} />
           <div className="absolute top-6 left-6 z-30 animate-in fade-in">
             <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-cyan-500/40 flex items-center gap-2.5 shadow-xl">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />

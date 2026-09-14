@@ -449,7 +449,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                     activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf") ? (
                       <div className="w-full h-full min-h-0 flex items-center justify-center bg-black">
                         {activeMedia.type === "video" ? (
-                          <video src={activeMedia.url} autoPlay playsInline controls className="w-full h-full object-contain" />
+                          <video src={activeMedia.url} autoPlay playsInline controls loop={activeMedia.loop ?? true} className="w-full h-full object-contain" />
                         ) : (
                           <img src={activeMedia.url} alt={activeMedia.name} className="w-full h-full object-contain" />
                         )}
@@ -806,6 +806,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
                               autoPlay
                               playsInline
                               controls
+                              loop={activeMedia.loop ?? true}
                               style={{ objectFit: mediaFit }}
                               className="w-full h-full"
                             />
@@ -1049,7 +1050,7 @@ export default function GuestJoinPage({ params }: { params: { token: string } })
 
       {/* Synchronized Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
-        <audio src={activeMedia.url} autoPlay loop />
+        <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} />
       )}
     </div>
   );

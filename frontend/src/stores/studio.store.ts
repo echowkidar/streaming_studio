@@ -178,6 +178,7 @@ interface StudioState {
     name: string;
     type: "video" | "audio" | "image" | "pdf";
     url: string;
+    loop?: boolean;
   } | null;
   setActiveMedia: (
     media: {
@@ -185,6 +186,7 @@ interface StudioState {
       name: string;
       type: "video" | "audio" | "image" | "pdf";
       url: string;
+      loop?: boolean;
     } | null
   ) => void;
 
