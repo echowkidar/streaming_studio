@@ -1,71 +1,106 @@
 "use client";
 
-import { useState } from "react";
-import { Users, UserPlus, Shield, MoreVertical, Mail, Trash2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Users, UserPlus, Shield, MoreVertical, Mail, Trash2, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { useAuthStore } from "@/stores/auth.store";
+import { apiRequest } from "@/lib/api";
+
+interface TeamMember {
+  id: string;
+  userId?: string;
+  name: string;
+  email: string;
+  role: string;
+  joinedAt: string;
+}
 
 export default function TeamPage() {
   const { user } = useAuthStore();
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("PRODUCER");
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
-  const [members, setMembers] = useState([
-    {
-      id: "mem-1",
-      name: user?.name || "Workspace Owner",
-      email: user?.email || "owner@livestudio.io",
-      role: "OWNER",
-      status: "ACTIVE",
-      joinedAt: "Jan 10, 2026",
-    },
-    {
-      id: "mem-2",
-      name: "Elena Rostova",
-      email: "elena@production.tv",
-      role: "PRODUCER",
-      status: "ACTIVE",
-      joinedAt: "Feb 14, 2026",
-    },
-    {
-      id: "mem-3",
-      name: "Alex Chen",
-      email: "alex.c@liveops.io",
-      role: "ADMIN",
-      status: "ACTIVE",
-      joinedAt: "Mar 01, 2026",
-    },
-    {
-      id: "mem-4",
-      name: "Sarah Jenkins",
-      email: "sarah@keynote.agency",
-      role: "CREATOR",
-      status: "ACTIVE",
-      joinedAt: "May 12, 2026",
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const fetchMembers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await apiRequest<TeamMember[]>("/api/workspaces/members");
+      if (res.success && res.data) {
+        setMembers(res.data);
+      } else {
+        setError(res.error || "Failed to load team members");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load team members");
+    } finally {
+      setLoading(false);
     }
-  ]);
+  };
 
-  const handleInvite = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchMembers();
+  }, []);
+
+  const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail) return;
-    setMembers([
-      ...members,
-      {
-        id: `mem-${Date.now()}`,
-        name: inviteEmail.split("@")[0],
-        email: inviteEmail,
-        role: inviteRole,
-        status: "INVITED",
-        joinedAt: "Pending",
+
+    try {
+      setIsInviting(true);
+      setInviteError(null);
+      const res = await apiRequest("/api/workspaces/members", {
+        method: "POST",
+        data: {
+          name: inviteName.trim() || inviteEmail.split("@")[0],
+          email: inviteEmail.trim(),
+          role: inviteRole,
+        },
+      });
+
+      if (res.success) {
+        setInviteEmail("");
+        setInviteName("");
+        setIsModalOpen(false);
+        fetchMembers();
+      } else {
+        setInviteError(res.error || "Failed to add member");
       }
-    ]);
-    setInviteEmail("");
-    setIsModalOpen(false);
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Failed to add member");
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
+  const handleDeleteMember = async (memberId: string) => {
+    if (!confirm("Are you sure you want to remove this team member?")) return;
+    try {
+      setDeletingId(memberId);
+      const res = await apiRequest(`/api/workspaces/members/${memberId}`, {
+        method: "DELETE",
+      });
+      if (res.success) {
+        setMembers((prev) => prev.filter((m) => m.id !== memberId));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const getRoleBadge = (role: string) => {
@@ -83,14 +118,27 @@ export default function TeamPage() {
         <div>
           <h1 className="text-3xl font-bold text-white tracking-tight">Team & Permissions</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Manage workspace co-producers, studio directors, hosts, and guest managers.
+            Manage workspace co-producers, studio directors, hosts, and collaborators.
           </p>
         </div>
-        <Button variant="primary" onClick={() => setIsModalOpen(true)}>
-          <UserPlus className="w-4 h-4 mr-2" />
-          Invite Team Member
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={fetchMembers} disabled={loading} className="text-xs text-slate-400 hover:text-white">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button variant="primary" onClick={() => { setIsModalOpen(true); setInviteError(null); }}>
+            <UserPlus className="w-4 h-4 mr-2" />
+            Invite Team Member
+          </Button>
+        </div>
       </div>
+
+      {error && (
+        <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
 
       <div className="rounded-2xl border border-white/5 bg-surface-raised/50 overflow-hidden backdrop-blur-md">
         <div className="p-4 border-b border-white/5 flex items-center justify-between text-xs text-slate-400 uppercase tracking-wider font-semibold">
@@ -102,42 +150,76 @@ export default function TeamPage() {
           </div>
         </div>
 
-        <div className="divide-y divide-white/5">
-          {members.map((m) => (
-            <div key={m.id} className="p-4 flex items-center justify-between hover:bg-white/[0.02] transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-cyan-500/20 border border-white/10 flex items-center justify-center font-bold text-sm text-white">
-                  {m.name[0]}
+        {loading ? (
+          <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400 text-xs">
+            <RefreshCw className="w-5 h-5 animate-spin text-indigo-400" />
+            Loading real workspace members...
+          </div>
+        ) : members.length === 0 ? (
+          <div className="py-12 text-center text-slate-400 text-xs space-y-2">
+            <p>No team members found in this workspace.</p>
+            <p className="text-slate-500">Click &ldquo;Invite Team Member&rdquo; above to add members.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/5">
+            {members.map((m) => (
+              <div key={m.id} className="p-4 flex items-center justify-between hover:bg-white/[0.02] transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500/20 to-cyan-500/20 border border-white/10 flex items-center justify-center font-bold text-sm text-white">
+                    {(m.name || m.email || "U")[0]?.toUpperCase()}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-white">{m.name || "Member"}</h4>
+                    <p className="text-xs font-mono text-slate-400">{m.email}</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-white">{m.name}</h4>
-                  <p className="text-xs text-slate-400">{m.email}</p>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-8">
-                {getRoleBadge(m.role)}
-                <span className="text-xs text-slate-400 w-24">{m.joinedAt}</span>
-                <div className="flex items-center gap-2">
-                  {m.role !== "OWNER" && (
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-rose-400 hover:text-rose-300">
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  )}
+                <div className="flex items-center gap-8">
+                  {getRoleBadge(m.role)}
+                  <span className="text-xs text-slate-400 w-24">
+                    {m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : "Active"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {m.role !== "OWNER" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDeleteMember(m.id)}
+                        disabled={deletingId === m.id}
+                        className="h-8 w-8 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                        title="Remove member"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title="Invite Workspace Member"
-        description="Invited collaborators can operate studios, switch layouts, and moderate participants."
+        description="Add a collaborator to this workspace. They will be registered in the database if they don't already have an account."
       >
         <form onSubmit={handleInvite} className="space-y-4">
+          {inviteError && (
+            <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-400 text-xs">
+              {inviteError}
+            </div>
+          )}
+
+          <Input
+            label="Full Name (Optional)"
+            placeholder="John Doe"
+            value={inviteName}
+            onChange={(e) => setInviteName(e.target.value)}
+          />
+
           <Input
             label="Email Address"
             type="email"
@@ -151,8 +233,8 @@ export default function TeamPage() {
             <label className="text-xs font-medium text-slate-300">Workspace Role</label>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { role: "ADMIN", desc: "Full control except billing" },
-                { role: "PRODUCER", desc: "Stage & media control" },
+                { role: "ADMIN", desc: "Full studio & member control" },
+                { role: "PRODUCER", desc: "Stage & media operations" },
                 { role: "CREATOR", desc: "Host personal broadcasts" },
               ].map((r) => (
                 <button
@@ -173,11 +255,11 @@ export default function TeamPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-4">
-            <Button type="button" variant="ghost" onClick={() => setIsModalOpen(false)}>
+            <Button type="button" variant="ghost" onClick={() => setIsModalOpen(false)} disabled={isInviting}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
-              Send Invitation
+            <Button type="submit" variant="primary" disabled={isInviting}>
+              {isInviting ? "Adding..." : "Add Member"}
             </Button>
           </div>
         </form>

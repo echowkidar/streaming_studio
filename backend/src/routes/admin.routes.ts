@@ -19,6 +19,13 @@ const ResetPasswordByEmailSchema = z.object({
   newPassword: z.string().min(6, 'Password must be at least 6 characters long'),
 });
 
+const CreateUserSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters long'),
+  role: z.enum(['USER', 'SUPER_ADMIN']).default('USER'),
+});
+
 // Middleware stub for Super Admin check
 const requireSuperAdmin = (req: Request, res: Response, next: NextFunction): void => {
   next();
@@ -157,6 +164,72 @@ router.post('/reset-password-by-email', async (req: Request, res: Response, next
       res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
       return;
     }
+    next(error);
+  }
+});
+
+router.post('/users', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { name, email, password, role } = CreateUserSchema.parse(req.body);
+    const emailNorm = email.toLowerCase().trim();
+
+    const existing = await prisma.user.findUnique({ where: { email: emailNorm } });
+    if (existing) {
+      res.status(400).json({ success: false, error: 'A user with this email already exists' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        name: name.trim(),
+        email: emailNorm,
+        passwordHash,
+        role,
+      },
+    });
+
+    try {
+      const defaultWorkspace = await prisma.workspace.findFirst({ where: { slug: 'default' } });
+      if (defaultWorkspace) {
+        await prisma.workspaceMember.create({
+          data: {
+            workspaceId: defaultWorkspace.id,
+            userId: user.id,
+            role: role === 'SUPER_ADMIN' ? 'ADMIN' : 'CREATOR',
+          },
+        });
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `User ${user.email} created successfully!`,
+      data: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
+      return;
+    }
+    next(error);
+  }
+});
+
+router.delete('/users/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    await prisma.user.delete({ where: { id } });
+    res.status(200).json({ success: true, message: 'User deleted successfully' });
+  } catch (error) {
     next(error);
   }
 });

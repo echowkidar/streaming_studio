@@ -37,15 +37,53 @@ const UpdateProfileSchema = z.object({
 router.post('/register', async (req: Request, res: Response): Promise<void> => {
   try {
     const data = RegisterSchema.parse(req.body);
-    const mockId = 'usr_' + Date.now().toString(36);
+    const emailNorm = data.email.toLowerCase().trim();
+
+    const existing = await prisma.user.findUnique({
+      where: { email: emailNorm },
+    });
+
+    if (existing) {
+      res.status(400).json({ success: false, error: 'An account with this email already exists' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+    const user = await prisma.user.create({
+      data: {
+        email: emailNorm,
+        passwordHash,
+        name: data.name.trim(),
+        role: 'USER',
+      },
+    });
+
+    // Link user to default workspace if available
+    try {
+      const defaultWorkspace = await prisma.workspace.findFirst({
+        where: { slug: 'default' },
+      });
+      if (defaultWorkspace) {
+        await prisma.workspaceMember.create({
+          data: {
+            workspaceId: defaultWorkspace.id,
+            userId: user.id,
+            role: 'CREATOR',
+          },
+        });
+      }
+    } catch {
+      // Non-fatal if workspace link fails
+    }
+
     res.status(201).json({
       success: true,
       data: {
         user: {
-          id: mockId,
-          email: data.email,
-          name: data.name,
-          role: 'USER',
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
         },
         tokens: {
           accessToken: 'jwt_' + Math.random().toString(36).substring(2),
@@ -55,10 +93,10 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: 'Validation failed', details: error.errors });
+      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
       return;
     }
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    res.status(500).json({ success: false, error: 'Failed to create user account' });
   }
 });
 

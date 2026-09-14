@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { 
   Shield, Server, Cpu, HardDrive, Database, Activity, 
   CheckCircle2, RefreshCw, ShieldAlert, Users, KeyRound, 
-  Sparkles, Copy, Check 
+  Sparkles, Copy, Check, UserPlus, Trash2 
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
@@ -21,6 +21,8 @@ export default function AdminPage() {
 
   const [users, setUsers] = useState<Array<{ id: string; name: string; email: string; role: string; createdAt: string }>>([]);
   const [usersLoading, setUsersLoading] = useState(true);
+
+  // Reset Password State
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [selectedUserForReset, setSelectedUserForReset] = useState<{ id?: string; name?: string; email: string } | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState("");
@@ -28,6 +30,17 @@ export default function AdminPage() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSuccessText, setResetSuccessText] = useState<string | null>(null);
   const [copiedPassword, setCopiedPassword] = useState(false);
+
+  // Create User State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [createRole, setCreateRole] = useState<"USER" | "SUPER_ADMIN">("USER");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const fetchUsers = async () => {
     setUsersLoading(true);
@@ -100,6 +113,70 @@ export default function AdminPage() {
       setResetError(err instanceof Error ? err.message : "Failed to reset password.");
     } finally {
       setIsSavingReset(false);
+    }
+  };
+
+  const handleGenerateCreatePassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let rand = "";
+    for (let i = 0; i < 4; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    setCreatePassword(`Studio#${rand}${Math.floor(100 + Math.random() * 900)}`);
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createEmail || !createPassword || !createName) {
+      setCreateError("Name, email, and password are required.");
+      return;
+    }
+    try {
+      setCreateLoading(true);
+      setCreateError(null);
+      setCreateSuccess(null);
+      const res = await apiRequest("/api/admin/users", {
+        method: "POST",
+        data: {
+          name: createName.trim(),
+          email: createEmail.trim(),
+          password: createPassword,
+          role: createRole,
+        },
+      });
+
+      if (res.success) {
+        setCreateSuccess(`Account for ${createEmail} created successfully! Password: ${createPassword}`);
+        fetchUsers();
+      } else {
+        setCreateError(res.error || "Failed to create user");
+      }
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Failed to create user");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (u: { id: string; email: string }) => {
+    if (u.id === user?.id || u.email === user?.email) {
+      alert("You cannot delete your own active super admin account.");
+      return;
+    }
+    if (!confirm(`Are you sure you want to permanently delete user ${u.email}?`)) return;
+
+    try {
+      setDeletingUserId(u.id);
+      const res = await apiRequest(`/api/admin/users/${u.id}`, {
+        method: "DELETE",
+      });
+      if (res.success) {
+        fetchUsers();
+      } else {
+        alert(res.error || "Failed to delete user");
+      }
+    } catch {
+      alert("Failed to delete user");
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -246,21 +323,40 @@ export default function AdminPage() {
               Directly reset or override passwords for any user who is locked out or forgot their password.
             </p>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setSelectedUserForReset({ email: "", name: "Custom User" });
-              setNewPasswordInput("");
-              setResetSuccessText(null);
-              setResetError(null);
-              setIsResetModalOpen(true);
-            }}
-            className="text-xs shrink-0"
-          >
-            <KeyRound className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
-            Reset Any Password by Email
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setCreateName("");
+                setCreateEmail("");
+                setCreatePassword("");
+                setCreateRole("USER");
+                setCreateError(null);
+                setCreateSuccess(null);
+                setIsCreateModalOpen(true);
+              }}
+              className="text-xs"
+            >
+              <UserPlus className="w-3.5 h-3.5 mr-1.5" />
+              Create New User
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setSelectedUserForReset({ email: "", name: "Custom User" });
+                setNewPasswordInput("");
+                setResetSuccessText(null);
+                setResetError(null);
+                setIsResetModalOpen(true);
+              }}
+              className="text-xs shrink-0"
+            >
+              <KeyRound className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
+              Reset Password
+            </Button>
+          </div>
         </CardHeader>
 
         {usersLoading ? (
@@ -298,22 +394,36 @@ export default function AdminPage() {
                       {new Date(u.createdAt).toLocaleDateString()}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedUserForReset(u);
-                          setNewPasswordInput("");
-                          setResetSuccessText(null);
-                          setResetError(null);
-                          setIsResetModalOpen(true);
-                        }}
-                        className="h-7 px-2.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
-                        title="Set new password for this user"
-                      >
-                        <KeyRound className="w-3 h-3 mr-1" />
-                        Reset Password
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedUserForReset(u);
+                            setNewPasswordInput("");
+                            setResetSuccessText(null);
+                            setResetError(null);
+                            setIsResetModalOpen(true);
+                          }}
+                          className="h-7 px-2.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+                          title="Set new password for this user"
+                        >
+                          <KeyRound className="w-3 h-3 mr-1" />
+                          Reset Password
+                        </Button>
+                        {u.id !== user?.id && u.email !== user?.email && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteUser(u)}
+                            disabled={deletingUserId === u.id}
+                            className="h-7 w-7 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                            title="Delete user account"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -421,6 +531,107 @@ export default function AdminPage() {
             >
               <KeyRound className="w-3.5 h-3.5 mr-1.5" />
               Set Password
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Create New User Modal */}
+      <Modal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        title="Create New User Account"
+        description="Add a new account directly to PostgreSQL database with secure hashed credentials."
+      >
+        <form onSubmit={handleCreateUser} className="space-y-4 pt-2">
+          {createError && (
+            <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-400 text-xs">
+              {createError}
+            </div>
+          )}
+          {createSuccess && (
+            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-300 text-xs">
+              {createSuccess}
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-medium text-slate-300 block mb-1">Full Name</label>
+            <Input
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              placeholder="e.g. John Doe"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-slate-300 block mb-1">Email Address</label>
+            <Input
+              type="email"
+              value={createEmail}
+              onChange={(e) => setCreateEmail(e.target.value)}
+              placeholder="user@livestudio.io"
+              required
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-slate-300">Password</label>
+              <button
+                type="button"
+                onClick={handleGenerateCreatePassword}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+              >
+                <Sparkles className="w-3 h-3" />
+                Generate Random
+              </button>
+            </div>
+            <Input
+              value={createPassword}
+              onChange={(e) => setCreatePassword(e.target.value)}
+              placeholder="At least 6 characters"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-slate-300 block mb-1">System Role</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateRole("USER")}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  createRole === "USER"
+                    ? "border-indigo-500 bg-indigo-500/10 text-white"
+                    : "border-white/5 bg-surface text-slate-400 hover:text-white"
+                }`}
+              >
+                <div className="text-xs font-semibold">USER</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">Regular studio creator</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateRole("SUPER_ADMIN")}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  createRole === "SUPER_ADMIN"
+                    ? "border-purple-500 bg-purple-500/10 text-white"
+                    : "border-white/5 bg-surface text-slate-400 hover:text-white"
+                }`}
+              >
+                <div className="text-xs font-semibold text-purple-300">SUPER_ADMIN</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">Full admin & server access</div>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
+            <Button type="button" variant="ghost" onClick={() => setIsCreateModalOpen(false)}>
+              Close
+            </Button>
+            <Button type="submit" variant="primary" disabled={createLoading}>
+              {createLoading ? "Creating..." : "Create Account"}
             </Button>
           </div>
         </form>
