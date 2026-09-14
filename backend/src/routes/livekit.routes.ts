@@ -14,6 +14,9 @@ const TokenRequestSchema = z.object({
   inviteToken: z.string().optional(),
 });
 
+// Fast in-memory active invite token registry for rooms (supports both on-demand and scheduled broadcasts)
+const roomInviteTokens = new Map<string, { token: string; createdAt: number }>();
+
 // GET /api/livekit/invite-status?roomName=...&token=...
 router.get('/invite-status', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -21,7 +24,30 @@ router.get('/invite-status', async (req: Request, res: Response, next: NextFunct
     const tokenQuery = (req.query.token as string) || '';
     const cleanBroadcastId = roomName.replace(/^studio-/, '').replace(/^guest-invite-token-/, '');
 
-    // 1. Check broadcast record in DB
+    // 1. Mandatory Token Check: Plain links without token parameter are rejected
+    if (!tokenQuery) {
+      res.status(200).json({
+        success: true,
+        valid: false,
+        reason: 'MISSING_TOKEN',
+        message: 'This invite link is missing a security token or has expired. Please ask the host for a new link.',
+      });
+      return;
+    }
+
+    // 2. Check active invite token in memory registry
+    const registered = roomInviteTokens.get(roomName) || roomInviteTokens.get(cleanBroadcastId);
+    if (registered && registered.token !== tokenQuery) {
+      res.status(200).json({
+        success: true,
+        valid: false,
+        reason: 'REVOKED',
+        message: 'This invite link has been reset or revoked by the host. Please ask the host for the latest link.',
+      });
+      return;
+    }
+
+    // 3. Check broadcast record in DB if exists
     let broadcast: any = null;
     if (cleanBroadcastId) {
       try {
@@ -48,7 +74,7 @@ router.get('/invite-status', async (req: Request, res: Response, next: NextFunct
 
       // Check if host revoked/regenerated the invite token
       const settings = (broadcast.settings as Record<string, any>) || {};
-      if (settings.inviteToken && tokenQuery && settings.inviteToken !== tokenQuery) {
+      if (settings.inviteToken && settings.inviteToken !== tokenQuery) {
         res.status(200).json({
           success: true,
           valid: false,
@@ -59,7 +85,7 @@ router.get('/invite-status', async (req: Request, res: Response, next: NextFunct
       }
     }
 
-    // 2. Check if Host is currently present in the LiveKit room
+    // 4. Check if Host is currently present in the LiveKit room
     let hostPresent = false;
     try {
       const participants = await livekitService.getRoomService().listParticipants(roomName);
@@ -74,6 +100,12 @@ router.get('/invite-status', async (req: Request, res: Response, next: NextFunct
       });
     } catch {
       hostPresent = false;
+    }
+
+    // Register active token for this on-demand room if not already registered
+    if (!registered) {
+      roomInviteTokens.set(roomName, { token: tokenQuery, createdAt: Date.now() });
+      roomInviteTokens.set(cleanBroadcastId, { token: tokenQuery, createdAt: Date.now() });
     }
 
     res.status(200).json({
@@ -91,33 +123,42 @@ router.get('/invite-status', async (req: Request, res: Response, next: NextFunct
 // POST /api/livekit/regenerate-invite
 router.post('/regenerate-invite', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { broadcastId } = req.body;
-    if (!broadcastId) {
-      res.status(400).json({ success: false, error: 'broadcastId is required' });
+    const { broadcastId, roomName, forceToken } = req.body;
+    const effectiveRoom = (roomName || (broadcastId ? (broadcastId.startsWith('studio-') ? broadcastId : `studio-${broadcastId}`) : '')).trim();
+
+    if (!effectiveRoom) {
+      res.status(400).json({ success: false, error: 'broadcastId or roomName is required' });
       return;
     }
 
-    const broadcast = await prisma.broadcast.findUnique({
-      where: { id: broadcastId },
-    });
+    const cleanId = effectiveRoom.replace(/^studio-/, '');
+    const newToken = forceToken || `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
 
-    if (!broadcast) {
-      res.status(404).json({ success: false, error: 'Broadcast not found' });
-      return;
+    // Store in room registry
+    roomInviteTokens.set(effectiveRoom, { token: newToken, createdAt: Date.now() });
+    roomInviteTokens.set(cleanId, { token: newToken, createdAt: Date.now() });
+
+    // Also update broadcast in database if exists
+    try {
+      const broadcast = await prisma.broadcast.findUnique({
+        where: { id: cleanId },
+      });
+
+      if (broadcast) {
+        const settings = (broadcast.settings as Record<string, any>) || {};
+        await prisma.broadcast.update({
+          where: { id: cleanId },
+          data: {
+            settings: {
+              ...settings,
+              inviteToken: newToken,
+            },
+          },
+        });
+      }
+    } catch {
+      // non-fatal if room is an on-demand session
     }
-
-    const newToken = `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
-    const settings = (broadcast.settings as Record<string, any>) || {};
-
-    await prisma.broadcast.update({
-      where: { id: broadcastId },
-      data: {
-        settings: {
-          ...settings,
-          inviteToken: newToken,
-        },
-      },
-    });
 
     res.status(200).json({ success: true, inviteToken: newToken });
   } catch (error) {
@@ -131,34 +172,53 @@ router.post('/token', async (req: Request, res: Response, next: NextFunction): P
 
     const cleanBroadcastId = roomName.replace(/^studio-/, '').replace(/^guest-invite-token-/, '');
 
-    // If guest is connecting, verify broadcast is not ENDED
-    if (role === 'GUEST' && cleanBroadcastId) {
-      try {
-        const broadcast = await prisma.broadcast.findUnique({
-          where: { id: cleanBroadcastId },
-          select: { id: true, status: true, settings: true },
+    // If guest is connecting, enforce valid invite token
+    if (role === 'GUEST') {
+      if (!inviteToken) {
+        res.status(403).json({
+          success: false,
+          error: 'An invite security token is required to join this studio as a guest.',
         });
+        return;
+      }
 
-        if (broadcast) {
-          if (broadcast.status === 'ENDED' || broadcast.status === 'FAILED') {
-            res.status(403).json({
-              success: false,
-              error: 'This live broadcast has ended. The guest invite link has expired.',
-            });
-            return;
-          }
+      const registered = roomInviteTokens.get(roomName) || roomInviteTokens.get(cleanBroadcastId);
+      if (registered && registered.token !== inviteToken) {
+        res.status(403).json({
+          success: false,
+          error: 'This invite link has expired or was reset by the host.',
+        });
+        return;
+      }
 
-          const settings = (broadcast.settings as Record<string, any>) || {};
-          if (settings.inviteToken && inviteToken && settings.inviteToken !== inviteToken) {
-            res.status(403).json({
-              success: false,
-              error: 'This invite link has been reset or revoked by the host.',
-            });
-            return;
+      if (cleanBroadcastId) {
+        try {
+          const broadcast = await prisma.broadcast.findUnique({
+            where: { id: cleanBroadcastId },
+            select: { id: true, status: true, settings: true },
+          });
+
+          if (broadcast) {
+            if (broadcast.status === 'ENDED' || broadcast.status === 'FAILED') {
+              res.status(403).json({
+                success: false,
+                error: 'This live broadcast has ended. The guest invite link has expired.',
+              });
+              return;
+            }
+
+            const settings = (broadcast.settings as Record<string, any>) || {};
+            if (settings.inviteToken && settings.inviteToken !== inviteToken) {
+              res.status(403).json({
+                success: false,
+                error: 'This invite link has been reset or revoked by the host.',
+              });
+              return;
+            }
           }
+        } catch {
+          // non-fatal
         }
-      } catch {
-        // non-fatal
       }
     }
 

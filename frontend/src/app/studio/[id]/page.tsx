@@ -214,6 +214,20 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         const bSettings = (broadcastData?.data?.settings || {}) as Record<string, any>;
         if (bSettings?.inviteToken) {
           setInviteToken(bSettings.inviteToken);
+        } else {
+          // Auto-fetch or generate token for this room (handles on-demand studios like studio-superadmin)
+          fetch("/api/livekit/regenerate-invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ broadcastId: params.id, roomName }),
+          })
+            .then((r) => r.json())
+            .then((res) => {
+              if (res.success && res.inviteToken && isMounted) {
+                setInviteToken(res.inviteToken);
+              }
+            })
+            .catch((err) => console.warn("[Studio] Auto-init invite token warning:", err));
         }
 
         const isStreamActive =
@@ -483,7 +497,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       const res = await fetch("/api/livekit/regenerate-invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ broadcastId: params.id }),
+        body: JSON.stringify({ broadcastId: params.id, roomName }),
       });
       const data = await res.json();
       if (data.success && data.inviteToken) {
@@ -505,7 +519,17 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   };
 
   const handleCopyInvite = () => {
-    const inviteUrl = `${window.location.origin}/join/${roomName}${inviteToken ? `?token=${inviteToken}` : ""}`;
+    let currentToken = inviteToken;
+    if (!currentToken) {
+      currentToken = `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
+      setInviteToken(currentToken);
+      fetch("/api/livekit/regenerate-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broadcastId: params.id, roomName, forceToken: currentToken }),
+      }).catch((e) => console.warn("Failed to register invite token:", e));
+    }
+    const inviteUrl = `${window.location.origin}/join/${roomName}?token=${currentToken}`;
     navigator.clipboard.writeText(inviteUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);

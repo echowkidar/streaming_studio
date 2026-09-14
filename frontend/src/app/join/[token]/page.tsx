@@ -331,12 +331,14 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
           </div>
           <div className="space-y-2">
             <h2 className="text-2xl font-bold text-white tracking-tight">
-              {inviteStatus.reason === "REVOKED" ? "Invite Link Expired" : "Broadcast Has Ended"}
+              {inviteStatus.reason === "REVOKED" || inviteStatus.reason === "MISSING_TOKEN"
+                ? "Invite Link Expired or Invalid"
+                : "Broadcast Has Ended"}
             </h2>
             <p className="text-sm text-slate-400 leading-relaxed">
               {inviteStatus.message ||
-                (inviteStatus.reason === "REVOKED"
-                  ? "This guest invite link has been reset or revoked by the studio host. Please ask the host for an updated invite link."
+                (inviteStatus.reason === "REVOKED" || inviteStatus.reason === "MISSING_TOKEN"
+                  ? "This guest invite link is missing a valid security token or has been revoked by the studio host. Please ask the host for an updated invite link."
                   : "This live broadcast has ended. The studio is no longer accepting guest participants.")}
             </p>
           </div>
