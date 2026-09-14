@@ -917,6 +917,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         isOpen={showMonitor}
         onClose={() => setShowMonitor(false)}
         isLive={isLive}
+        broadcastId={params.id}
       />
     </div>
   );

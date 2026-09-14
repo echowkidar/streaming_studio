@@ -224,6 +224,20 @@ router.post('/:broadcastId/stream/start', async (req: Request, res: Response, ne
   }
 });
 
+// GET /api/broadcasts/:broadcastId/stream/status
+router.get('/:broadcastId/stream/status', (req: Request, res: Response): void => {
+  try {
+    const streamer = RtmpStreamerService.getInstance();
+    const status = streamer.getStatus(req.params.broadcastId);
+    res.status(200).json({ success: true, data: status });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to retrieve stream status',
+    });
+  }
+});
+
 // POST /api/broadcasts/:broadcastId/stream/chunk
 router.post(
   '/:broadcastId/stream/chunk',

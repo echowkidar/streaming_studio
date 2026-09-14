@@ -10,6 +10,15 @@ interface StreamSession {
   ffmpegProcesses: ChildProcess[];
   startedAt: Date;
   status: 'STARTING' | 'LIVE' | 'STOPPED' | 'ERROR';
+  isConnectedToRtmp: boolean;
+  framesSent: number;
+  currentFps: number;
+  currentBitrate: string;
+  streamTime: string;
+  bytesReceived: number;
+  chunksReceived: number;
+  lastError: string | null;
+  recentLogs: string[];
 }
 
 export class RtmpStreamerService extends EventEmitter {
@@ -36,6 +45,8 @@ export class RtmpStreamerService extends EventEmitter {
   private spawnFfmpegProcess(broadcastId: string, targetUrl: string): ChildProcess {
     // Broadcast-grade low-CPU configuration with CFR fps filter to prevent macroblock tearing
     const args = [
+      '-analyzeduration', '1000000',
+      '-probesize', '1000000',
       '-fflags', '+nobuffer+genpts',
       '-f', 'webm',
       '-i', 'pipe:0',
@@ -53,6 +64,7 @@ export class RtmpStreamerService extends EventEmitter {
       '-b:a', '128k',
       '-ar', '44100',
       '-af', 'aresample=async=1:first_pts=0',
+      '-rw_timeout', '15000000',
       '-f', 'flv',
       '-flvflags', 'no_duration_filesize',
       '-rtmp_live', 'live',
@@ -69,21 +81,72 @@ export class RtmpStreamerService extends EventEmitter {
     });
 
     proc.stderr?.on('data', (data) => {
-      const msg = data.toString().trim();
-      if (msg) {
-        console.log(`[FFmpeg RTMP - ${broadcastId}]:`, msg);
+      const raw = data.toString();
+      const session = this.activeSessions.get(broadcastId);
+      const lines = raw.split(/[\r\n]+/).map((l: string) => l.trim()).filter(Boolean);
+
+      for (const line of lines) {
+        if (session) {
+          session.recentLogs.push(`[${new Date().toISOString().substring(11, 19)}] ${line}`);
+          if (session.recentLogs.length > 30) {
+            session.recentLogs.shift();
+          }
+
+          // Active RTMP output detection: FFmpeg writes frame= / fps= / bitrate= when transmitting to YouTube
+          if (line.includes('frame=') || line.includes('fps=') || line.includes('bitrate=')) {
+            session.isConnectedToRtmp = true;
+            session.status = 'LIVE';
+            session.lastError = null;
+
+            const fpsMatch = line.match(/fps=\s*([0-9.]+)/);
+            if (fpsMatch) session.currentFps = parseFloat(fpsMatch[1]);
+
+            const brMatch = line.match(/bitrate=\s*([0-9.]+\w+)/);
+            if (brMatch) session.currentBitrate = brMatch[1];
+
+            const timeMatch = line.match(/time=\s*([0-9:.]+)/);
+            if (timeMatch) session.streamTime = timeMatch[1];
+
+            const frameMatch = line.match(/frame=\s*(\d+)/);
+            if (frameMatch) session.framesSent = parseInt(frameMatch[1], 10);
+          }
+
+          // Connection failure detection
+          const lower = line.toLowerCase();
+          if (
+            lower.includes('connection refused') ||
+            lower.includes('connection timed out') ||
+            lower.includes('cannot open connection') ||
+            lower.includes('server error') ||
+            lower.includes('handshake failed') ||
+            lower.includes('broken pipe') ||
+            lower.includes('network is unreachable') ||
+            lower.includes('error opening output')
+          ) {
+            session.lastError = line;
+            session.isConnectedToRtmp = false;
+            console.error(`[FFmpeg RTMP Error - ${broadcastId}]:`, line);
+          }
+        }
+        console.log(`[FFmpeg RTMP - ${broadcastId}]:`, line);
       }
     });
 
     proc.on('close', (code) => {
       console.log(`[FFmpeg RTMP Exited - ${broadcastId}]: exit code ${code}`);
       const session = this.activeSessions.get(broadcastId);
-      // Auto-heal: If broadcast is still LIVE, automatically reconnect pipeline!
-      if (session && session.status === 'LIVE') {
-        console.log(`[FFmpeg RTMP Auto-Recovery]: Reconnecting stream for ${targetUrl} in 1s...`);
-        setTimeout(() => {
-          this.respawnDestinationProcess(broadcastId, targetUrl, proc);
-        }, 1000);
+      if (session) {
+        session.isConnectedToRtmp = false;
+        if (code !== 0 && !session.lastError) {
+          session.lastError = `FFmpeg encoder exited with code ${code}`;
+        }
+        // Auto-heal: If broadcast is still LIVE or STARTING, automatically reconnect pipeline!
+        if (session.status === 'LIVE' || session.status === 'STARTING') {
+          console.log(`[FFmpeg RTMP Auto-Recovery]: Reconnecting stream for ${targetUrl} in 1s...`);
+          setTimeout(() => {
+            this.respawnDestinationProcess(broadcastId, targetUrl, proc);
+          }, 1000);
+        }
       }
     });
 
@@ -235,7 +298,16 @@ export class RtmpStreamerService extends EventEmitter {
         destinationUrls: rtmpUrls,
         ffmpegProcesses,
         startedAt: new Date(),
-        status: 'LIVE',
+        status: 'STARTING',
+        isConnectedToRtmp: false,
+        framesSent: 0,
+        currentFps: 0,
+        currentBitrate: '0kbits/s',
+        streamTime: '00:00:00',
+        bytesReceived: 0,
+        chunksReceived: 0,
+        lastError: null,
+        recentLogs: [],
       };
 
       this.activeSessions.set(broadcastId, session);
@@ -261,10 +333,13 @@ export class RtmpStreamerService extends EventEmitter {
    */
   public pushChunk(broadcastId: string, chunk: Buffer): boolean {
     const session = this.activeSessions.get(broadcastId);
-    if (!session || session.status !== 'LIVE') {
+    if (!session || session.status === 'STOPPED') {
       console.warn(`[RTMP] pushChunk ignored: session "${broadcastId}" not found or status is "${session?.status}"`);
       return false;
     }
+
+    session.chunksReceived++;
+    session.bytesReceived += chunk.length;
 
     // Cache initial WebM header for recovery
     if (!this.headerBuffers.has(broadcastId)) {
@@ -294,6 +369,7 @@ export class RtmpStreamerService extends EventEmitter {
     if (!session) return false;
 
     session.status = 'STOPPED';
+    session.isConnectedToRtmp = false;
 
     for (const proc of session.ffmpegProcesses) {
       try {
@@ -322,6 +398,44 @@ export class RtmpStreamerService extends EventEmitter {
 
   public getSession(broadcastId: string): StreamSession | undefined {
     return this.activeSessions.get(broadcastId);
+  }
+
+  /**
+   * Get real-time connection telemetry for the Program Output Monitor
+   */
+  public getStatus(broadcastId: string) {
+    const session = this.activeSessions.get(broadcastId);
+    if (!session) {
+      return {
+        active: false,
+        status: 'IDLE' as const,
+        isConnectedToRtmp: false,
+        framesSent: 0,
+        currentFps: 0,
+        currentBitrate: '0kbits/s',
+        streamTime: '00:00:00',
+        bytesReceived: 0,
+        chunksReceived: 0,
+        destinationsCount: 0,
+        lastError: null,
+        recentLogs: [] as string[],
+      };
+    }
+
+    return {
+      active: true,
+      status: session.status,
+      isConnectedToRtmp: session.isConnectedToRtmp,
+      framesSent: session.framesSent,
+      currentFps: session.currentFps,
+      currentBitrate: session.currentBitrate,
+      streamTime: session.streamTime,
+      bytesReceived: session.bytesReceived,
+      chunksReceived: session.chunksReceived,
+      destinationsCount: session.destinationUrls.length,
+      lastError: session.lastError,
+      recentLogs: session.recentLogs.slice(-10),
+    };
   }
 }
 
