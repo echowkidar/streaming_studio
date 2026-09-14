@@ -1,15 +1,107 @@
 "use client";
 
-import { Shield, Server, Cpu, HardDrive, Database, Activity, CheckCircle2, RefreshCw, ShieldAlert } from "lucide-react";
+import { useState, useEffect } from "react";
+import { 
+  Shield, Server, Cpu, HardDrive, Database, Activity, 
+  CheckCircle2, RefreshCw, ShieldAlert, Users, KeyRound, 
+  Sparkles, Copy, Check 
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Modal } from "@/components/ui/Modal";
+import { Input } from "@/components/ui/Input";
+import { apiRequest } from "@/lib/api";
 
 export default function AdminPage() {
   const router = useRouter();
   const { user } = useAuthStore();
+
+  const [users, setUsers] = useState<Array<{ id: string; name: string; email: string; role: string; createdAt: string }>>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [selectedUserForReset, setSelectedUserForReset] = useState<{ id?: string; name?: string; email: string } | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [isSavingReset, setIsSavingReset] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccessText, setResetSuccessText] = useState<string | null>(null);
+  const [copiedPassword, setCopiedPassword] = useState(false);
+
+  const fetchUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const res = await apiRequest<Array<{ id: string; name: string; email: string; role: string; createdAt: string }>>(
+        "/api/admin/users"
+      );
+      if (res.success && Array.isArray(res.data)) {
+        setUsers(res.data);
+      }
+    } catch (err) {
+      console.warn("Failed to load users:", err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.role === "SUPER_ADMIN") {
+      fetchUsers();
+    }
+  }, [user]);
+
+  const handleGenerateRandomPassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let rand = "";
+    for (let i = 0; i < 4; i++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    const pass = `Studio#${rand}${Math.floor(100 + Math.random() * 900)}`;
+    setNewPasswordInput(pass);
+  };
+
+  const handleExecutePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPasswordInput || newPasswordInput.length < 6) {
+      setResetError("Password must be at least 6 characters long");
+      return;
+    }
+    if (!selectedUserForReset?.email) {
+      setResetError("Email is required");
+      return;
+    }
+
+    setIsSavingReset(true);
+    setResetError(null);
+
+    try {
+      let res;
+      if (selectedUserForReset.id && !selectedUserForReset.id.startsWith("usr-custom")) {
+        res = await apiRequest(`/api/admin/users/${selectedUserForReset.id}/reset-password`, {
+          method: "POST",
+          data: { newPassword: newPasswordInput },
+        });
+      } else {
+        res = await apiRequest(`/api/admin/reset-password-by-email`, {
+          method: "POST",
+          data: {
+            email: selectedUserForReset.email,
+            newPassword: newPasswordInput,
+          },
+        });
+      }
+
+      if (res.success) {
+        setResetSuccessText(newPasswordInput);
+        fetchUsers();
+      } else {
+        setResetError(res.error || "Failed to reset password. Please try again.");
+      }
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Failed to reset password.");
+    } finally {
+      setIsSavingReset(false);
+    }
+  };
 
   if (!user || user.role !== "SUPER_ADMIN") {
     return (
@@ -141,6 +233,198 @@ export default function AdminPage() {
           </table>
         </div>
       </Card>
+
+      {/* User Management & Password Override */}
+      <Card className="p-6">
+        <CardHeader className="p-0 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-400" />
+              User Accounts & Password Management
+            </CardTitle>
+            <p className="text-xs text-slate-400 mt-1">
+              Directly reset or override passwords for any user who is locked out or forgot their password.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setSelectedUserForReset({ email: "", name: "Custom User" });
+              setNewPasswordInput("");
+              setResetSuccessText(null);
+              setResetError(null);
+              setIsResetModalOpen(true);
+            }}
+            className="text-xs shrink-0"
+          >
+            <KeyRound className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
+            Reset Any Password by Email
+          </Button>
+        </CardHeader>
+
+        {usersLoading ? (
+          <div className="py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            Loading registered accounts...
+          </div>
+        ) : users.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            No registered users found in the database.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/5 text-slate-400">
+                  <th className="py-3 px-4 font-semibold">User</th>
+                  <th className="py-3 px-4 font-semibold">Email</th>
+                  <th className="py-3 px-4 font-semibold">Role</th>
+                  <th className="py-3 px-4 font-semibold">Created</th>
+                  <th className="py-3 px-4 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {users.map((u) => (
+                  <tr key={u.id} className="hover:bg-white/[0.02] text-slate-300">
+                    <td className="py-3 px-4 font-medium text-white">{u.name || "User"}</td>
+                    <td className="py-3 px-4 font-mono text-slate-400">{u.email}</td>
+                    <td className="py-3 px-4">
+                      <Badge variant={u.role === "SUPER_ADMIN" ? "purple" : "neutral"} size="sm">
+                        {u.role}
+                      </Badge>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400">
+                      {new Date(u.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedUserForReset(u);
+                          setNewPasswordInput("");
+                          setResetSuccessText(null);
+                          setResetError(null);
+                          setIsResetModalOpen(true);
+                        }}
+                        className="h-7 px-2.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+                        title="Set new password for this user"
+                      >
+                        <KeyRound className="w-3 h-3 mr-1" />
+                        Reset Password
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Admin Password Reset Modal */}
+      <Modal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        title="Admin Password Reset"
+        description="Set a new password for this user. The new password will be hashed and updated in the database immediately."
+      >
+        <form onSubmit={handleExecutePasswordReset} className="space-y-4 pt-2">
+          <div>
+            <label className="text-xs font-medium text-slate-300 block mb-1">Target User Email</label>
+            <Input
+              value={selectedUserForReset?.email || ""}
+              onChange={(e) =>
+                setSelectedUserForReset((prev) => ({
+                  ...prev,
+                  email: e.target.value,
+                  name: prev?.name || "User",
+                }))
+              }
+              placeholder="user@example.com"
+              required
+              disabled={Boolean(selectedUserForReset?.id)}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-slate-300">New Password for User</label>
+              <button
+                type="button"
+                onClick={handleGenerateRandomPassword}
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+              >
+                <Sparkles className="w-3 h-3" />
+                Generate Random
+              </button>
+            </div>
+            <Input
+              value={newPasswordInput}
+              onChange={(e) => setNewPasswordInput(e.target.value)}
+              placeholder="Min. 6 characters (e.g. Studio#7492)"
+              required
+            />
+          </div>
+
+          {resetError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>{resetError}</span>
+            </div>
+          )}
+
+          {resetSuccessText && (
+            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs space-y-2">
+              <div className="flex items-center gap-2 text-emerald-300 font-semibold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Password Reset Successfully!</span>
+              </div>
+              <p className="text-slate-300 text-[11px]">
+                Share this password with the user so they can log in:
+              </p>
+              <div className="flex items-center gap-2 bg-black/50 p-2 rounded-lg border border-white/10 font-mono text-emerald-400 text-xs">
+                <span className="flex-1 select-all">{resetSuccessText}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    navigator.clipboard.writeText(resetSuccessText);
+                    setCopiedPassword(true);
+                    setTimeout(() => setCopiedPassword(false), 2000);
+                  }}
+                  className="h-6 px-2 text-[11px]"
+                >
+                  {copiedPassword ? "Copied!" : "Copy"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsResetModalOpen(false)}
+            >
+              {resetSuccessText ? "Close" : "Cancel"}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              isLoading={isSavingReset}
+              disabled={!newPasswordInput || newPasswordInput.length < 6}
+            >
+              <KeyRound className="w-3.5 h-3.5 mr-1.5" />
+              Set Password
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
