@@ -1,9 +1,31 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import * as bcrypt from 'bcryptjs';
+import * as jwt from 'jsonwebtoken';
+import * as crypto from 'crypto';
 import { prisma } from '../lib/prisma';
+import { config } from '../config';
 
 const router = Router();
+
+function generatePasswordSignature(passwordHash: string): string {
+  return crypto.createHash('sha256').update(passwordHash || '').digest('hex').substring(0, 16);
+}
+
+function createSessionToken(user: { id: string; email: string; role: string; passwordHash: string }): string {
+  const pwdSig = generatePasswordSignature(user.passwordHash);
+  const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
+  return jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      pwdSig,
+    },
+    secret,
+    { expiresIn: '30d' }
+  );
+}
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -76,6 +98,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
       // Non-fatal if workspace link fails
     }
 
+    const sessionToken = createSessionToken(user);
+
     res.status(201).json({
       success: true,
       data: {
@@ -86,8 +110,8 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
           role: user.role,
         },
         tokens: {
-          accessToken: 'jwt_' + Math.random().toString(36).substring(2),
-          refreshToken: 'refresh_' + Math.random().toString(36).substring(2),
+          accessToken: sessionToken,
+          refreshToken: sessionToken,
         },
       },
     });
@@ -172,6 +196,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       });
     }
 
+    const sessionToken = createSessionToken(user);
+
     res.status(200).json({
       success: true,
       data: {
@@ -182,8 +208,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
           role: user.role,
         },
         tokens: {
-          accessToken: 'jwt_' + Math.random().toString(36).substring(2),
-          refreshToken: 'refresh_' + Math.random().toString(36).substring(2),
+          accessToken: sessionToken,
+          refreshToken: sessionToken,
         },
       },
     });
@@ -206,12 +232,31 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
 
 router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+    const token = authHeader.split(' ')[1];
+    const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
+    const decoded = jwt.verify(token, secret) as any;
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+    if (!user) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+    const currentSig = generatePasswordSignature(user.passwordHash);
+    if (decoded.pwdSig && decoded.pwdSig !== currentSig) {
+      res.status(401).json({ success: false, error: 'SESSION_REVOKED' });
+      return;
+    }
+    const newToken = createSessionToken(user);
     res.status(200).json({
       success: true,
       data: {
         tokens: {
-          accessToken: 'jwt_' + Math.random().toString(36).substring(2),
-          refreshToken: 'refresh_' + Math.random().toString(36).substring(2),
+          accessToken: newToken,
+          refreshToken: newToken,
         },
       },
     });
@@ -222,9 +267,63 @@ router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
 
 router.get('/me', async (req: Request, res: Response): Promise<void> => {
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ success: false, error: 'Unauthorized: No session token provided' });
+      return;
+    }
+
+    const token = authHeader.split(' ')[1];
+    const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch {
+      res.status(401).json({ success: false, error: 'Unauthorized: Token expired or invalid' });
+      return;
+    }
+
+    if (!decoded || !decoded.userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized: Invalid token format' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        passwordHash: true,
+      },
+    });
+
+    if (!user) {
+      res.status(401).json({ success: false, error: 'Unauthorized: User account not found' });
+      return;
+    }
+
+    // Security Check: Verify password has NOT been changed since this session token was created
+    const currentSig = generatePasswordSignature(user.passwordHash);
+    if (decoded.pwdSig && decoded.pwdSig !== currentSig) {
+      res.status(401).json({
+        success: false,
+        error: 'SESSION_REVOKED',
+        message: 'Password was changed. Please log in again with your new credentials.',
+      });
+      return;
+    }
+
     res.status(200).json({
       success: true,
-      data: { id: 'usr_1', email: 'admin@livestudio.io', name: 'Super Admin', role: 'SUPER_ADMIN' },
+      data: {
+        id: user.id,
+        email: user.email,
+        name: user.name || user.email.split('@')[0] || 'User',
+        role: user.role,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Internal Server Error' });
@@ -260,7 +359,7 @@ router.post('/change-password', async (req: Request, res: Response): Promise<voi
     }
 
     const newHash = await bcrypt.hash(data.newPassword, 10);
-    await prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id: user.id },
       data: {
         passwordHash: newHash,
@@ -268,9 +367,18 @@ router.post('/change-password', async (req: Request, res: Response): Promise<voi
       },
     });
 
+    // Generate fresh session token for the user who just changed their password
+    const newToken = createSessionToken(updatedUser);
+
     res.status(200).json({
       success: true,
-      message: 'Password changed successfully! Your account credentials have been updated.',
+      message: 'Password changed successfully! All other active sessions have been revoked.',
+      data: {
+        tokens: {
+          accessToken: newToken,
+          refreshToken: newToken,
+        },
+      },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

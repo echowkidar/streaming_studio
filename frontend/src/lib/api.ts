@@ -25,6 +25,12 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
   let token = "";
   if (typeof window !== "undefined") {
     token = localStorage.getItem("livestudio_token") || "";
+    if (!token) {
+      try {
+        const stored = JSON.parse(localStorage.getItem("livestudio_auth") || "{}");
+        token = stored?.state?.token || "";
+      } catch {}
+    }
   }
 
   const headers: Record<string, string> = {
@@ -47,6 +53,14 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
     const result = await res.json().catch(() => ({}));
     
     if (!res.ok) {
+      if (res.status === 401 && typeof window !== "undefined" && !endpoint.includes("/auth/login")) {
+        if (result.error === "SESSION_REVOKED") {
+          localStorage.removeItem("livestudio_token");
+          localStorage.removeItem("livestudio_auth");
+          window.location.href = "/login";
+        }
+      }
+
       return {
         success: false,
         error: result.error || `HTTP error ${res.status}`,

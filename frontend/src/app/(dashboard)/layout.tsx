@@ -12,7 +12,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { user, token } = useAuthStore();
+  const { user, token, logout, setUser } = useAuthStore();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -24,6 +24,52 @@ export default function DashboardLayout({
       router.replace("/login");
     }
   }, [mounted, user, token, router]);
+
+  // Active Session & Password Change Verification with Server
+  useEffect(() => {
+    if (!mounted || !token) return;
+
+    let isMounted = true;
+    const verifySession = async () => {
+      try {
+        const res = await fetch("/api/auth/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!isMounted) return;
+
+        if (res.status === 401) {
+          console.warn("[Auth] Session invalid or revoked due to password change. Redirecting to login...");
+          logout();
+          router.replace("/login");
+          return;
+        }
+
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.success && data?.data && isMounted) {
+            setUser({
+              id: data.data.id,
+              name: data.data.name,
+              email: data.data.email,
+              role: data.data.role,
+              createdAt: user?.createdAt || new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        // Network failure (offline) - do not logout, preserve offline state
+        console.warn("[Auth] Session verification skipped due to network:", err);
+      }
+    };
+
+    verifySession();
+    return () => {
+      isMounted = false;
+    };
+  }, [mounted, token, logout, router, setUser]);
 
   // Prevent flicker during hydration or when unauthenticated
   if (!mounted || (!user && !token)) {

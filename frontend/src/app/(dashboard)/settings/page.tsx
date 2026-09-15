@@ -18,7 +18,7 @@ function SettingsContent() {
   const searchParams = useSearchParams();
   const tabFromQuery = searchParams.get("tab");
   
-  const { user, updateUser, logout } = useAuthStore();
+  const { user, updateUser, setToken, logout } = useAuthStore();
   
   // Default to 'account' tab so users clicking 'Account Settings' or visiting Settings land directly on Profile & Security
   const [activeTab, setActiveTab] = useState<string>(tabFromQuery || "account");
@@ -175,9 +175,13 @@ function SettingsContent() {
       });
 
       if (res.success) {
+        const newAccessToken = (res.data as any)?.tokens?.accessToken;
+        if (newAccessToken) {
+          setToken(newAccessToken);
+        }
         setPasswordMessage({ 
           type: "success", 
-          text: "Password updated successfully! Your account credentials have been secured." 
+          text: "Password updated successfully! All other devices have been logged out, and your credentials have been secured." 
         });
         setCurrentPassword("");
         setNewPassword("");

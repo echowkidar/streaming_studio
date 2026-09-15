@@ -29,10 +29,23 @@ export const useAuthStore = create<AuthState>()(
         set((state) => ({
           user: state.user ? { ...state.user, ...updates } : null,
         })),
-      setToken: (token) => set({ token }),
+      setToken: (token) => {
+        if (typeof window !== "undefined") {
+          if (token) {
+            localStorage.setItem("livestudio_token", token);
+          } else {
+            localStorage.removeItem("livestudio_token");
+          }
+        }
+        set({ token });
+      },
       setCurrentWorkspace: (workspace) => set({ currentWorkspace: workspace }),
       setWorkspaces: (workspaces) => set({ workspaces }),
       logout: () => {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("livestudio_token");
+          localStorage.removeItem("livestudio_auth");
+        }
         set({ user: null, token: null, currentWorkspace: null, workspaces: [] });
       },
     }),
