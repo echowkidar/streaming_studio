@@ -2,9 +2,11 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { StorageService } from '../services/storage.service';
 import { AssetType } from '@prisma/client';
+import { config } from '../config';
 
 const router = Router();
 const storageService = new StorageService();
@@ -119,28 +121,86 @@ const upload = multer({
 
 async function resolveWorkspaceId(req: Request): Promise<string> {
   const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
+  if (reqWsId && reqWsId !== 'default') {
+    try {
+      const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
+      if (ws) return ws.id;
+    } catch {
+      return reqWsId;
+    }
   }
-  const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (defaultWs) return defaultWs.id;
 
-  const newWs = await prisma.workspace.create({
-    data: {
-      name: 'Default Workspace',
-      slug: `default-${Date.now()}`,
-      owner: {
-        create: {
-          email: `admin-${Date.now()}@livestudio.io`,
-          passwordHash: 'seeded',
-          name: 'Super Admin',
-          role: 'SUPER_ADMIN',
+  // Check authenticated user from JWT Bearer token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
+      const decoded = jwt.decode(token) as { userId?: string } | null;
+      if (decoded?.userId) {
+        let userWs = await prisma.workspace.findFirst({
+          where: { ownerId: decoded.userId },
+        });
+
+        if (!userWs) {
+          const membership = await prisma.workspaceMember.findFirst({
+            where: { userId: decoded.userId },
+            include: { workspace: true },
+          });
+          if (membership?.workspace) {
+            userWs = membership.workspace;
+          }
+        }
+
+        if (!userWs) {
+          const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+          if (user) {
+            userWs = await prisma.workspace.create({
+              data: {
+                name: `${user.name || 'User'}'s Studio`,
+                slug: `ws-${user.id.toLowerCase().slice(-6)}-${Date.now()}`,
+                ownerId: user.id,
+                members: {
+                  create: {
+                    userId: user.id,
+                    role: 'OWNER',
+                  },
+                },
+              },
+            });
+          }
+        }
+
+        if (userWs) return userWs.id;
+      }
+    } catch (err) {
+      console.warn('[Media] Error resolving user workspace from JWT:', err);
+    }
+  }
+
+  try {
+    const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
+    if (defaultWs) return defaultWs.id;
+
+    const newWs = await prisma.workspace.create({
+      data: {
+        name: 'Default Workspace',
+        slug: `default-${Date.now()}`,
+        owner: {
+          create: {
+            email: `admin-${Date.now()}@livestudio.io`,
+            passwordHash: 'seeded',
+            name: 'Super Admin',
+            role: 'SUPER_ADMIN',
+          },
         },
       },
-    },
-  });
-  return newWs.id;
+    });
+    return newWs.id;
+  } catch (error) {
+    console.warn('[Workspace] Database unavailable during resolveWorkspaceId, using default workspace ID:', error);
+    return 'default-workspace';
+  }
 }
 
 function resolveAssetType(mimeType: string): AssetType {
@@ -165,6 +225,7 @@ function serializeMediaAsset(asset: any, presignedUrl?: string) {
     fileSize: asset.fileSize ? Number(asset.fileSize) : 0,
     storagePath: asset.storagePath,
     url: fileUrl,
+    metadata: asset.metadata,
     createdAt: asset.createdAt,
   };
 }
@@ -183,25 +244,39 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 
     // --- STRICT VPS STORAGE QUOTA ENFORCEMENT ---
 
-    // 1. VIDEO: Max 2 videos, max 10 minutes (600s), max 1080p resolution
+    // 1. VIDEO: Unlimited files, Max 60 Minutes (3600s) Total Duration, Max 1080p resolution
     if (assetType === 'VIDEO') {
-      const videoCount = await prisma.mediaAsset.count({
-        where: { workspaceId, assetType: 'VIDEO' },
+      const newDuration = req.body.duration ? Math.round(Number(req.body.duration)) : 0;
+
+      // Calculate existing total video duration in this studio session / workspace
+      const existingVideos = await prisma.mediaAsset.findMany({
+        where: {
+          workspaceId,
+          assetType: 'VIDEO',
+        },
+        select: { metadata: true },
       });
-      if (videoCount >= 2) {
+
+      let currentTotalDuration = 0;
+      for (const v of existingVideos) {
+        const meta = (v.metadata as Record<string, any>) || {};
+        currentTotalDuration += Number(meta.duration || 0);
+      }
+
+      const MAX_TOTAL_DURATION_SEC = 3600; // 60 minutes total
+      if (currentTotalDuration + newDuration > MAX_TOTAL_DURATION_SEC) {
+        const remainingSec = Math.max(0, MAX_TOTAL_DURATION_SEC - currentTotalDuration);
+        const remMin = Math.floor(remainingSec / 60);
+        const remSec = remainingSec % 60;
+        const newMin = Math.floor(newDuration / 60);
+        const newSec = newDuration % 60;
         res.status(400).json({
           success: false,
-          error: 'Video quota exceeded: Maximum 2 videos allowed in media library to preserve VPS storage. Please delete an existing video first.',
+          error: `Total video duration limit (60 minutes) exceeded! Current total is ${Math.floor(currentTotalDuration / 60)}m. You only have ${remMin}m ${remSec}s remaining, but this video is ${newMin}m ${newSec}s. Please delete an existing video first.`,
         });
         return;
       }
-      if (req.body.duration && Number(req.body.duration) > 600) {
-        res.status(400).json({
-          success: false,
-          error: 'Video duration exceeds limit: Maximum 10 minutes (600 seconds) allowed.',
-        });
-        return;
-      }
+
       if (req.body.height && Number(req.body.height) > 1080) {
         res.status(400).json({
           success: false,

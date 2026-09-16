@@ -80,22 +80,24 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    // Link user to default workspace if available
+    // Create dedicated private workspace for the user
+    let userWorkspace = null;
     try {
-      const defaultWorkspace = await prisma.workspace.findFirst({
-        where: { slug: 'default' },
-      });
-      if (defaultWorkspace) {
-        await prisma.workspaceMember.create({
-          data: {
-            workspaceId: defaultWorkspace.id,
-            userId: user.id,
-            role: 'CREATOR',
+      userWorkspace = await prisma.workspace.create({
+        data: {
+          name: `${user.name}'s Studio`,
+          slug: `ws-${user.id.toLowerCase()}-${Date.now()}`,
+          ownerId: user.id,
+          members: {
+            create: {
+              userId: user.id,
+              role: 'OWNER',
+            },
           },
-        });
-      }
-    } catch {
-      // Non-fatal if workspace link fails
+        },
+      });
+    } catch (wsErr) {
+      console.warn('[Register] Failed to create private workspace:', wsErr);
     }
 
     const sessionToken = createSessionToken(user);
@@ -109,6 +111,9 @@ router.post('/register', async (req: Request, res: Response): Promise<void> => {
           name: user.name,
           role: user.role,
         },
+        workspace: userWorkspace
+          ? { id: userWorkspace.id, name: userWorkspace.name, slug: userWorkspace.slug }
+          : null,
         tokens: {
           accessToken: sessionToken,
           refreshToken: sessionToken,
@@ -196,6 +201,30 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       });
     }
 
+    // Ensure personal workspace exists for this user
+    let userWorkspace = await prisma.workspace.findFirst({
+      where: { ownerId: user.id },
+    });
+    if (!userWorkspace) {
+      try {
+        userWorkspace = await prisma.workspace.create({
+          data: {
+            name: `${user.name || 'User'}'s Studio`,
+            slug: `ws-${user.id.toLowerCase().slice(-8)}-${Date.now()}`,
+            ownerId: user.id,
+            members: {
+              create: {
+                userId: user.id,
+                role: 'OWNER',
+              },
+            },
+          },
+        });
+      } catch (e) {
+        console.warn('[Login] Failed to create workspace fallback:', e);
+      }
+    }
+
     const sessionToken = createSessionToken(user);
 
     res.status(200).json({
@@ -207,6 +236,9 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
           name: user.name || user.email.split('@')[0] || 'User',
           role: user.role,
         },
+        workspace: userWorkspace
+          ? { id: userWorkspace.id, name: userWorkspace.name, slug: userWorkspace.slug }
+          : null,
         tokens: {
           accessToken: sessionToken,
           refreshToken: sessionToken,
@@ -316,6 +348,11 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const userWorkspace = await prisma.workspace.findFirst({
+      where: { ownerId: user.id },
+      select: { id: true, name: true, slug: true },
+    });
+
     res.status(200).json({
       success: true,
       data: {
@@ -323,6 +360,7 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
         email: user.email,
         name: user.name || user.email.split('@')[0] || 'User',
         role: user.role,
+        workspace: userWorkspace || null,
       },
     });
   } catch (error) {

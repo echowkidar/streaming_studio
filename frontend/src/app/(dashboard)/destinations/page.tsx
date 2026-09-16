@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
+import { useAuthStore } from "@/stores/auth.store";
 
 interface Destination {
   id: string;
@@ -30,6 +31,7 @@ const DEFAULT_URLS: Record<string, string> = {
 const LOCAL_STORAGE_KEY = "livestudio_custom_destinations";
 
 export default function DestinationsPage() {
+  const { user } = useAuthStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDestination, setEditingDestination] = useState<Destination | null>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
@@ -43,10 +45,14 @@ export default function DestinationsPage() {
   const [rtmpUrl, setRtmpUrl] = useState(DEFAULT_URLS.YOUTUBE);
   const [streamKey, setStreamKey] = useState("");
 
+  const getStorageKey = () => {
+    return user?.id ? `livestudio_custom_destinations_${user.id}` : "livestudio_custom_destinations";
+  };
+
   const getLocalDestinations = (): Destination[] => {
     if (typeof window === "undefined") return [];
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const saved = localStorage.getItem(getStorageKey());
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -56,7 +62,7 @@ export default function DestinationsPage() {
   const saveLocalDestinations = (items: Destination[]) => {
     if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
+      localStorage.setItem(getStorageKey(), JSON.stringify(items));
     } catch {
       // ignore
     }
@@ -65,7 +71,10 @@ export default function DestinationsPage() {
   const fetchDestinations = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/destinations");
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+      const res = await fetch("/api/destinations", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -88,7 +97,7 @@ export default function DestinationsPage() {
 
   useEffect(() => {
     fetchDestinations();
-  }, []);
+  }, [user?.id]);
 
   const handleOpenCreate = () => {
     setEditingDestination(null);
@@ -148,9 +157,13 @@ export default function DestinationsPage() {
           payload.streamKey = streamKey.trim();
         }
 
+        const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
         const res = await fetch(`/api/destinations/${editingDestination.id}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify(payload),
         });
         const json = await res.json();
@@ -189,9 +202,13 @@ export default function DestinationsPage() {
 
     try {
       setSubmitting(true);
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
       const res = await fetch("/api/destinations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ name: name.trim(), platform, rtmpUrl: rtmpUrl.trim(), streamKey: streamKey.trim() }),
       });
       const json = await res.json();
@@ -225,7 +242,11 @@ export default function DestinationsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to remove this destination?")) return;
     try {
-      await fetch(`/api/destinations/${id}`, { method: "DELETE" });
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+      await fetch(`/api/destinations/${id}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch (e) {
       console.error("Delete error:", e);
     }

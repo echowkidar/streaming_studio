@@ -1,6 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as bcrypt from 'bcryptjs';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from '../lib/prisma';
 
 const router = Router();
@@ -247,5 +249,88 @@ router.get('/stats', getSystemStats);
 router.get('/users', getUsers);
 router.get('/audit-logs', getAuditLogs);
 router.post('/users/:id/ban', banUser);
+
+// GET /api/admin/media - Super Admin content monitoring across all users
+router.get('/media', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const assets = await prisma.mediaAsset.findMany({
+      include: {
+        workspace: {
+          include: {
+            owner: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const formatted = assets.map((a) => {
+      const meta = (a.metadata as Record<string, any>) || {};
+      const uploader = a.workspace?.owner;
+      return {
+        id: a.id,
+        name: a.name,
+        assetType: a.assetType,
+        mimeType: a.mimeType,
+        fileSize: Number(a.fileSize || 0),
+        duration: meta.duration ? Number(meta.duration) : undefined,
+        storagePath: a.storagePath,
+        url: `/api/media/${a.id}/file`,
+        studioId: meta.studioId || (a.tags.find((t) => t.startsWith('studio-'))?.replace('studio-', '') || 'global'),
+        isTemporary: a.tags.includes('temporary'),
+        createdAt: a.createdAt,
+        uploader: {
+          id: uploader?.id || 'unknown',
+          name: uploader?.name || 'Unknown User',
+          email: uploader?.email || 'unknown@livestudio.io',
+          workspaceName: a.workspace?.name || 'Default Workspace',
+        },
+      };
+    });
+
+    res.status(200).json({ success: true, data: formatted });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/admin/media/:id - Super Admin deletion of prohibited/inappropriate content
+router.delete('/media/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const asset = await prisma.mediaAsset.findUnique({ where: { id } });
+    if (!asset) {
+      res.status(404).json({ success: false, error: 'Media asset not found' });
+      return;
+    }
+
+    if (asset.storagePath.startsWith('local://')) {
+      const relPath = asset.storagePath.replace('local://', '');
+      const fullLocalPath = path.join(process.cwd(), 'uploads', 'session-media', relPath);
+      if (fs.existsSync(fullLocalPath)) {
+        await fs.promises.unlink(fullLocalPath).catch(() => null);
+      }
+    } else {
+      try {
+        const { StorageService } = await import('../services/storage.service');
+        const storageService = new StorageService();
+        await storageService.deleteFile(asset.storagePath).catch(() => null);
+      } catch {}
+    }
+
+    await prisma.mediaAsset.delete({ where: { id } });
+    console.log(`[Admin Moderation] Super Admin deleted prohibited media: "${asset.name}" (${id})`);
+
+    res.status(200).json({ success: true, message: 'Prohibited media asset deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;

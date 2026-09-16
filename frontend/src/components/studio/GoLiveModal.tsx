@@ -4,6 +4,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
+import { useAuthStore } from "@/stores/auth.store";
 
 interface Destination {
   id: string;
@@ -34,6 +35,7 @@ export function GoLiveModal({
   broadcastTitle,
   onGoLive,
 }: GoLiveModalProps) {
+  const { user } = useAuthStore();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,16 +51,20 @@ export function GoLiveModal({
   const [savingChannel, setSavingChannel] = useState(false);
   const [channelError, setChannelError] = useState<string | null>(null);
 
+  const getStorageKey = () => {
+    return user?.id ? `livestudio_custom_destinations_${user.id}` : "livestudio_custom_destinations";
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchDestinations();
     }
-  }, [isOpen]);
+  }, [isOpen, user?.id]);
 
   const saveLocalDestinations = (items: Destination[]) => {
     if (typeof window === "undefined") return;
     try {
-      const existingRaw = localStorage.getItem("livestudio_custom_destinations");
+      const existingRaw = localStorage.getItem(getStorageKey());
       const keyMap = new Map<string, string>();
       if (existingRaw) {
         try {
@@ -83,7 +89,7 @@ export function GoLiveModal({
         return d;
       });
 
-      localStorage.setItem("livestudio_custom_destinations", JSON.stringify(merged));
+      localStorage.setItem(getStorageKey(), JSON.stringify(merged));
     } catch {
       // ignore
     }
@@ -92,7 +98,10 @@ export function GoLiveModal({
   const fetchDestinations = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/destinations");
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+      const res = await fetch("/api/destinations", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -104,7 +113,7 @@ export function GoLiveModal({
       }
       // Fallback to local storage if API is empty or offline
       if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("livestudio_custom_destinations");
+        const saved = localStorage.getItem(getStorageKey());
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -116,7 +125,7 @@ export function GoLiveModal({
     } catch (e) {
       console.error("Failed to load destinations, checking localStorage fallback:", e);
       if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("livestudio_custom_destinations");
+        const saved = localStorage.getItem(getStorageKey());
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -190,9 +199,13 @@ export function GoLiveModal({
           payload.streamKey = channelStreamKey.trim();
         }
 
+        const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
         const res = await fetch(`/api/destinations/${editingDest.id}`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify(payload),
         });
         const json = await res.json();
@@ -225,9 +238,13 @@ export function GoLiveModal({
     };
 
     try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
       const res = await fetch("/api/destinations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           name: channelName.trim(),
           platform: channelPlatform,
@@ -256,7 +273,11 @@ export function GoLiveModal({
   const handleDeleteChannel = async (id: string) => {
     if (!confirm("Are you sure you want to remove this streaming destination?")) return;
     try {
-      await fetch(`/api/destinations/${id}`, { method: "DELETE" });
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+      await fetch(`/api/destinations/${id}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch (e) {
       console.warn("Delete channel API error:", e);
     }

@@ -28,6 +28,7 @@ interface MediaFileItem {
   name: string;
   type: "video" | "audio" | "pdf" | "image";
   duration: string;
+  durationSeconds?: number;
   url: string;
   isUploaded?: boolean;
 }
@@ -93,19 +94,29 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
     const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
 
+    const currentTotalVideoSec = uploadedVideos.reduce((acc, item) => {
+      if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
+      const parts = item.duration.split(":");
+      if (parts.length === 2) {
+        const m = parseInt(parts[0], 10);
+        const s = parseInt(parts[1], 10);
+        if (!isNaN(m) && !isNaN(s)) return acc + m * 60 + s;
+      }
+      return acc;
+    }, 0);
+
+    const MAX_VIDEO_TOTAL_SEC = 3600; // 60 minutes total
+    const remainingVideoSec = Math.max(0, MAX_VIDEO_TOTAL_SEC - currentTotalVideoSec);
+    const remainingMinutes = Math.floor(remainingVideoSec / 60);
+    const remainingSeconds = remainingVideoSec % 60;
+
     let videoDuration = 0;
     let videoWidth = 0;
     let videoHeight = 0;
     let audioDuration = 0;
 
-    // 1. Video validation: Max 2 videos, max 5 minutes (300s), max 720p
+    // 1. Video validation: Unlimited files, Max 60m (3600s) Total Duration, Max 1080p
     if (type === "video") {
-      if (uploadedVideos.length >= 2) {
-        alert("Video quota full! Maximum 2 videos allowed in VPS media library. Pehle purani video delete karein.");
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
-      }
-
       const tempUrl = URL.createObjectURL(file);
       try {
         const tempVideo = document.createElement("video");
@@ -121,14 +132,18 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         videoHeight = tempVideo.videoHeight || 0;
         URL.revokeObjectURL(tempUrl);
 
-        if (videoDuration > 600) {
-          alert(`Video duration (${Math.floor(videoDuration / 60)}m ${videoDuration % 60}s) exceeds limit! Maximum 10 minutes (600s) allowed.`);
+        if (videoHeight > 1080 || videoWidth > 1920) {
+          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 1080p (1920x1080) allowed to preserve VPS resources.`);
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
 
-        if (videoHeight > 1080 || videoWidth > 1920) {
-          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 1080p (1920x1080) allowed to preserve VPS resources.`);
+        if (videoDuration > remainingVideoSec) {
+          const vidMin = Math.floor(videoDuration / 60);
+          const vidSec = videoDuration % 60;
+          alert(
+            `Total video limit (60 minutes) exceeded!\n\nAapke pass sirf ${remainingMinutes}m ${remainingSeconds}s bache hain, jabki yeh video ${vidMin}m ${vidSec}s ki hai.\n\nPehle purani video delete karein ya chhoti video upload karein.`
+          );
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
@@ -203,13 +218,14 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       name: file.name,
       type,
       duration: durationLabel,
+      durationSeconds: type === "video" ? videoDuration : audioDuration,
       url: fileUrl,
       isUploaded: true,
     };
 
     setMediaList((prev) => [newItem, ...prev]);
 
-    // Background upload to backend MinIO API
+    // Background upload to backend MinIO/Local API
     setIsUploading(true);
     try {
       const formData = new FormData();
@@ -219,11 +235,13 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       formData.append("studioId", effectiveStudioId);
       if (videoDuration > 0) formData.append("duration", videoDuration.toString());
       if (videoWidth > 0) formData.append("width", videoWidth.toString());
-      if (videoHeight > 0) formData.append("height", videoHeight.toString());
+      if (videoHeight > 10) formData.append("height", videoHeight.toString());
       if (audioDuration > 0) formData.append("duration", audioDuration.toString());
 
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
       const res = await fetch("/api/media/upload", {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
 
@@ -259,20 +277,27 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
 
   // Load existing media assets from backend library on mount
   React.useEffect(() => {
-    fetch(`/api/media?studioId=${encodeURIComponent(effectiveStudioId)}`)
+    const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+    fetch(`/api/media?studioId=${encodeURIComponent(effectiveStudioId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (json?.success && Array.isArray(json.data) && json.data.length > 0) {
-          const serverItems: MediaFileItem[] = json.data.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            type: item.assetType.toLowerCase() as any,
-            duration: item.metadata?.duration
-              ? `${Math.floor(Number(item.metadata.duration) / 60)}:${(Number(item.metadata.duration) % 60).toString().padStart(2, "0")}`
-              : item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
-            url: item.url,
-            isUploaded: true,
-          }));
+          const serverItems: MediaFileItem[] = json.data.map((item: any) => {
+            const metaSec = Number(item.metadata?.duration || 0);
+            return {
+              id: item.id,
+              name: item.name,
+              type: item.assetType.toLowerCase() as any,
+              durationSeconds: metaSec,
+              duration: metaSec > 0
+                ? `${Math.floor(metaSec / 60)}:${(metaSec % 60).toString().padStart(2, "0")}`
+                : item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
+              url: item.url,
+              isUploaded: true,
+            };
+          });
           setMediaList((prev) => {
             const existingUrls = new Set(prev.map((m) => m.url));
             const existingNames = new Set(prev.map((m) => m.name));
@@ -328,8 +353,12 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     if (activeStageOverlay?.id === id) setStageOverlay(null);
     setMediaList((prev) => prev.filter((m) => m.id !== id));
 
+    const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
     try {
-      await fetch(`/api/media/${id}`, { method: "DELETE" });
+      await fetch(`/api/media/${id}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch (err) {
       console.warn("Failed to delete media asset from backend:", err);
     }
@@ -338,6 +367,24 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const uploadedVideos = mediaList.filter((m) => m.type === "video" && m.isUploaded);
   const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
   const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
+
+  const totalVideoDurationSec = uploadedVideos.reduce((acc, item) => {
+    if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
+    const parts = item.duration.split(":");
+    if (parts.length === 2) {
+      const m = parseInt(parts[0], 10);
+      const s = parseInt(parts[1], 10);
+      if (!isNaN(m) && !isNaN(s)) return acc + m * 60 + s;
+    }
+    return acc;
+  }, 0);
+
+  const MAX_VIDEO_LIMIT_SEC = 3600; // 60 minutes total
+  const remainingVideoSec = Math.max(0, MAX_VIDEO_LIMIT_SEC - totalVideoDurationSec);
+  const remainingMinutes = Math.floor(remainingVideoSec / 60);
+  const remainingSeconds = remainingVideoSec % 60;
+  const usedMinutes = Math.floor(totalVideoDurationSec / 60);
+  const usedSeconds = totalVideoDurationSec % 60;
 
   return (
     <div className="h-full flex flex-col justify-between bg-[#0b0b12]">
@@ -396,18 +443,40 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
 
       {/* VPS Storage Quota Status Bar */}
       <div className="px-3 py-2 border-b border-white/5 bg-slate-950/60 flex items-center justify-between gap-1.5 text-[10px]">
+        {/* Videos: Unlimited files, Max 60m Total Duration */}
         <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
-          <span className="text-slate-400 font-medium">Videos (1080p, ≤10m)</span>
-          <span className={cn("font-mono font-bold mt-0.5", uploadedVideos.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
-            {uploadedVideos.length} / 2
+          <span className="text-slate-400 font-medium">Videos (1080p, ≤60m)</span>
+          <span
+            className={cn(
+              "font-mono font-bold mt-0.5 text-[10.5px]",
+              remainingVideoSec <= 0
+                ? "text-rose-400"
+                : remainingVideoSec < 300
+                ? "text-amber-400"
+                : "text-emerald-400"
+            )}
+          >
+            {usedMinutes}m {usedSeconds}s / 60m
+          </span>
+          <span
+            className={cn(
+              "text-[9px] font-mono mt-0.5",
+              remainingVideoSec <= 0 ? "text-rose-400 font-semibold" : "text-slate-400"
+            )}
+          >
+            {remainingVideoSec <= 0
+              ? "0m left (Full)"
+              : `${remainingMinutes}m ${remainingSeconds}s left`}
           </span>
         </div>
+
         <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
           <span className="text-slate-400 font-medium">Audio (MP3, ≤15m)</span>
           <span className={cn("font-mono font-bold mt-0.5", uploadedAudios.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
             {uploadedAudios.length} / 2
           </span>
         </div>
+
         <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
           <span className="text-slate-400 font-medium">Image/PDF (≤2MB)</span>
           <span className={cn("font-mono font-bold mt-0.5", uploadedDocs.length >= 2 ? "text-amber-400" : "text-emerald-400")}>

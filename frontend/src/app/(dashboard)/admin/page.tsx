@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { 
   Shield, Server, Cpu, HardDrive, Database, Activity, 
   CheckCircle2, RefreshCw, ShieldAlert, Users, KeyRound, 
-  Sparkles, Copy, Check, UserPlus, Trash2 
+  Sparkles, Copy, Check, UserPlus, Trash2, Film, Music, Image as ImageIcon, Eye 
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
 import { apiRequest } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -42,6 +43,105 @@ export default function AdminPage() {
   const [createSuccess, setCreateSuccess] = useState<string | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
+  // Media Moderation State
+  const [adminMedia, setAdminMedia] = useState<Array<{
+    id: string;
+    name: string;
+    assetType: "VIDEO" | "AUDIO" | "IMAGE" | "PDF";
+    mimeType: string;
+    fileSize: number;
+    duration?: number;
+    storagePath: string;
+    url: string;
+    studioId: string;
+    isTemporary: boolean;
+    createdAt: string;
+    uploader: {
+      id: string;
+      name: string;
+      email: string;
+      workspaceName: string;
+    };
+  }>>([]);
+  const [adminMediaLoading, setAdminMediaLoading] = useState(true);
+  const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<{
+    id: string;
+    name: string;
+    assetType: "VIDEO" | "AUDIO" | "IMAGE" | "PDF";
+    mimeType: string;
+    fileSize: number;
+    duration?: number;
+    storagePath: string;
+    url: string;
+    studioId: string;
+    isTemporary: boolean;
+    createdAt: string;
+    uploader: {
+      id: string;
+      name: string;
+      email: string;
+      workspaceName: string;
+    };
+  } | null>(null);
+  const [mediaFilter, setMediaFilter] = useState<string>("ALL");
+
+  const fetchAdminMedia = async () => {
+    setAdminMediaLoading(true);
+    try {
+      const res = await apiRequest<Array<{
+        id: string;
+        name: string;
+        assetType: "VIDEO" | "AUDIO" | "IMAGE" | "PDF";
+        mimeType: string;
+        fileSize: number;
+        duration?: number;
+        storagePath: string;
+        url: string;
+        studioId: string;
+        isTemporary: boolean;
+        createdAt: string;
+        uploader: {
+          id: string;
+          name: string;
+          email: string;
+          workspaceName: string;
+        };
+      }>>("/api/admin/media");
+      if (res.success && Array.isArray(res.data)) {
+        setAdminMedia(res.data);
+      }
+    } catch (err) {
+      console.warn("Failed to load admin media:", err);
+    } finally {
+      setAdminMediaLoading(false);
+    }
+  };
+
+  const handleDeleteProhibitedMedia = async (item: { id: string; name: string; uploader: { email: string } }) => {
+    if (
+      !confirm(
+        `Are you sure you want to permanently delete and purge "${item.name}" uploaded by ${item.uploader.email}? This will immediately remove it from the VPS disk and database.`
+      )
+    ) {
+      return;
+    }
+    setDeletingMediaId(item.id);
+    try {
+      const res = await apiRequest(`/api/admin/media/${item.id}`, { method: "DELETE" });
+      if (res.success) {
+        setAdminMedia((prev) => prev.filter((m) => m.id !== item.id));
+        if (previewMedia?.id === item.id) setPreviewMedia(null);
+      } else {
+        alert(res.error || "Failed to delete media asset");
+      }
+    } catch (err) {
+      console.error("Delete media error:", err);
+    } finally {
+      setDeletingMediaId(null);
+    }
+  };
+
   const fetchUsers = async () => {
     setUsersLoading(true);
     try {
@@ -61,6 +161,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (user?.role === "SUPER_ADMIN") {
       fetchUsers();
+      fetchAdminMedia();
     }
   }, [user]);
 
@@ -212,6 +313,8 @@ export default function AdminPage() {
     { name: "livestudio-nginx", type: "Docker Container", status: "HEALTHY", port: "80/443", uptime: "Running", memory: "24 MB" },
     { name: "livekit-cloud-sfu", type: "Cloud Service", status: "CONNECTED", port: "WSS", uptime: "Global Anycast", memory: "Managed Cloud" },
   ];
+
+  const filteredAdminMedia = mediaFilter === "ALL" ? adminMedia : adminMedia.filter((m) => m.assetType === mediaFilter);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-300">
@@ -436,6 +539,165 @@ export default function AdminPage() {
         )}
       </Card>
 
+      {/* Media Moderation & Prohibited Content Watchdog */}
+      <Card className="p-6">
+        <CardHeader className="p-0 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Film className="w-5 h-5 text-rose-400" />
+              Media Moderation & Prohibited Content Monitoring
+            </CardTitle>
+            <p className="text-xs text-slate-400 mt-1">
+              Live audit of all media uploaded across all users. Watch videos, inspect content, and immediately delete prohibited media.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg bg-surface border border-white/10 p-0.5 text-xs">
+              {["ALL", "VIDEO", "AUDIO", "IMAGE", "PDF"].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setMediaFilter(tab)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                    mediaFilter === tab
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {tab === "ALL" ? "All Files" : tab}
+                </button>
+              ))}
+            </div>
+
+            <Button variant="secondary" size="sm" onClick={fetchAdminMedia} className="text-xs">
+              <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", adminMediaLoading && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+
+        {/* Stats strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 text-xs">
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+            <span className="text-slate-400">Total Uploaded Files</span>
+            <span className="font-mono font-bold text-white text-sm">{adminMedia.length}</span>
+          </div>
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+            <span className="text-slate-400">Total Storage Consumed</span>
+            <span className="font-mono font-bold text-emerald-400 text-sm">
+              {(adminMedia.reduce((acc, m) => acc + (m.fileSize || 0), 0) / (1024 * 1024)).toFixed(1)} MB
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+            <span className="text-slate-400">Total Video Duration</span>
+            <span className="font-mono font-bold text-indigo-400 text-sm">
+              {Math.floor(adminMedia.filter(m => m.assetType === "VIDEO").reduce((acc, m) => acc + (m.duration || 0), 0) / 60)} min
+            </span>
+          </div>
+        </div>
+
+        {adminMediaLoading ? (
+          <div className="py-8 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            Scanning all user uploaded media...
+          </div>
+        ) : filteredAdminMedia.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            No media assets found in the system.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/5 text-slate-400">
+                  <th className="py-3 px-4 font-semibold">Media Asset</th>
+                  <th className="py-3 px-4 font-semibold">Uploader Account</th>
+                  <th className="py-3 px-4 font-semibold">Duration / Size</th>
+                  <th className="py-3 px-4 font-semibold">Studio Session</th>
+                  <th className="py-3 px-4 font-semibold">Uploaded</th>
+                  <th className="py-3 px-4 font-semibold text-right">Moderation Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filteredAdminMedia.map((m) => (
+                  <tr key={m.id} className="hover:bg-white/[0.02] text-slate-300">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-surface border border-white/10 flex items-center justify-center shrink-0">
+                          {m.assetType === "VIDEO" ? (
+                            <Film className="w-4 h-4 text-rose-400" />
+                          ) : m.assetType === "AUDIO" ? (
+                            <Music className="w-4 h-4 text-cyan-400" />
+                          ) : (
+                            <ImageIcon className="w-4 h-4 text-emerald-400" />
+                          )}
+                        </div>
+                        <div className="min-w-0 max-w-[200px]">
+                          <div className="font-medium text-white truncate" title={m.name}>
+                            {m.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            {m.assetType}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="text-white font-medium">{m.uploader.name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono">{m.uploader.email}</div>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-slate-400">
+                      <div>
+                        {m.duration
+                          ? `${Math.floor(m.duration / 60)}:${(m.duration % 60).toString().padStart(2, "0")}`
+                          : "—"}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {(m.fileSize / (1024 * 1024)).toFixed(1)} MB
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-slate-400">
+                      <span className="px-2 py-0.5 rounded bg-white/5 border border-white/5 text-[10px]">
+                        {m.studioId}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
+                      {new Date(m.createdAt).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setPreviewMedia(m)}
+                          className="h-7 px-2.5 text-xs"
+                          title="Watch / Preview content"
+                        >
+                          <Eye className="w-3.5 h-3.5 mr-1 text-indigo-400" />
+                          Watch
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteProhibitedMedia(m)}
+                          disabled={deletingMediaId === m.id}
+                          className="h-7 px-2.5 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                          title="Purge prohibited media from server"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" />
+                          {deletingMediaId === m.id ? "Deleting..." : "Delete"}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       {/* Admin Password Reset Modal */}
       <Modal
         isOpen={isResetModalOpen}
@@ -638,6 +900,80 @@ export default function AdminPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Media Preview & Inspection Modal */}
+      <Modal
+        isOpen={!!previewMedia}
+        onClose={() => setPreviewMedia(null)}
+        title={`Content Inspection: ${previewMedia?.name || ""}`}
+        description={`Uploaded by ${previewMedia?.uploader.name} (${previewMedia?.uploader.email})`}
+      >
+        {previewMedia && (
+          <div className="space-y-4 pt-2">
+            <div className="rounded-xl overflow-hidden bg-black/90 border border-white/10 flex items-center justify-center min-h-[220px] max-h-[380px]">
+              {previewMedia.assetType === "VIDEO" ? (
+                <video
+                  src={previewMedia.url}
+                  controls
+                  autoPlay
+                  className="w-full max-h-[360px] object-contain"
+                />
+              ) : previewMedia.assetType === "AUDIO" ? (
+                <div className="p-8 w-full flex flex-col items-center justify-center gap-4">
+                  <Music className="w-12 h-12 text-cyan-400 animate-pulse" />
+                  <audio src={previewMedia.url} controls autoPlay className="w-full" />
+                </div>
+              ) : (
+                <img
+                  src={previewMedia.url}
+                  alt={previewMedia.name}
+                  className="max-h-[360px] w-auto object-contain"
+                />
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs p-3 rounded-xl bg-white/[0.02] border border-white/5">
+              <div>
+                <span className="text-slate-500 block">File Type</span>
+                <span className="text-white font-mono">{previewMedia.mimeType}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">File Size</span>
+                <span className="text-white font-mono">{(previewMedia.fileSize / (1024 * 1024)).toFixed(2)} MB</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Uploader Account</span>
+                <span className="text-white font-mono">{previewMedia.uploader.email}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Studio Session ID</span>
+                <span className="text-white font-mono">{previewMedia.studioId}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-white/10">
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={() => handleDeleteProhibitedMedia(previewMedia)}
+                disabled={deletingMediaId === previewMedia.id}
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                {deletingMediaId === previewMedia.id ? "Purging..." : "Delete Prohibited Content"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewMedia(null)}
+              >
+                Close Preview
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

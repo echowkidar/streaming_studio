@@ -1,8 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { EncryptionService } from '../services/encryption.service';
 import { DestinationPlatform } from '@prisma/client';
+import { config } from '../config';
 
 const router = Router({ mergeParams: true });
 const encryptionService = new EncryptionService();
@@ -39,15 +41,63 @@ interface FallbackDestinationItem {
 
 export const fallbackDestinations: FallbackDestinationItem[] = [];
 
-// Helper to resolve workspace ID
+// Helper to resolve workspace ID with user-level isolation
 async function resolveWorkspaceId(req: Request): Promise<string> {
   const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId) {
+  if (reqWsId && reqWsId !== 'default') {
     try {
       const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
       if (ws) return ws.id;
     } catch {
       return reqWsId;
+    }
+  }
+
+  // Check authenticated user from JWT Bearer token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
+      const decoded = jwt.decode(token) as { userId?: string } | null;
+      if (decoded?.userId) {
+        let userWs = await prisma.workspace.findFirst({
+          where: { ownerId: decoded.userId },
+        });
+
+        if (!userWs) {
+          const membership = await prisma.workspaceMember.findFirst({
+            where: { userId: decoded.userId },
+            include: { workspace: true },
+          });
+          if (membership?.workspace) {
+            userWs = membership.workspace;
+          }
+        }
+
+        if (!userWs) {
+          const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+          if (user) {
+            userWs = await prisma.workspace.create({
+              data: {
+                name: `${user.name || 'User'}'s Studio`,
+                slug: `ws-${user.id.toLowerCase().slice(-6)}-${Date.now()}`,
+                ownerId: user.id,
+                members: {
+                  create: {
+                    userId: user.id,
+                    role: 'OWNER',
+                  },
+                },
+              },
+            });
+          }
+        }
+
+        if (userWs) return userWs.id;
+      }
+    } catch (err) {
+      console.warn('[Destinations] Error resolving user workspace from JWT:', err);
     }
   }
 
@@ -183,10 +233,10 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       );
     }
 
-    // Merge fallback destinations
+    // Merge fallback destinations belonging to this workspace only
     const seenIds = new Set(destinations.map((d) => d.id));
     for (const fb of fallbackDestinations) {
-      if (!seenIds.has(fb.id)) {
+      if (!seenIds.has(fb.id) && (fb.workspaceId === workspaceId || (!fb.workspaceId && workspaceId === 'default-workspace'))) {
         destinations.push(fb);
       }
     }
