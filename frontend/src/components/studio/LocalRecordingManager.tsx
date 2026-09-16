@@ -63,12 +63,14 @@ export const LocalRecordingManager: React.FC<LocalRecordingModalProps> = ({ isOp
       maxWidth="lg"
     >
       <div className="space-y-4 text-xs">
-        <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 flex items-center justify-between">
+        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center justify-between">
           <span className="flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-indigo-400" />
-            ISO tracks are stored in browser memory & buffered locally.
+            <HardDrive className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>
+              <strong>100% Local PC Recording:</strong> ISO tracks are captured in your browser memory and downloaded directly to your computer. <strong>Zero bytes are uploaded to the VPS server.</strong>
+            </span>
           </span>
-          <Badge variant="purple" size="sm">ZERO OVERLAY</Badge>
+          <Badge variant="success" size="sm" className="shrink-0 ml-2">ZERO VPS DATA</Badge>
         </div>
 
         <div className="divide-y divide-white/5 border border-white/5 rounded-xl bg-surface overflow-hidden">

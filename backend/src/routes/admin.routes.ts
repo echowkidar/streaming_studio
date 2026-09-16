@@ -333,4 +333,135 @@ router.delete('/media/:id', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
+// GET /api/admin/prerecorded - Super Admin monitoring of scheduled pre-recorded streams across all users
+router.get('/prerecorded', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const broadcasts = await prisma.broadcast.findMany({
+      include: {
+        workspace: {
+          include: {
+            owner: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { scheduledAt: 'desc' },
+    });
+
+    const prerecorded = broadcasts
+      .filter((b) => {
+        const settings = (b.settings as Record<string, any>) || {};
+        return !!settings.isPrerecorded;
+      })
+      .map((b) => {
+        const settings = (b.settings as Record<string, any>) || {};
+        const uploader = b.workspace?.owner;
+        const videoFilePath = settings.videoFilePath as string;
+        let fileSize = 0;
+        let fileExists = false;
+
+        if (videoFilePath && fs.existsSync(videoFilePath)) {
+          try {
+            fileSize = fs.statSync(videoFilePath).size;
+            fileExists = true;
+          } catch {}
+        }
+
+        return {
+          id: b.id,
+          title: b.title,
+          status: b.status,
+          scheduledAt: b.scheduledAt,
+          startedAt: b.startedAt,
+          endedAt: b.endedAt,
+          duration: settings.durationSeconds || 0,
+          fileName: settings.fileName || 'Pre-recorded Video',
+          fileSize,
+          fileExists,
+          videoUrl: fileExists ? `/api/admin/prerecorded/${b.id}/video` : null,
+          failureReason: settings.failureReason || null,
+          uploader: {
+            id: uploader?.id || 'unknown',
+            name: uploader?.name || 'Unknown User',
+            email: uploader?.email || 'unknown@livestudio.io',
+          },
+        };
+      });
+
+    res.status(200).json({ success: true, data: prerecorded });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/admin/prerecorded/:id/video - Super Admin preview player for scheduled pre-recorded videos
+router.get('/prerecorded/:id/video', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const broadcast = await prisma.broadcast.findUnique({ where: { id: req.params.id } });
+    if (!broadcast) {
+      res.status(404).json({ success: false, error: 'Broadcast not found' });
+      return;
+    }
+
+    const settings = (broadcast.settings as Record<string, any>) || {};
+    const videoFilePath = settings.videoFilePath as string;
+
+    if (!videoFilePath || !fs.existsSync(videoFilePath)) {
+      res.status(404).json({ success: false, error: 'Video file no longer exists on VPS (already auto-deleted)' });
+      return;
+    }
+
+    const stat = fs.statSync(videoFilePath);
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const chunksize = end - start + 1;
+      const file = fs.createReadStream(videoFilePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': stat.size,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(videoFilePath).pipe(res);
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/admin/prerecorded/:id - Super Admin cancel & immediate deletion of scheduled pre-recorded video
+router.delete('/prerecorded/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { PrerecordedStreamerService } = await import('../services/prerecorded-streamer.service');
+    const streamer = PrerecordedStreamerService.getInstance();
+    const canceled = await streamer.cancelScheduledBroadcast(req.params.id);
+
+    if (canceled) {
+      console.log(`[Admin Moderation] Super Admin canceled scheduled broadcast ${req.params.id} and unlinked video from VPS`);
+      res.status(200).json({ success: true, message: 'Scheduled broadcast canceled and video deleted from VPS' });
+    } else {
+      res.status(404).json({ success: false, error: 'Broadcast not found or could not be canceled' });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

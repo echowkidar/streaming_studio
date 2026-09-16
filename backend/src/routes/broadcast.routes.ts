@@ -1,10 +1,34 @@
 import express, { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { prisma } from '../lib/prisma';
 import { BroadcastStatus } from '@prisma/client';
 import { RtmpStreamerService } from '../services/rtmp-streamer.service';
+import { PrerecordedStreamerService } from '../services/prerecorded-streamer.service';
 
 const router = Router({ mergeParams: true });
+
+const prerecordedDir = path.join(process.cwd(), 'uploads', 'prerecorded');
+if (!fs.existsSync(prerecordedDir)) {
+  fs.mkdirSync(prerecordedDir, { recursive: true });
+}
+
+const prerecordedStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, prerecordedDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.mp4';
+    cb(null, `prerecorded-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
+  },
+});
+
+const uploadPrerecorded = multer({
+  storage: prerecordedStorage,
+  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB max upload for 40 min 1080p
+});
 
 const BroadcastSchema = z.object({
   title: z.string().min(1, 'Broadcast title is required'),
@@ -297,6 +321,204 @@ router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, nex
   } catch (error) {
     console.error(`[Broadcast API] /stream/stop error:`, error);
     res.status(200).json({ success: true });
+  }
+});
+
+// POST /api/broadcasts/schedule-prerecorded (Scheduled simulated live stream with 40m cap, 72h window, and auto-delete)
+router.post('/schedule-prerecorded', uploadPrerecorded.single('video'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { title, scheduledAt, studioId, workspaceId, mediaAssetId } = req.body;
+    const duration = parseFloat(req.body.duration || '0') || 0;
+
+    if (!title || !title.trim()) {
+      res.status(400).json({ success: false, error: 'Broadcast title is required' });
+      return;
+    }
+
+    // 1. Validate max duration: strictly <= 40 minutes (2400s)
+    if (duration > 2400) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        await fs.promises.unlink(req.file.path).catch(() => null);
+      }
+      res.status(400).json({
+        success: false,
+        error: `Video exceeds maximum allowed duration of 40 minutes (${Math.round(duration / 60)}m ${Math.round(duration % 60)}s). Please choose a video of 40 minutes or less.`,
+      });
+      return;
+    }
+
+    // 2. Validate schedule time: strictly future and <= 72 hours
+    const schedDate = new Date(scheduledAt);
+    const now = Date.now();
+    if (isNaN(schedDate.getTime()) || schedDate.getTime() < now - 60000) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        await fs.promises.unlink(req.file.path).catch(() => null);
+      }
+      res.status(400).json({ success: false, error: 'Please choose a valid future broadcast date and time.' });
+      return;
+    }
+
+    const maxAllowed = now + 72 * 60 * 60 * 1000;
+    if (schedDate.getTime() > maxAllowed) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        await fs.promises.unlink(req.file.path).catch(() => null);
+      }
+      res.status(400).json({
+        success: false,
+        error: 'Broadcast cannot be scheduled more than 72 hours (3 days) in advance to prevent VPS storage clogs.',
+      });
+      return;
+    }
+
+    // 3. Resolve video file path on VPS
+    let videoFilePath = '';
+    let fileName = '';
+
+    if (req.file) {
+      videoFilePath = req.file.path;
+      fileName = req.file.originalname;
+    } else if (mediaAssetId) {
+      const asset = await prisma.mediaAsset.findUnique({ where: { id: mediaAssetId } });
+      if (!asset) {
+        res.status(404).json({ success: false, error: 'Selected media asset not found' });
+        return;
+      }
+      fileName = asset.name;
+      if (asset.storagePath.startsWith('local://')) {
+        const relPath = asset.storagePath.replace('local://', '');
+        videoFilePath = path.join(process.cwd(), 'uploads', 'session-media', relPath);
+      } else {
+        res.status(400).json({ success: false, error: 'Media asset storage format not supported for local streaming' });
+        return;
+      }
+    } else {
+      res.status(400).json({ success: false, error: 'Video file or media asset is required for scheduling.' });
+      return;
+    }
+
+    if (!fs.existsSync(videoFilePath)) {
+      res.status(400).json({ success: false, error: 'Video file could not be accessed on the server.' });
+      return;
+    }
+
+    // Parse destination targets
+    let destinationIds: string[] = [];
+    let directDestinations: any[] = [];
+    try {
+      if (req.body.destinationIds) {
+        destinationIds = typeof req.body.destinationIds === 'string'
+          ? JSON.parse(req.body.destinationIds)
+          : req.body.destinationIds;
+      }
+      if (req.body.directDestinations) {
+        directDestinations = typeof req.body.directDestinations === 'string'
+          ? JSON.parse(req.body.directDestinations)
+          : req.body.directDestinations;
+      }
+    } catch {
+      // fallback
+    }
+
+    const { studioId: sId, workspaceId: wsId } = await resolveStudioAndWorkspace(req, studioId, workspaceId);
+
+    // Create Broadcast Record in Database
+    const broadcast = await prisma.broadcast.create({
+      data: {
+        title,
+        studioId: sId,
+        workspaceId: wsId,
+        status: 'SCHEDULED',
+        scheduledAt: schedDate,
+        settings: {
+          isPrerecorded: true,
+          videoFilePath,
+          fileName,
+          durationSeconds: duration,
+          destinationIds,
+          directDestinations,
+        },
+      },
+    });
+
+    // Arm Scheduler Engine
+    const streamer = PrerecordedStreamerService.getInstance();
+    const result = await streamer.scheduleBroadcast({
+      broadcastId: broadcast.id,
+      title,
+      workspaceId: wsId,
+      videoFilePath,
+      durationSeconds: duration,
+      scheduledAt: schedDate,
+      destinationIds,
+      directDestinations,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ success: false, error: result.error });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: broadcast.id,
+        title: broadcast.title,
+        status: broadcast.status,
+        scheduledAt: broadcast.scheduledAt,
+        durationSeconds: duration,
+        fileName,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/broadcasts/scheduled (List scheduled broadcasts for current workspace)
+router.get('/scheduled', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const wsId = (req.headers['x-workspace-id'] as string) || undefined;
+    const broadcasts = await prisma.broadcast.findMany({
+      where: {
+        status: { in: ['SCHEDULED', 'LIVE'] },
+        ...(wsId ? { workspaceId: wsId } : {}),
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    const formatted = broadcasts.map((b) => {
+      const settings = (b.settings as Record<string, any>) || {};
+      return {
+        id: b.id,
+        title: b.title,
+        status: b.status,
+        scheduledAt: b.scheduledAt,
+        durationSeconds: settings.durationSeconds || 0,
+        fileName: settings.fileName || 'Pre-recorded Video',
+        isPrerecorded: !!settings.isPrerecorded,
+        destinationsCount: (settings.destinationIds?.length || 0) + (settings.directDestinations?.length || 0),
+      };
+    });
+
+    res.status(200).json({ success: true, data: formatted });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DELETE /api/broadcasts/scheduled/:id (Cancel scheduled broadcast and delete video from VPS immediately)
+router.delete('/scheduled/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const streamer = PrerecordedStreamerService.getInstance();
+    const canceled = await streamer.cancelScheduledBroadcast(req.params.id);
+
+    if (canceled) {
+      res.status(200).json({ success: true, message: 'Scheduled broadcast canceled and video deleted from VPS' });
+    } else {
+      res.status(404).json({ success: false, error: 'Broadcast not found or could not be canceled' });
+    }
+  } catch (error) {
+    next(error);
   }
 });
 

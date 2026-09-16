@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { 
   Shield, Server, Cpu, HardDrive, Database, Activity, 
   CheckCircle2, RefreshCw, ShieldAlert, Users, KeyRound, 
-  Sparkles, Copy, Check, UserPlus, Trash2, Film, Music, Image as ImageIcon, Eye 
+  Sparkles, Copy, Check, UserPlus, Trash2, Film, Music, Image as ImageIcon, Eye,
+  Calendar, Radio, Play, AlertTriangle
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
@@ -86,6 +87,68 @@ export default function AdminPage() {
   } | null>(null);
   const [mediaFilter, setMediaFilter] = useState<string>("ALL");
 
+  // Scheduled Pre-Recorded Broadcasts Monitoring State
+  const [adminPrerecorded, setAdminPrerecorded] = useState<Array<{
+    id: string;
+    title: string;
+    status: string;
+    scheduledAt: string;
+    startedAt?: string;
+    endedAt?: string;
+    duration: number;
+    fileName: string;
+    fileSize: number;
+    fileExists: boolean;
+    videoUrl: string | null;
+    failureReason: string | null;
+    uploader: {
+      id: string;
+      name: string;
+      email: string;
+    };
+  }>>([]);
+  const [prerecordedLoading, setPrerecordedLoading] = useState(true);
+  const [deletingPrerecordedId, setDeletingPrerecordedId] = useState<string | null>(null);
+  const [previewPrerecordedVideo, setPreviewPrerecordedVideo] = useState<{
+    id: string;
+    title: string;
+    videoUrl: string;
+    duration: number;
+    uploader: { name: string; email: string };
+  } | null>(null);
+
+  const fetchAdminPrerecorded = async () => {
+    setPrerecordedLoading(true);
+    try {
+      const res = await apiRequest<any[]>("/api/admin/prerecorded");
+      if (res.success && Array.isArray(res.data)) {
+        setAdminPrerecorded(res.data);
+      }
+    } catch (err) {
+      console.warn("Error fetching admin pre-recorded broadcasts:", err);
+    } finally {
+      setPrerecordedLoading(false);
+    }
+  };
+
+  const handleDeletePrerecorded = async (b: { id: string; title: string }) => {
+    if (!confirm(`Cancel scheduled broadcast "${b.title}" and immediately delete the video file from VPS?`)) return;
+    setDeletingPrerecordedId(b.id);
+    try {
+      const res = await apiRequest(`/api/admin/prerecorded/${b.id}`, { method: "DELETE" });
+      if (res.success) {
+        setAdminPrerecorded((prev) => prev.filter((item) => item.id !== b.id));
+        if (previewPrerecordedVideo?.id === b.id) setPreviewPrerecordedVideo(null);
+      } else {
+        alert(res.error || "Failed to cancel scheduled broadcast");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to cancel broadcast");
+    } finally {
+      setDeletingPrerecordedId(null);
+    }
+  };
+
   const fetchAdminMedia = async () => {
     setAdminMediaLoading(true);
     try {
@@ -162,6 +225,7 @@ export default function AdminPage() {
     if (user?.role === "SUPER_ADMIN") {
       fetchUsers();
       fetchAdminMedia();
+      fetchAdminPrerecorded();
     }
   }, [user]);
 
@@ -698,6 +762,142 @@ export default function AdminPage() {
         )}
       </Card>
 
+      {/* Scheduled Pre-Recorded Broadcasts & Auto-Delete Monitoring */}
+      <Card className="p-6">
+        <CardHeader className="p-0 mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-indigo-400" />
+              Scheduled Pre-Recorded Streams & Auto-Delete Monitoring
+            </CardTitle>
+            <p className="text-xs text-slate-400 mt-1">
+              Live audit of all upcoming automated broadcasts. Videos stream to YouTube/Twitch from VPS and are <strong>immediately auto-deleted upon completion</strong> (or after 24h on failure).
+            </p>
+          </div>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={fetchAdminPrerecorded}
+            disabled={prerecordedLoading}
+            className="text-xs h-8"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5 mr-1.5", prerecordedLoading && "animate-spin")} />
+            Refresh
+          </Button>
+        </CardHeader>
+
+        {prerecordedLoading ? (
+          <div className="py-12 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+            Loading scheduled broadcasts...
+          </div>
+        ) : adminPrerecorded.length === 0 ? (
+          <div className="py-10 text-center text-slate-500 text-xs border border-white/5 rounded-xl bg-surface-raised/30">
+            No scheduled pre-recorded broadcasts found across any accounts.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/5 text-slate-400">
+                  <th className="py-3 px-4 font-semibold">Broadcast Title</th>
+                  <th className="py-3 px-4 font-semibold">Scheduled Date & Time</th>
+                  <th className="py-3 px-4 font-semibold">Duration</th>
+                  <th className="py-3 px-4 font-semibold">VPS Disk State</th>
+                  <th className="py-3 px-4 font-semibold">Uploader Account</th>
+                  <th className="py-3 px-4 font-semibold">Status</th>
+                  <th className="py-3 px-4 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {adminPrerecorded.map((b) => (
+                  <tr key={b.id} className="hover:bg-white/[0.02] text-slate-300">
+                    <td className="py-3 px-4 font-medium text-white max-w-[200px] truncate">
+                      {b.title}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-slate-300">
+                      {new Date(b.scheduledAt).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-indigo-300">
+                      {Math.floor(b.duration / 60)}:{(b.duration % 60).toString().padStart(2, "0")}
+                    </td>
+                    <td className="py-3 px-4">
+                      {b.fileExists ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          {(b.fileSize / (1024 * 1024)).toFixed(1)} MB on VPS (Pending Auto-Delete)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          Auto-Deleted from VPS
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="text-white font-medium truncate max-w-[150px]">{b.uploader.name}</div>
+                      <div className="text-[11px] text-slate-500 font-mono truncate max-w-[150px]">{b.uploader.email}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <Badge
+                        variant={
+                          b.status === "LIVE"
+                            ? "danger"
+                            : b.status === "SCHEDULED"
+                            ? "purple"
+                            : b.status === "FAILED"
+                            ? "warning"
+                            : "neutral"
+                        }
+                        size="sm"
+                      >
+                        {b.status}
+                      </Badge>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {b.fileExists && b.videoUrl && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setPreviewPrerecordedVideo({
+                                id: b.id,
+                                title: b.title,
+                                videoUrl: b.videoUrl!,
+                                duration: b.duration,
+                                uploader: b.uploader,
+                              })
+                            }
+                            className="h-7 px-2 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+                            title="Inspect video"
+                          >
+                            <Play className="w-3 h-3 mr-1" />
+                            Watch
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeletePrerecorded(b)}
+                          disabled={deletingPrerecordedId === b.id}
+                          className="h-7 px-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
+                          title="Cancel broadcast and purge video from VPS immediately"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1" />
+                          {deletingPrerecordedId === b.id ? "Purging..." : "Cancel & Purge"}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       {/* Admin Password Reset Modal */}
       <Modal
         isOpen={isResetModalOpen}
@@ -968,6 +1168,72 @@ export default function AdminPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setPreviewMedia(null)}
+              >
+                Close Preview
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Scheduled Pre-Recorded Video Inspection Modal */}
+      <Modal
+        isOpen={!!previewPrerecordedVideo}
+        onClose={() => setPreviewPrerecordedVideo(null)}
+        title={`Inspect Scheduled Video: ${previewPrerecordedVideo?.title || ""}`}
+        description={`Uploaded by ${previewPrerecordedVideo?.uploader.name} (${previewPrerecordedVideo?.uploader.email})`}
+      >
+        {previewPrerecordedVideo && (
+          <div className="space-y-4 pt-2">
+            <div className="rounded-xl overflow-hidden bg-black/90 border border-white/10 flex items-center justify-center min-h-[220px] max-h-[380px]">
+              <video
+                src={previewPrerecordedVideo.videoUrl}
+                controls
+                autoPlay
+                className="w-full max-h-[360px] object-contain"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs p-3 rounded-xl bg-white/[0.02] border border-white/5">
+              <div>
+                <span className="text-slate-500 block">Duration</span>
+                <span className="text-white font-mono">
+                  {Math.floor(previewPrerecordedVideo.duration / 60)}:{(previewPrerecordedVideo.duration % 60).toString().padStart(2, "0")}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">VPS Auto-Delete Policy</span>
+                <span className="text-amber-400 font-mono">Auto-purge immediately upon stream completion</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Uploader</span>
+                <span className="text-white font-mono">{previewPrerecordedVideo.uploader.email}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Broadcast ID</span>
+                <span className="text-white font-mono">{previewPrerecordedVideo.id}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-white/10">
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  const toDelete = { id: previewPrerecordedVideo.id, title: previewPrerecordedVideo.title };
+                  handleDeletePrerecorded(toDelete);
+                }}
+                disabled={deletingPrerecordedId === previewPrerecordedVideo.id}
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                {deletingPrerecordedId === previewPrerecordedVideo.id ? "Purging..." : "Cancel & Delete from VPS"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewPrerecordedVideo(null)}
               >
                 Close Preview
               </Button>

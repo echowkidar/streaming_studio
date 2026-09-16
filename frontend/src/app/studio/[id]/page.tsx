@@ -48,8 +48,9 @@ import { LocalRecordingManager } from "@/components/studio/LocalRecordingManager
 import { PreRecordedSchedulerModal } from "@/components/studio/PreRecordedSchedulerModal";
 import { GoLiveModal } from "@/components/studio/GoLiveModal";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
+import { studioStageRecorder } from "@/lib/studioStageRecorder";
 import { HardDrive, Calendar, Tv } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatDuration } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
 import { useAuthStore } from "@/stores/auth.store";
 import { StreamMonitor } from "@/components/studio/StreamMonitor";
@@ -196,6 +197,36 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
     return () => clearInterval(interval);
   }, [isLive]);
+
+  // Client-Side Stage Recording State (Zero VPS upload)
+  const [recordingNotification, setRecordingNotification] = useState<string | null>(null);
+  const [liveRecordDuration, setLiveRecordDuration] = useState(0);
+
+  const handleToggleRecord = async () => {
+    if (!isRecording) {
+      const success = await studioStageRecorder.start((sec) => setLiveRecordDuration(sec));
+      if (success) {
+        startRecord();
+        setRecordingNotification(null);
+      }
+    } else {
+      const result = await studioStageRecorder.stop();
+      stopRecord();
+      setLiveRecordDuration(0);
+      if (result) {
+        const sizeMb = (result.fileSize / (1024 * 1024)).toFixed(1);
+        setRecordingNotification(
+          `🎬 Stage recording saved directly to your computer! ("${result.fileName}" • ${formatDuration(result.durationSeconds)} • ${sizeMb} MB) — Zero VPS data consumed.`
+        );
+      }
+    }
+  };
+
+  const formatRecordTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
 
   // 1. Session Reconnection Recovery: Check if broadcast is already LIVE on backend upon host mount/reboot
   const [reconnectAlert, setReconnectAlert] = useState<string | null>(null);
@@ -798,15 +829,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             ISO
           </Button>
 
-          {/* Cloud Record Button */}
+          {/* Client-Side Stage Record Button (Saved directly to PC, Zero VPS upload) */}
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => (isRecording ? stopRecord() : startRecord())}
-            className={cn("h-8 px-2.5 sm:px-3 rounded-full text-xs font-medium transition-all", isRecording && "text-rose-400 border-rose-500/40 bg-rose-500/10")}
+            onClick={handleToggleRecord}
+            className={cn(
+              "h-8 px-2.5 sm:px-3 rounded-full text-xs font-medium transition-all",
+              isRecording && "text-rose-400 border-rose-500/40 bg-rose-500/15 ring-1 ring-rose-500/40 shadow-sm shadow-rose-500/20"
+            )}
+            title={isRecording ? "Stop recording & save video file directly to your PC" : "Record studio stage to your computer (0 bytes uploaded to VPS)"}
           >
-            <CircleDot className={cn("w-3.5 h-3.5 sm:mr-1.5", isRecording && "animate-pulse fill-rose-500")} />
-            <span className="hidden sm:inline">{isRecording ? "REC 00:14:32" : "Record"}</span>
+            <CircleDot className={cn("w-3.5 h-3.5 sm:mr-1.5", isRecording && "animate-pulse fill-rose-500 text-rose-500")} />
+            <span className="hidden sm:inline font-mono font-bold">
+              {isRecording ? `REC ${formatRecordTime(liveRecordDuration)}` : "Record to PC"}
+            </span>
           </Button>
 
           {/* Mobile Participants Trigger Button */}
@@ -841,6 +878,18 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       </header>
 
       {/* ─── Notification & Lifecycle Banners ───────────────────── */}
+      {recordingNotification && (
+        <div className="bg-emerald-500/20 border-b border-emerald-500/30 px-4 py-2 text-xs text-emerald-300 flex items-center justify-between shrink-0 animate-in fade-in z-40">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate">{recordingNotification}</span>
+          </div>
+          <button onClick={() => setRecordingNotification(null)} className="p-1 text-emerald-400 hover:text-white shrink-0 ml-2">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {reconnectAlert && (
         <div className="bg-emerald-500/20 border-b border-emerald-500/30 px-4 py-2 text-xs text-emerald-300 flex items-center justify-between shrink-0 animate-in fade-in z-40">
           <div className="flex items-center gap-2">
