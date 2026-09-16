@@ -26,6 +26,7 @@ export const LayoutSelector: React.FC = () => {
   const {
     activeLayout,
     setLayout,
+    resetAllParticipantBounds,
     customLayoutConfig,
     setCustomLayoutConfig,
     participants,
@@ -157,7 +158,10 @@ export const LayoutSelector: React.FC = () => {
           return (
             <button
               key={l.id}
-              onClick={() => setLayout(l.id)}
+              onClick={() => {
+                resetAllParticipantBounds();
+                setLayout(l.id);
+              }}
               className={cn(
                 "p-2.5 rounded-xl border text-left flex flex-col gap-2 transition-all duration-200 group relative",
                 isSelected

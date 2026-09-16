@@ -17,12 +17,16 @@ import {
   ChevronDown,
   Crosshair,
   Repeat,
+  UserPlus,
+  Copy,
+  Check,
 } from "lucide-react";
+import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
-import { getDefaultSlotBounds } from "@/lib/layoutBounds";
+import { getDefaultSlotBounds, getLayoutExpectedSlots } from "@/lib/layoutBounds";
 
 export const StagePreview: React.FC = () => {
   const {
@@ -70,8 +74,37 @@ export const StagePreview: React.FC = () => {
     setTileTransform("active-media", { fitMode: next });
   };
 
+  const params = useParams();
+  const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null);
+
+  const handleCopyInviteForSlot = (slotIdx: number) => {
+    try {
+      const broadcastId = (params?.id as string) || "preview";
+      const roomName = `studio-${broadcastId}`;
+      const inviteUrl = `${window.location.origin}/join/${roomName}`;
+      navigator.clipboard.writeText(inviteUrl);
+      setCopiedSlotIndex(slotIdx);
+      setTimeout(() => setCopiedSlotIndex(null), 2500);
+    } catch {
+      // fallback
+    }
+  };
+
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
+  const orderedParticipants = React.useMemo(() => {
+    if (activeLayout === "custom" && customLayoutConfig?.heroParticipantId) {
+      const heroId = String(customLayoutConfig.heroParticipantId);
+      return [...onStageParticipants].sort((a, b) => {
+        if (String(a.id) === heroId) return -1;
+        if (String(b.id) === heroId) return 1;
+        return 0;
+      });
+    }
+    return onStageParticipants;
+  }, [onStageParticipants, activeLayout, customLayoutConfig?.heroParticipantId]);
+
   const hasAnyCustomBounds = Object.keys(participantBounds).length > 0;
+  const expectedSlots = getLayoutExpectedSlots(activeLayout, customLayoutConfig);
 
   const logoPositionClasses = {
     "top-left": "top-6 left-6",
@@ -1093,21 +1126,22 @@ export const StagePreview: React.FC = () => {
             )}
           </div>
         )}
-        {onStageParticipants.map((p, idx) => {
+        {orderedParticipants.map((p, idx) => {
           const defaultBounds = hasVisualMedia
             ? {
                 x: 72,
-                y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, onStageParticipants.length))),
+                y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, orderedParticipants.length))),
                 width: 26,
-                height: Math.min(92, Math.max(22, 88 / Math.max(1, onStageParticipants.length))),
+                height: Math.min(92, Math.max(22, 88 / Math.max(1, orderedParticipants.length))),
                 zIndex: 10,
                 isLockedRatio: true,
               }
             : getDefaultSlotBounds(
                 activeLayout,
                 idx,
-                onStageParticipants.length,
-                layoutSplitRatio
+                orderedParticipants.length,
+                layoutSplitRatio,
+                customLayoutConfig
               );
           const bounds: ParticipantBounds =
             participantBounds[p.id] ||
@@ -1128,7 +1162,19 @@ export const StagePreview: React.FC = () => {
                 width: `${bounds.width}%`,
                 height: `${bounds.height}%`,
                 zIndex: isSelected ? 35 : (bounds.zIndex || 10),
-                transition: isThisDragging ? "none" : "all 0.18s cubic-bezier(0.16, 1, 0.3, 1)",
+                borderRadius:
+                  activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                    ? `${customLayoutConfig.borderRadius}px`
+                    : undefined,
+                boxShadow:
+                  activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
+                    ? `0 0 20px ${customLayoutConfig.highlightColor || "#6366f1"}`
+                    : undefined,
+                borderColor:
+                  activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
+                    ? (customLayoutConfig.highlightColor || "#6366f1")
+                    : undefined,
+                transition: isThisDragging ? "none" : "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
               }}
               onMouseDown={(e) => handleTileMouseDown(e, p, bounds)}
               onTouchStart={(e) => handleTileTouchStart(e, p, bounds)}
@@ -1305,6 +1351,76 @@ export const StagePreview: React.FC = () => {
             </div>
           );
         })}
+
+        {/* Empty Guest Placeholder Slots (rendered when layout capacity exceeds currently onstage participants) */}
+        {!hasVisualMedia && !hasAnyCustomBounds && orderedParticipants.length < expectedSlots && (
+          <>
+            {Array.from({ length: expectedSlots - orderedParticipants.length }).map((_, i) => {
+              const slotIdx = orderedParticipants.length + i;
+              const emptySlotBounds = getDefaultSlotBounds(
+                activeLayout,
+                slotIdx,
+                expectedSlots,
+                layoutSplitRatio,
+                customLayoutConfig
+              );
+              const isCopied = copiedSlotIndex === slotIdx;
+              const slotTitle =
+                activeLayout === "podcast"
+                  ? "Co-Host Slot"
+                  : activeLayout === "presentation"
+                  ? "Slide Deck / Screen Slot"
+                  : `Guest Slot ${slotIdx + 1}`;
+
+              return (
+                <div
+                  key={`empty-guest-slot-${slotIdx}`}
+                  style={{
+                    position: "absolute",
+                    left: `${emptySlotBounds.x}%`,
+                    top: `${emptySlotBounds.y}%`,
+                    width: `${emptySlotBounds.width}%`,
+                    height: `${emptySlotBounds.height}%`,
+                    zIndex: 5,
+                    borderRadius:
+                      activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                        ? `${customLayoutConfig.borderRadius}px`
+                        : undefined,
+                    transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+                  }}
+                  className="rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group pointer-events-auto select-none"
+                >
+                  <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div className="text-xs font-semibold text-slate-300 group-hover:text-white transition-colors">
+                    {slotTitle}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5 max-w-[160px] line-clamp-1">
+                    Waiting for participant to join
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCopyInviteForSlot(slotIdx);
+                    }}
+                    className={cn(
+                      "mt-2.5 px-3 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95",
+                      isCopied
+                        ? "bg-emerald-600 text-white shadow-emerald-500/30"
+                        : "bg-indigo-600/80 hover:bg-indigo-600 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40"
+                    )}
+                    title="Copy invite link to share with guest"
+                  >
+                    {isCopied ? <Check className="w-3 h-3 text-emerald-200" /> : <Copy className="w-3 h-3" />}
+                    <span>{isCopied ? "Copied! ✓" : "Invite Guest"}</span>
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
 
         {/* Center Split Divider (Visible in 2-person side-by-side when neither tile has custom bounds) */}
         {onStageParticipants.length === 2 && !hasAnyCustomBounds && (activeLayout === "side-by-side" || activeLayout === "podcast" || activeLayout === "interview") && (

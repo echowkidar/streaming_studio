@@ -354,8 +354,8 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   activeLayout: savedLayout.activeLayout || "speaker-large",
   setLayout: (layout) => {
-    persistStudioLayout({ activeLayout: layout });
-    set({ activeLayout: layout });
+    persistStudioLayout({ activeLayout: layout, participantBounds: {} });
+    set({ activeLayout: layout, participantBounds: {}, selectedParticipantId: null });
   },
   layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
   setLayoutSplitRatio: (ratio) => {
@@ -489,8 +489,8 @@ export const useStudioStore = create<StudioState>((set) => ({
   setCustomLayoutConfig: (config) =>
     set((s) => {
       const nextConfig = { ...s.customLayoutConfig, ...config };
-      persistStudioLayout({ customLayoutConfig: nextConfig });
-      return { customLayoutConfig: nextConfig };
+      persistStudioLayout({ customLayoutConfig: nextConfig, participantBounds: {} });
+      return { customLayoutConfig: nextConfig, participantBounds: {} };
     }),
 
   micEnabled: true,
