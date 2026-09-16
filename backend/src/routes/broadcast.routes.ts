@@ -284,6 +284,15 @@ router.post('/:broadcastId/stream/stop', async (req: Request, res: Response, nex
   try {
     const streamer = RtmpStreamerService.getInstance();
     const success = await streamer.stopBroadcastStream(req.params.broadcastId);
+
+    // Immediately purge temporary session media upon End Broadcast
+    try {
+      const { deleteSessionMedia } = await import('./media.routes');
+      await deleteSessionMedia(req.params.broadcastId);
+    } catch (cleanupErr) {
+      console.warn('[Broadcast Stop] Session media cleanup error:', cleanupErr);
+    }
+
     res.status(200).json({ success });
   } catch (error) {
     console.error(`[Broadcast API] /stream/stop error:`, error);

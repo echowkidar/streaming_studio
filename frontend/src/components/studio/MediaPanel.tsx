@@ -32,7 +32,12 @@ interface MediaFileItem {
   isUploaded?: boolean;
 }
 
-export const MediaPanel: React.FC = () => {
+interface MediaPanelProps {
+  studioId?: string;
+}
+
+export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
+  const effectiveStudioId = studioId || (typeof window !== "undefined" ? window.location.pathname.split("/studio/")[1] || "default" : "default");
   const {
     activeMedia,
     setActiveMedia,
@@ -211,6 +216,7 @@ export const MediaPanel: React.FC = () => {
       formData.append("file", file);
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
+      formData.append("studioId", effectiveStudioId);
       if (videoDuration > 0) formData.append("duration", videoDuration.toString());
       if (videoWidth > 0) formData.append("width", videoWidth.toString());
       if (videoHeight > 0) formData.append("height", videoHeight.toString());
@@ -253,7 +259,7 @@ export const MediaPanel: React.FC = () => {
 
   // Load existing media assets from backend library on mount
   React.useEffect(() => {
-    fetch("/api/media")
+    fetch(`/api/media?studioId=${encodeURIComponent(effectiveStudioId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (json?.success && Array.isArray(json.data) && json.data.length > 0) {
@@ -261,19 +267,22 @@ export const MediaPanel: React.FC = () => {
             id: item.id,
             name: item.name,
             type: item.assetType.toLowerCase() as any,
-            duration: item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
+            duration: item.metadata?.duration
+              ? `${Math.floor(Number(item.metadata.duration) / 60)}:${(Number(item.metadata.duration) % 60).toString().padStart(2, "0")}`
+              : item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
             url: item.url,
             isUploaded: true,
           }));
           setMediaList((prev) => {
             const existingUrls = new Set(prev.map((m) => m.url));
-            const newOnes = serverItems.filter((s) => !existingUrls.has(s.url));
-            return [...prev, ...newOnes];
+            const existingNames = new Set(prev.map((m) => m.name));
+            const newOnes = serverItems.filter((s) => !existingUrls.has(s.url) && !existingNames.has(s.name));
+            return [...newOnes, ...prev];
           });
         }
       })
       .catch(() => {});
-  }, []);
+  }, [effectiveStudioId]);
 
   const handleTogglePlay = (item: MediaFileItem) => {
     if (activeMedia?.id === item.id) {

@@ -319,6 +319,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   }, [wrapUpSeconds, disconnect]);
 
   const handleCloseStudioNow = () => {
+    fetch(`/api/media/session/${params.id}`, { method: "DELETE" }).catch(() => null);
     disconnect();
     setWrapUpSeconds(null);
     router.push("/dashboard");
@@ -458,6 +459,11 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       await fetch(`/api/broadcasts/${params.id}/stream/stop`, {
         method: "POST",
       });
+
+      // 3. Immediately purge temporary session media files from VPS disk & DB
+      fetch(`/api/media/session/${params.id}`, {
+        method: "DELETE",
+      }).catch((err) => console.warn("Failed to delete session media:", err));
     } catch (e) {
       console.error("Failed to stop stream:", e);
     } finally {
@@ -970,7 +976,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                 <div className="flex-1 overflow-hidden">
                   {activeTab === "chat" && <ChatPanel />}
                   {activeTab === "brand" && <BrandPanel />}
-                  {activeTab === "media" && <MediaPanel />}
+                  {activeTab === "media" && <MediaPanel studioId={params.id} />}
                   {activeTab === "layout" && (
                     <div className="p-4 h-full overflow-y-auto custom-scrollbar">
                       <LayoutSelector />
@@ -1016,7 +1022,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
               <div className="flex-1 overflow-hidden">
                 {activeTab === "chat" && <ChatPanel />}
                 {activeTab === "brand" && <BrandPanel />}
-                {activeTab === "media" && <MediaPanel />}
+                {activeTab === "media" && <MediaPanel studioId={params.id} />}
                 {activeTab === "layout" && (
                   <div className="p-4 h-full overflow-y-auto custom-scrollbar">
                     <LayoutSelector />
