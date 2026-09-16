@@ -242,6 +242,7 @@ export function VideoTrackView({
   return (
     <div
       ref={containerRef}
+      data-participant-id={tileId}
       data-participant-fit={fitMode}
       data-participant-orientation={detectedPortrait ? "portrait" : "landscape"}
       onMouseDown={handlePanMouseDown}
@@ -285,6 +286,8 @@ export function VideoTrackView({
       <div className="w-full h-full overflow-hidden flex items-center justify-center relative">
         <video
           ref={videoRef}
+          id={`participant-video-${tileId}`}
+          data-participant-id={tileId}
           autoPlay
           playsInline
           muted={isLocal} // Mute local video to prevent audio feedback

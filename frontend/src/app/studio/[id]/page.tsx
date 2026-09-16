@@ -204,7 +204,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
 
   const handleToggleRecord = async () => {
     if (!isRecording) {
-      const success = await studioStageRecorder.start((sec) => setLiveRecordDuration(sec));
+      const stageEl = document.getElementById("livestudio-stage-container");
+      const success = await studioStageRecorder.start(stageEl, (sec) => setLiveRecordDuration(sec));
       if (success) {
         startRecord();
         setRecordingNotification(null);
