@@ -1107,6 +1107,98 @@ class StageBroadcaster {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 3.5 Featured Live Comment Overlay (StreamYard Lower-Third Style)
+    // ─────────────────────────────────────────────────────────────
+    if (store.pinnedMessage && store.pinnedMessage.message) {
+      const pm = store.pinnedMessage;
+      ctx.save();
+      const cardW = Math.min(620, W * 0.72);
+      const cardH = 72;
+      const cX = (W - cardW) / 2;
+      const isTop = store.commentConfig?.position === "top";
+      const cY = isTop
+        ? 28
+        : store.showTicker
+        ? H - cardH - 62
+        : H - cardH - 24;
+
+      // Card drop shadow
+      ctx.shadowColor = "rgba(0, 0, 0, 0.75)";
+      ctx.shadowBlur = 24;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 8;
+
+      // Card background
+      ctx.fillStyle = "rgba(9, 9, 18, 0.95)";
+      this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
+      ctx.fill();
+
+      // Card border
+      ctx.shadowColor = "transparent";
+      ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}80`;
+      ctx.lineWidth = 1.5;
+      this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
+      ctx.stroke();
+
+      // Avatar Circle
+      const avR = 19;
+      const avX = cX + 30;
+      const avY = cY + cardH / 2;
+      ctx.fillStyle = store.activeThemeColor || "#6366f1";
+      ctx.beginPath();
+      ctx.arc(avX, avY, avR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Avatar Initial
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 15px Inter, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText((pm.author[0] || "U").toUpperCase(), avX, avY);
+
+      // Text Section
+      const textStartX = avX + avR + 14;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+
+      // Author Name
+      ctx.font = "bold 13px Inter, system-ui, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(pm.author, textStartX, cY + 27);
+
+      const nameW = ctx.measureText(pm.author).width;
+
+      // Platform badge
+      const isYouTube = pm.platform?.toLowerCase() === "youtube";
+      const isTwitch = pm.platform?.toLowerCase() === "twitch";
+      const badgeX = textStartX + nameW + 10;
+      const badgeColor = isYouTube ? "#ff0000" : isTwitch ? "#9146ff" : (store.activeThemeColor || "#6366f1");
+
+      ctx.fillStyle = `${badgeColor}33`;
+      this.drawRoundedRect(ctx, badgeX, cY + 14, 62, 16, 4);
+      ctx.fill();
+
+      ctx.font = "bold 9px Inter, sans-serif";
+      ctx.fillStyle = isYouTube ? "#ff6666" : isTwitch ? "#c499ff" : "#a5b4fc";
+      ctx.fillText((pm.platform || "CHAT").toUpperCase(), badgeX + 6, cY + 26);
+
+      // Message text
+      ctx.font = "500 13px Inter, system-ui, sans-serif";
+      ctx.fillStyle = "#f1f5f9";
+      const maxMsgW = cardW - (textStartX - cX) - 20;
+      let msgText = pm.message;
+      if (ctx.measureText(msgText).width > maxMsgW) {
+        while (msgText.length > 0 && ctx.measureText(msgText + "...").width > maxMsgW) {
+          msgText = msgText.slice(0, -1);
+        }
+        msgText += "...";
+      }
+      ctx.fillText(msgText, textStartX, cY + 50);
+
+      ctx.restore();
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 4. Watermark Logo
     // ─────────────────────────────────────────────────────────────
     if (store.showLogo && (store.logoConfig?.text || store.logoUrl)) {

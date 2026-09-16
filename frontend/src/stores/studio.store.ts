@@ -30,6 +30,13 @@ export interface CustomLayoutConfig {
   showSpeakerBorder: boolean;
 }
 
+export interface CommentConfig {
+  position: "bottom" | "top";
+  theme: "default" | "minimal" | "classic" | "bubble";
+  showAvatar: boolean;
+  fontSize: "small" | "medium" | "large";
+}
+
 export interface TileTransform {
   fitMode: "contain" | "cover";
   zoom: number; // 1 to 2.5
@@ -195,6 +202,8 @@ interface StudioState {
   addMessage: (msg: ChatMessage) => void;
   pinnedMessage: ChatMessage | null;
   pinMessage: (msg: ChatMessage | null) => void;
+  commentConfig: CommentConfig;
+  setCommentConfig: (config: Partial<CommentConfig>) => void;
 
   // Destinations
   destinations: Destination[];
@@ -318,6 +327,7 @@ interface SavedStudioLayoutState {
   chromaKeyConfig?: ChromaKeyConfig;
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
+  commentConfig?: CommentConfig;
 }
 
 function loadSavedStudioLayout(): SavedStudioLayoutState {
@@ -854,6 +864,19 @@ export const useStudioStore = create<StudioState>((set) => ({
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
   pinnedMessage: null,
   pinMessage: (msg) => set({ pinnedMessage: msg }),
+  commentConfig: {
+    position: "bottom", // StreamYard broadcast standard: LOWER-THIRD!
+    theme: "default",
+    showAvatar: true,
+    fontSize: "medium",
+    ...(savedLayout.commentConfig || {}),
+  },
+  setCommentConfig: (config) =>
+    set((s) => {
+      const nextConfig = { ...s.commentConfig, ...config };
+      persistStudioLayout({ commentConfig: nextConfig });
+      return { commentConfig: nextConfig };
+    }),
 
   destinations: [
     {

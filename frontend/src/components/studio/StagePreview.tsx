@@ -20,6 +20,9 @@ import {
   UserPlus,
   Copy,
   Check,
+  Youtube,
+  Twitch,
+  Globe,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds } from "@/stores/studio.store";
@@ -50,6 +53,8 @@ export const StagePreview: React.FC = () => {
     tickerConfig,
     logoConfig,
     pinnedMessage,
+    pinMessage,
+    commentConfig,
     activeMedia,
     setActiveMedia,
     layoutSplitRatio,
@@ -1773,27 +1778,112 @@ export const StagePreview: React.FC = () => {
         </div>
       )}
 
-      {/* Pinned Stream Message Overlay */}
+      {/* Pinned Stream Message Overlay (StreamYard Lower-Third Broadcast Style) */}
       {pinnedMessage && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30 max-w-lg w-full px-4 animate-in fade-in slide-in-from-top-4 duration-300">
-          <div 
-            className="rounded-2xl p-4 bg-black/85 backdrop-blur-md border shadow-2xl flex items-start gap-3"
-            style={{ borderColor: `${activeThemeColor}60` }}
+        <div
+          className={cn(
+            "absolute left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92%] px-3 transition-all duration-300 select-none group/comment pointer-events-auto",
+            commentConfig?.position === "top"
+              ? "top-5 animate-in fade-in slide-in-from-top-4"
+              : showTicker
+              ? "bottom-16 animate-in fade-in slide-in-from-bottom-4"
+              : "bottom-6 animate-in fade-in slide-in-from-bottom-4"
+          )}
+        >
+          <div
+            className={cn(
+              "relative backdrop-blur-xl border shadow-2xl flex items-start gap-3 transition-all duration-200",
+              commentConfig?.theme === "minimal"
+                ? "p-3 rounded-xl bg-black/85 border-l-4"
+                : commentConfig?.theme === "classic"
+                ? "p-3.5 rounded-none bg-[#0d0d16] border-t-2 border-b-2"
+                : "p-3.5 rounded-2xl bg-[#090912]/95 border-white/15 ring-1 ring-white/5"
+            )}
+            style={{
+              borderColor:
+                commentConfig?.theme === "minimal"
+                  ? `${activeThemeColor}`
+                  : commentConfig?.theme === "classic"
+                  ? `${activeThemeColor}`
+                  : `${activeThemeColor}60`,
+              boxShadow: `0 16px 40px rgba(0, 0, 0, 0.85), 0 0 30px ${activeThemeColor}20`,
+            }}
           >
-            <div 
-              className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 text-white shadow-md"
-              style={{ backgroundColor: activeThemeColor }}
-            >
-              {pinnedMessage.author[0]}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-xs font-bold text-white">{pinnedMessage.author}</span>
-                <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-white/10 text-slate-300">
-                  {pinnedMessage.platform}
-                </span>
+            {/* Commenter Avatar */}
+            {commentConfig?.showAvatar !== false && (
+              <div className="relative shrink-0">
+                {pinnedMessage.avatar ? (
+                  <img
+                    src={pinnedMessage.avatar}
+                    alt={pinnedMessage.author}
+                    className="w-10 h-10 rounded-full object-cover border-2 border-white/20 shadow-md"
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-md border-2 border-white/20"
+                    style={{ backgroundColor: activeThemeColor }}
+                  >
+                    {(pinnedMessage.author[0] || "U").toUpperCase()}
+                  </div>
+                )}
+                {/* Mini Platform Icon Badge overlayed on Avatar */}
+                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-black/90 border border-white/30 flex items-center justify-center">
+                  {pinnedMessage.platform === "youtube" ? (
+                    <Youtube className="w-2.5 h-2.5 text-rose-500" />
+                  ) : pinnedMessage.platform === "twitch" ? (
+                    <Twitch className="w-2.5 h-2.5 text-purple-400" />
+                  ) : (
+                    <Globe className="w-2.5 h-2.5 text-cyan-400" />
+                  )}
+                </div>
               </div>
-              <p className="text-xs text-slate-200">{pinnedMessage.message}</p>
+            )}
+
+            {/* Comment Body */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs sm:text-sm font-bold text-white truncate">
+                    {pinnedMessage.author}
+                  </span>
+                  {pinnedMessage.platform === "youtube" ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-400 bg-rose-500/15 px-1.5 py-0.5 rounded border border-rose-500/30 uppercase tracking-wider">
+                      <Youtube className="w-2.5 h-2.5" /> YouTube
+                    </span>
+                  ) : pinnedMessage.platform === "twitch" ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase tracking-wider">
+                      <Twitch className="w-2.5 h-2.5" /> Twitch
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-cyan-300 bg-cyan-500/15 px-1.5 py-0.5 rounded border border-cyan-500/30 uppercase tracking-wider">
+                      <Globe className="w-2.5 h-2.5" /> {pinnedMessage.platform}
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick Close Button */}
+                <button
+                  type="button"
+                  onClick={() => pinMessage(null)}
+                  className="opacity-60 hover:opacity-100 p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-opacity"
+                  title="Hide comment from stream"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <p
+                className={cn(
+                  "text-slate-100 font-medium leading-relaxed break-words line-clamp-3",
+                  commentConfig?.fontSize === "large"
+                    ? "text-sm sm:text-base"
+                    : commentConfig?.fontSize === "small"
+                    ? "text-xs"
+                    : "text-xs sm:text-sm"
+                )}
+              >
+                {pinnedMessage.message}
+              </p>
             </div>
           </div>
         </div>
