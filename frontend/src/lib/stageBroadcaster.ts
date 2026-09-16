@@ -1071,6 +1071,20 @@ class StageBroadcaster {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 2.8 Interactive Telestrator & Live On-Screen Drawing Layer
+    // ─────────────────────────────────────────────────────────────
+    if (store.isDrawingVisible !== false) {
+      const drawCanvas = container.querySelector("#livestudio-draw-canvas") as HTMLCanvasElement | null;
+      if (drawCanvas && drawCanvas.width > 0 && drawCanvas.height > 0) {
+        try {
+          ctx.drawImage(drawCanvas, 0, 0, W, H);
+        } catch (drawErr) {
+          // Canvas capture safety fallback
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 3. Lower-Third Banner
     // ─────────────────────────────────────────────────────────────
     if (store.activeBanner && store.activeBanner.isShowing && store.activeBanner.title) {

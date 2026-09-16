@@ -33,6 +33,7 @@ import {
   Clock,
   AlertTriangle,
   CheckCircle2,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -116,6 +117,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     moveToBackstage,
     removeParticipant,
     activeMedia,
+    isDrawingMode,
+    setIsDrawingMode,
   } = useStudioStore();
 
   const compositeVideoPubRef = React.useRef<any>(null);
@@ -1135,6 +1138,23 @@ export default function StudioPage({ params }: { params: { id: string } }) {
               >
                 <Tv className="w-4 h-4 sm:mr-1.5 text-indigo-400" />
                 <span className="hidden lg:inline">{showMonitor ? "Hide Monitor" : "Monitor"}</span>
+              </Button>
+
+              {/* On-Screen Telestrator / Draw & Text Tool Button */}
+              <Button
+                variant={isDrawingMode ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setIsDrawingMode(!isDrawingMode)}
+                className={cn(
+                  "h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs sm:text-sm transition-all",
+                  isDrawingMode
+                    ? "border-rose-500 bg-rose-500/25 text-rose-300 shadow-md shadow-rose-500/20 ring-1 ring-rose-500/50"
+                    : "text-slate-300 hover:text-white"
+                )}
+                title="Draw, annotate with pencil, or type live text on screen (Telestrator)"
+              >
+                <Pencil className="w-4 h-4 sm:mr-1.5 text-rose-400" />
+                <span className="hidden lg:inline">{isDrawingMode ? "Drawing On" : "Draw / Text"}</span>
               </Button>
             </div>
 

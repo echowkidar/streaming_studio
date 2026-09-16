@@ -30,6 +30,7 @@ import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds, getLayoutExpectedSlots } from "@/lib/layoutBounds";
+import { StageTelestrator } from "./StageTelestrator";
 
 export const StagePreview: React.FC = () => {
   const {
@@ -70,6 +71,7 @@ export const StagePreview: React.FC = () => {
     sendToBack,
     tileTransforms,
     setTileTransform,
+    isDrawingMode,
   } = useStudioStore();
 
   const mediaFitMode = (tileTransforms["active-media"]?.fitMode as "contain" | "cover") || "contain";
@@ -214,7 +216,7 @@ export const StagePreview: React.FC = () => {
 
   // Participant Tile Move Handlers (60fps, no jitter, boundary clamped)
   const handleTileMouseDown = (e: React.MouseEvent, p: Participant, currentBounds: ParticipantBounds) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || isDrawingMode) return;
     const target = e.target as HTMLElement;
     if (target.closest("button") || target.closest(".no-drag")) return;
 
@@ -1777,6 +1779,9 @@ export const StagePreview: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Interactive Broadcast-Grade Telestrator & On-Screen Drawing Canvas */}
+      <StageTelestrator />
 
       {/* Pinned Stream Message Overlay (StreamYard Lower-Third Broadcast Style) */}
       {pinnedMessage && (

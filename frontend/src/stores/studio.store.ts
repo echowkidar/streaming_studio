@@ -37,6 +37,8 @@ export interface CommentConfig {
   fontSize: "small" | "medium" | "large";
 }
 
+export type DrawingTool = "pen" | "highlighter" | "arrow" | "rect" | "circle" | "text" | "eraser";
+
 export interface TileTransform {
   fitMode: "contain" | "cover";
   zoom: number; // 1 to 2.5
@@ -208,6 +210,18 @@ interface StudioState {
   // Destinations
   destinations: Destination[];
   toggleDestination: (id: string) => void;
+
+  // Telestrator & On-Screen Drawing Tool
+  isDrawingMode: boolean;
+  setIsDrawingMode: (enabled: boolean) => void;
+  drawingTool: DrawingTool;
+  setDrawingTool: (tool: DrawingTool) => void;
+  drawingColor: string;
+  setDrawingColor: (color: string) => void;
+  drawingWidth: number;
+  setDrawingWidth: (width: number) => void;
+  isDrawingVisible: boolean;
+  setIsDrawingVisible: (visible: boolean) => void;
 
   // Actions
   startLive: () => void;
@@ -924,4 +938,16 @@ export const useStudioStore = create<StudioState>((set) => ({
   startRecord: () => set({ isRecording: true }),
   stopRecord: () => set({ isRecording: false }),
   setTitle: (title) => set({ broadcastTitle: title }),
+
+  // Telestrator & On-Screen Drawing Tool
+  isDrawingMode: false,
+  setIsDrawingMode: (enabled) => set({ isDrawingMode: enabled }),
+  drawingTool: "pen",
+  setDrawingTool: (tool) => set({ drawingTool: tool }),
+  drawingColor: "#ef4444", // Neon Red default
+  setDrawingColor: (color) => set({ drawingColor: color }),
+  drawingWidth: 4,
+  setDrawingWidth: (width) => set({ drawingWidth: width }),
+  isDrawingVisible: true,
+  setIsDrawingVisible: (visible) => set({ isDrawingVisible: visible }),
 }));
