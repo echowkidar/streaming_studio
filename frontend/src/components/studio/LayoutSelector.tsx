@@ -57,6 +57,29 @@ export const LayoutSelector: React.FC = () => {
       ),
     },
     {
+      id: "stacked",
+      name: "Stacked Vertical",
+      desc: "Top & bottom split (StreamYard)",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current p-0.5 flex flex-col gap-0.5">
+          <div className="w-full flex-1 bg-current opacity-30 rounded-xs" />
+          <div className="w-full flex-1 bg-current opacity-30 rounded-xs" />
+        </div>
+      ),
+    },
+    {
+      id: "cinema",
+      name: "Cinema Fullscreen",
+      desc: "100% stage / slide focus",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current p-0.5 flex items-center justify-center">
+          <div className="w-full h-full bg-current opacity-50 rounded-xs flex items-center justify-center">
+            <Maximize2 className="w-3 h-3 text-slate-900" />
+          </div>
+        </div>
+      ),
+    },
+    {
       id: "speaker-large",
       name: "Speaker + Grid",
       desc: "Hero feed with right sidebar",
@@ -67,6 +90,31 @@ export const LayoutSelector: React.FC = () => {
             <div className="w-full flex-1 bg-current opacity-30 rounded-xs" />
             <div className="w-full flex-1 bg-current opacity-30 rounded-xs" />
           </div>
+        </div>
+      ),
+    },
+    {
+      id: "presentation",
+      name: "Presentation Deck",
+      desc: "Slide focus with bottom speaker row",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current p-0.5 flex flex-col gap-0.5">
+          <div className="w-full flex-[2] bg-current opacity-40 rounded-xs" />
+          <div className="w-full flex-1 flex gap-0.5">
+            <div className="flex-1 bg-current opacity-30 rounded-xs" />
+            <div className="flex-1 bg-current opacity-30 rounded-xs" />
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "pip",
+      name: "Picture in Picture",
+      desc: "Full screen with floating box",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current p-0.5 relative">
+          <div className="w-full h-full bg-current opacity-20 rounded-xs" />
+          <div className="absolute bottom-1 right-1 w-4 h-3 bg-current opacity-80 rounded-xs" />
         </div>
       ),
     },
@@ -84,13 +132,29 @@ export const LayoutSelector: React.FC = () => {
       ),
     },
     {
-      id: "pip",
-      name: "Picture in Picture",
-      desc: "Full screen with floating box",
+      id: "three-equal",
+      name: "3-Column Trio",
+      desc: "Three equal vertical columns",
       icon: (active) => (
-        <div className="w-full h-8 rounded border border-current p-0.5 relative">
-          <div className="w-full h-full bg-current opacity-20 rounded-xs" />
-          <div className="absolute bottom-1 right-1 w-4 h-3 bg-current opacity-80 rounded-xs" />
+        <div className="w-full h-8 rounded border border-current p-0.5 flex gap-0.5">
+          <div className="flex-1 h-full bg-current opacity-30 rounded-xs" />
+          <div className="flex-1 h-full bg-current opacity-30 rounded-xs" />
+          <div className="flex-1 h-full bg-current opacity-30 rounded-xs" />
+        </div>
+      ),
+    },
+    {
+      id: "six-grid",
+      name: "6-Tile Grid",
+      desc: "Six equal participants (3x2)",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current p-0.5 grid grid-cols-3 grid-rows-2 gap-0.5">
+          <div className="bg-current opacity-30 rounded-xs" />
+          <div className="bg-current opacity-30 rounded-xs" />
+          <div className="bg-current opacity-30 rounded-xs" />
+          <div className="bg-current opacity-30 rounded-xs" />
+          <div className="bg-current opacity-30 rounded-xs" />
+          <div className="bg-current opacity-30 rounded-xs" />
         </div>
       ),
     },
@@ -102,20 +166,6 @@ export const LayoutSelector: React.FC = () => {
         <div className="w-full h-8 rounded border border-current p-0.5 flex gap-1.5 px-2">
           <div className="flex-1 h-full bg-current opacity-40 rounded-xs" />
           <div className="flex-1 h-full bg-current opacity-40 rounded-xs" />
-        </div>
-      ),
-    },
-    {
-      id: "presentation",
-      name: "Presentation Deck",
-      desc: "Slide focus with bottom speaker row",
-      icon: (active) => (
-        <div className="w-full h-8 rounded border border-current p-0.5 flex flex-col gap-0.5">
-          <div className="w-full flex-[2] bg-current opacity-40 rounded-xs" />
-          <div className="w-full flex-1 flex gap-0.5">
-            <div className="flex-1 bg-current opacity-30 rounded-xs" />
-            <div className="flex-1 bg-current opacity-30 rounded-xs" />
-          </div>
         </div>
       ),
     },

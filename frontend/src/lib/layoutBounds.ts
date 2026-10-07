@@ -9,8 +9,11 @@ export function getLayoutExpectedSlots(
 ): number {
   switch (layout) {
     case "solo":
+    case "cinema":
+    case "screen-full":
       return 1;
     case "side-by-side":
+    case "stacked":
     case "podcast":
     case "interview":
     case "pip":
@@ -96,6 +99,48 @@ export function getDefaultSlotBounds(
         zIndex: 10,
         isLockedRatio: true,
       };
+    }
+
+    case "stacked": {
+      if (index === 0) {
+        return {
+          x: 4,
+          y: 4,
+          width: 92,
+          height: 44,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
+      if (index === 1) {
+        return {
+          x: 4,
+          y: 52,
+          width: 92,
+          height: 44,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
+      const totalRows = Math.min(4, Math.max(2, effectiveTotal));
+      const h = Math.max(20, (92 - (totalRows - 1) * 3) / totalRows);
+      return {
+        x: 4,
+        y: 4 + index * (h + 3),
+        width: 92,
+        height: h,
+        zIndex: 10,
+        isLockedRatio: true,
+      };
+    }
+
+    case "cinema":
+    case "screen-full": {
+      if (index === 0) {
+        return { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true };
+      }
+      // Floating indicator in bottom right for guest
+      return { x: 80, y: 80, width: 18, height: 16, zIndex: 25, isLockedRatio: true };
     }
 
     case "podcast":

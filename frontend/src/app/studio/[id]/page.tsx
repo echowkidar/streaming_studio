@@ -34,6 +34,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Pencil,
+  Pause,
+  Play,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -110,8 +113,11 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     startLive,
     endLive,
     isRecording,
+    isRecordPaused,
     startRecord,
     stopRecord,
+    pauseRecord,
+    resumeRecord,
     viewerCount,
     participants,
     moveToStage,
@@ -219,6 +225,25 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         setRecordingNotification(
           `🎬 Stage recording saved directly to your computer! ("${result.fileName}" • ${formatDuration(result.durationSeconds)} • ${sizeMb} MB) — Zero VPS data consumed.`
         );
+      }
+    }
+  };
+
+  const handlePauseResumeRecord = () => {
+    if (!isRecording) return;
+    if (isRecordPaused) {
+      const ok = studioStageRecorder.resume();
+      if (ok) {
+        resumeRecord();
+        setRecordingNotification("▶️ Local recording resumed.");
+        setTimeout(() => setRecordingNotification(null), 3000);
+      }
+    } else {
+      const ok = studioStageRecorder.pause();
+      if (ok) {
+        pauseRecord();
+        setRecordingNotification("⏸️ Local recording paused.");
+        setTimeout(() => setRecordingNotification(null), 3000);
       }
     }
   };
@@ -831,21 +856,81 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           </Button>
 
           {/* Client-Side Stage Record Button (Saved directly to PC, Zero VPS upload) */}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleToggleRecord}
-            className={cn(
-              "h-8 px-2.5 sm:px-3 rounded-full text-xs font-medium transition-all",
-              isRecording && "text-rose-400 border-rose-500/40 bg-rose-500/15 ring-1 ring-rose-500/40 shadow-sm shadow-rose-500/20"
-            )}
-            title={isRecording ? "Stop recording & save video file directly to your PC" : "Record studio stage to your computer (0 bytes uploaded to VPS)"}
-          >
-            <CircleDot className={cn("w-3.5 h-3.5 sm:mr-1.5", isRecording && "animate-pulse fill-rose-500 text-rose-500")} />
-            <span className="hidden sm:inline font-mono font-bold">
-              {isRecording ? `REC ${formatRecordTime(liveRecordDuration)}` : "Record to PC"}
-            </span>
-          </Button>
+          {!isRecording ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleToggleRecord}
+              className="h-8 px-2.5 sm:px-3 rounded-full text-xs font-medium transition-all text-slate-300 hover:text-white"
+              title="Record studio stage to your computer (0 bytes uploaded to VPS)"
+            >
+              <CircleDot className="w-3.5 h-3.5 sm:mr-1.5 text-rose-500" />
+              <span className="hidden sm:inline font-medium">Record to PC</span>
+            </Button>
+          ) : (
+            <div
+              className={cn(
+                "flex items-center h-8 rounded-full border transition-all shadow-sm",
+                isRecordPaused
+                  ? "bg-amber-500/15 border-amber-500/40 text-amber-300 ring-1 ring-amber-500/30"
+                  : "bg-rose-500/15 border-rose-500/40 text-rose-400 ring-1 ring-rose-500/30 shadow-rose-500/20"
+              )}
+            >
+              {/* Duration badge */}
+              <div
+                className="flex items-center px-2 sm:px-2.5 py-1 select-none"
+                title={isRecordPaused ? "Recording is paused" : "Recording in progress"}
+              >
+                <CircleDot
+                  className={cn(
+                    "w-3.5 h-3.5 mr-1.5",
+                    isRecordPaused
+                      ? "text-amber-400"
+                      : "animate-pulse fill-rose-500 text-rose-500"
+                  )}
+                />
+                <span className="font-mono font-bold text-xs whitespace-nowrap">
+                  {isRecordPaused ? "PAUSED" : "REC"} {formatRecordTime(liveRecordDuration)}
+                </span>
+              </div>
+
+              {/* Pause / Resume Button */}
+              <button
+                type="button"
+                onClick={handlePauseResumeRecord}
+                className={cn(
+                  "h-6 px-2 mx-0.5 rounded-full flex items-center gap-1 text-[11px] font-semibold transition-colors cursor-pointer",
+                  isRecordPaused
+                    ? "bg-amber-500/25 hover:bg-amber-500/40 text-amber-200"
+                    : "bg-white/10 hover:bg-white/20 text-slate-200"
+                )}
+                title={isRecordPaused ? "Resume Recording" : "Pause Recording"}
+              >
+                {isRecordPaused ? (
+                  <>
+                    <Play className="w-3 h-3 fill-amber-300 text-amber-300" />
+                    <span className="hidden sm:inline">Resume</span>
+                  </>
+                ) : (
+                  <>
+                    <Pause className="w-3 h-3 text-slate-200" />
+                    <span className="hidden sm:inline">Pause</span>
+                  </>
+                )}
+              </button>
+
+              {/* Stop & Save Button */}
+              <button
+                type="button"
+                onClick={handleToggleRecord}
+                className="h-6 px-2 mr-1 rounded-full flex items-center gap-1 text-[11px] font-semibold bg-rose-500/25 hover:bg-rose-500/40 text-rose-200 transition-colors cursor-pointer"
+                title="Stop recording and save video file directly to your PC"
+              >
+                <Square className="w-2.5 h-2.5 fill-rose-300 text-rose-300" />
+                <span className="hidden sm:inline">Stop</span>
+              </button>
+            </div>
+          )}
 
           {/* Mobile Participants Trigger Button */}
           <Button

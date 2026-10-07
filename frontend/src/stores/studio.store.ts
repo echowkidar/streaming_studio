@@ -16,6 +16,8 @@ export type StudioLayout =
   | "presentation" 
   | "podcast" 
   | "interview"
+  | "stacked"
+  | "cinema"
   | "custom";
 
 export interface CustomLayoutConfig {
@@ -96,6 +98,7 @@ interface StudioState {
   resetTileTransform: (id: string | number) => void;
   isLive: boolean;
   isRecording: boolean;
+  isRecordPaused: boolean;
   recordDuration: number;
   liveDuration: number;
   viewerCount: number;
@@ -228,6 +231,8 @@ interface StudioState {
   endLive: () => void;
   startRecord: () => void;
   stopRecord: () => void;
+  pauseRecord: () => void;
+  resumeRecord: () => void;
 }
 
 export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
@@ -371,6 +376,7 @@ export const useStudioStore = create<StudioState>((set) => ({
   broadcastTitle: "Product Launch & Live Q&A Keynote",
   isLive: false,
   isRecording: false,
+  isRecordPaused: false,
   recordDuration: 0,
   liveDuration: 0,
   viewerCount: 1420,
@@ -935,8 +941,10 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   startLive: () => set({ isLive: true }),
   endLive: () => set({ isLive: false }),
-  startRecord: () => set({ isRecording: true }),
-  stopRecord: () => set({ isRecording: false }),
+  startRecord: () => set({ isRecording: true, isRecordPaused: false }),
+  stopRecord: () => set({ isRecording: false, isRecordPaused: false }),
+  pauseRecord: () => set({ isRecordPaused: true }),
+  resumeRecord: () => set({ isRecordPaused: false }),
   setTitle: (title) => set({ broadcastTitle: title }),
 
   // Telestrator & On-Screen Drawing Tool

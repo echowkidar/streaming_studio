@@ -23,6 +23,7 @@ export class StudioStageRecorder {
   private fallbackInterval: NodeJS.Timeout | null = null;
   private durationSeconds = 0;
   private isRecording = false;
+  private isPaused = false;
   private onTimeUpdateCallback?: (seconds: number) => void;
   private didStartBroadcasterComposite = false;
   private selectedMime = '';
@@ -39,8 +40,42 @@ export class StudioStageRecorder {
     return this.isRecording;
   }
 
+  public getIsPaused(): boolean {
+    return this.isPaused;
+  }
+
   public getDuration(): number {
     return this.durationSeconds;
+  }
+
+  public pause(): boolean {
+    if (!this.isRecording || !this.mediaRecorder || this.isPaused) return false;
+    try {
+      if (this.mediaRecorder.state === 'recording') {
+        this.mediaRecorder.pause();
+        this.isPaused = true;
+        console.log('[StudioStageRecorder] Recording paused.');
+        return true;
+      }
+    } catch (err) {
+      console.error('[StudioStageRecorder] Failed to pause recording:', err);
+    }
+    return false;
+  }
+
+  public resume(): boolean {
+    if (!this.isRecording || !this.mediaRecorder || !this.isPaused) return false;
+    try {
+      if (this.mediaRecorder.state === 'paused') {
+        this.mediaRecorder.resume();
+        this.isPaused = false;
+        console.log('[StudioStageRecorder] Recording resumed.');
+        return true;
+      }
+    } catch (err) {
+      console.error('[StudioStageRecorder] Failed to resume recording:', err);
+    }
+    return false;
   }
 
   public async start(
@@ -52,6 +87,7 @@ export class StudioStageRecorder {
     this.onTimeUpdateCallback = onTimeUpdate;
     this.recordedChunks = [];
     this.durationSeconds = 0;
+    this.isPaused = false;
     this.didStartBroadcasterComposite = false;
 
     try {
@@ -174,9 +210,9 @@ export class StudioStageRecorder {
       this.mediaRecorder.start(1000);
       this.isRecording = true;
 
-      // Start live timer
+      // Start live timer (pauses incrementing when recording is paused)
       this.timerInterval = setInterval(() => {
-        if (this.isRecording) {
+        if (this.isRecording && !this.isPaused) {
           this.durationSeconds += 1;
           this.onTimeUpdateCallback?.(this.durationSeconds);
         }
@@ -272,6 +308,7 @@ export class StudioStageRecorder {
 
   private cleanup() {
     this.isRecording = false;
+    this.isPaused = false;
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
