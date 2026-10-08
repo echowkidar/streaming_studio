@@ -1074,8 +1074,8 @@ export const StagePreview: React.FC = () => {
               );
               const isCopied = copiedSlotIndex === slotIdx;
               const slotTitle =
-                activeLayout === "podcast"
-                  ? "Co-Host Slot"
+                activeLayout === "cropped" || activeLayout === "podcast"
+                  ? "Guest Slot 2"
                   : activeLayout === "presentation"
                   ? "Slide Deck / Screen Slot"
                   : `Guest Slot ${slotIdx + 1}`;
@@ -1107,7 +1107,7 @@ export const StagePreview: React.FC = () => {
                     }}
                     className={cn(
                       "w-full h-full border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group",
-                      activeLayout === "custom" ? "" : "rounded-2xl"
+                      activeLayout === "custom" || activeLayout === "cropped" || activeLayout === "podcast" ? "" : "rounded-2xl"
                     )}
                   >
                   <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
