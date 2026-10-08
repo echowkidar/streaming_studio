@@ -21,6 +21,11 @@ import {
   MonitorUp,
   Clapperboard,
   Sparkles,
+  Upload,
+  X,
+  FileText,
+  Video,
+  Music,
 } from "lucide-react";
 
 interface ScenesPanelProps {
@@ -40,6 +45,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     switchScene,
     saveCurrentStageToScene,
     reorderScenes,
+    setActiveMedia,
+    setLayout,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -47,6 +54,83 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [editName, setEditName] = useState("");
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
+  const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const defaultMediaOptions = [
+    {
+      id: "media-slides",
+      name: "Product_Architecture_2026.pdf",
+      type: "pdf" as const,
+      desc: "Presentation Deck (18 slides)",
+      url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+    },
+    {
+      id: "media-countdown",
+      name: "Intro_Countdown_30s.mp4",
+      type: "video" as const,
+      desc: "Countdown Video (00:30)",
+      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+      loop: true,
+    },
+    {
+      id: "media-keynote-clip",
+      name: "Product_Demo_Highlights.mp4",
+      type: "video" as const,
+      desc: "Demo Highlights Clip (01:15)",
+      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      loop: true,
+    },
+    {
+      id: "media-lofi",
+      name: "Background_Lofi_Stream.mp3",
+      type: "audio" as const,
+      desc: "Audio Stream (03:45)",
+      url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
+      loop: true,
+    },
+  ];
+
+  const handleAttachMedia = (sceneId: string, mediaItem: any | null) => {
+    const targetScene = scenes.find((s) => s.id === sceneId);
+    const updates: Partial<StudioScene> = {
+      activeMedia: mediaItem,
+    };
+    if (mediaItem && targetScene && targetScene.layout === "solo") {
+      updates.layout = mediaItem.type === "video" ? "cinema" : "presentation";
+    }
+    updateScene(sceneId, updates);
+
+    if (activeSceneId === sceneId) {
+      setActiveMedia(mediaItem);
+      if (updates.layout) {
+        setLayout(updates.layout);
+      }
+    }
+    setMediaPickerSceneId(null);
+    setActiveMenuId(null);
+  };
+
+  const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>, sceneId: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    let type: "video" | "audio" | "image" | "pdf" = "video";
+    if (file.type.startsWith("audio/")) type = "audio";
+    else if (file.type.startsWith("image/")) type = "image";
+    else if (file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf")) type = "pdf";
+
+    const objectUrl = URL.createObjectURL(file);
+    const customItem = {
+      id: `media-upload-${Date.now()}`,
+      name: file.name,
+      type,
+      url: objectUrl,
+      loop: true,
+    };
+
+    handleAttachMedia(sceneId, customItem);
+  };
 
   const handleStartRename = (scene: StudioScene) => {
     setEditingId(scene.id);
@@ -284,6 +368,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   </button>
                 </div>
 
+                {/* Media Label Badge on thumbnail */}
+                {scene.activeMedia && (
+                  <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 border border-cyan-500/40 shadow-md pointer-events-none">
+                    {scene.activeMedia.type === "pdf" ? <FileText className="w-2.5 h-2.5 text-cyan-300" /> : <Clapperboard className="w-2.5 h-2.5 text-indigo-300" />}
+                    <span className="truncate max-w-[80px]">{scene.activeMedia.name}</span>
+                  </div>
+                )}
+
                 {/* Context Menu Dropdown */}
                 {activeMenuId === scene.id && (
                   <div
@@ -301,6 +393,31 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       <Camera className="w-3.5 h-3.5 text-cyan-400" />
                       <span>Update with stage</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMediaPickerSceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <MonitorUp className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{scene.activeMedia ? "Change Media / Deck" : "Attach Media / Deck"}</span>
+                    </button>
+
+                    {scene.activeMedia && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleAttachMedia(scene.id, null);
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2"
+                      >
+                        <X className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Remove Media</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -386,6 +503,96 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           );
         })}
       </div>
+
+      {/* ─── Media / Presentation Attachment Modal ───────────────────────── */}
+      {mediaPickerSceneId && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setMediaPickerSceneId(null)}
+        >
+          <div 
+            className="w-full max-w-sm bg-[#121320] border border-white/20 rounded-2xl shadow-2xl overflow-hidden p-4 text-white animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <MonitorUp className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-bold">Attach Media / Presentation</h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setMediaPickerSceneId(null)}
+                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 my-2.5 leading-relaxed">
+              Attach presentation slides (PDF), demo video, or stream media that automatically goes live when switching to this scene.
+            </p>
+
+            <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar my-2">
+              {/* Option to clear media */}
+              <button
+                type="button"
+                onClick={() => handleAttachMedia(mediaPickerSceneId, null)}
+                className="w-full p-2 rounded-xl text-left border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/10 flex items-center gap-2.5 transition-all text-xs"
+              >
+                <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+                  <User className="w-4 h-4 text-slate-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-slate-300">Camera Only (No Media)</div>
+                  <div className="text-[10px] text-slate-500">Only show hosts and guests on stage</div>
+                </div>
+              </button>
+
+              {defaultMediaOptions.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
+                  className="w-full p-2 rounded-xl text-left border border-white/10 hover:border-cyan-500/50 bg-white/5 hover:bg-cyan-950/20 flex items-center gap-2.5 transition-all text-xs group"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    {opt.type === "pdf" ? (
+                      <FileText className="w-4 h-4 text-cyan-300" />
+                    ) : opt.type === "video" ? (
+                      <Video className="w-4 h-4 text-indigo-300" />
+                    ) : (
+                      <Music className="w-4 h-4 text-amber-300" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-200 group-hover:text-white truncate">
+                      {opt.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400">{opt.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Upload from Computer */}
+            <input
+              ref={mediaFileInputRef}
+              type="file"
+              accept="video/*,image/*,.pdf,audio/*"
+              className="hidden"
+              onChange={(e) => handleCustomFileUpload(e, mediaPickerSceneId)}
+            />
+            <button
+              type="button"
+              onClick={() => mediaFileInputRef.current?.click()}
+              className="w-full mt-2 py-2 px-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 hover:text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-95"
+            >
+              <Upload className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Upload Presentation / Video from PC</span>
+            </button>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

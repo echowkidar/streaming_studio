@@ -55,7 +55,10 @@ export function getDefaultSlotBounds(
   customConfig?: CustomLayoutConfig
 ): ParticipantBounds {
   const safeSplit = Math.max(20, Math.min(80, splitRatio || 50));
-  const effectiveTotal = Math.max(total, getLayoutExpectedSlots(layout, customConfig));
+  const isCroppedType = layout === "cropped" || layout === "podcast" || layout === "interview";
+  const effectiveTotal = (isCroppedType && total <= 1)
+    ? 1
+    : Math.max(total, getLayoutExpectedSlots(layout, customConfig));
 
   switch (layout) {
     case "solo": {
@@ -160,6 +163,17 @@ export function getDefaultSlotBounds(
     case "podcast":
     case "interview": {
       // StreamYard "Cropped layout": 100% full height bleed from top to bottom, vertical center-crop
+      // If only 1 participant is on stage, fill 100% of the stage (no 50% blank black screen!)
+      if (total <= 1 || effectiveTotal <= 1) {
+        return {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
       const col0W = safeSplit;
       const col1W = 100 - safeSplit;
       if (index === 0) {

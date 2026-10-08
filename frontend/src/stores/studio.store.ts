@@ -385,6 +385,7 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     splitRatio: 50,
     backgroundUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80",
     backgroundType: "image",
+    activeMedia: null,
     thumbnailColor: "#6366f1",
   },
   {
@@ -392,6 +393,7 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Host Only",
     layout: "solo",
     splitRatio: 50,
+    activeMedia: null,
     thumbnailColor: "#3b82f6",
   },
   {
@@ -413,6 +415,7 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Interview Split",
     layout: "cropped",
     splitRatio: 50,
+    activeMedia: null,
     thumbnailColor: "#10b981",
   },
   {
@@ -420,6 +423,7 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Speaker View",
     layout: "speaker-large",
     splitRatio: 65,
+    activeMedia: null,
     thumbnailColor: "#8b5cf6",
   },
   {
@@ -427,6 +431,12 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Presentation Deck",
     layout: "presentation",
     splitRatio: 68,
+    activeMedia: {
+      id: "media-slides",
+      name: "Product_Architecture_2026.pdf",
+      type: "pdf",
+      url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+    },
     thumbnailColor: "#06b6d4",
   },
 ];
@@ -1201,32 +1211,28 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       set({ participants: nextParticipants });
     }
 
-    // 3. Active Media
-    if (scene.activeMedia !== undefined) {
-      get().setActiveMedia(scene.activeMedia);
-    }
+    // 3. Active Media (StreamYard parity: always set to scene.activeMedia or null to clear previous scene's media)
+    get().setActiveMedia(scene.activeMedia || null);
 
     // 4. Background
     if (scene.backgroundUrl !== undefined) {
-      get().setBackground(scene.backgroundUrl, scene.backgroundType);
+      get().setBackground(scene.backgroundUrl || null, scene.backgroundType || "image");
     }
 
     // 5. Overlay
     if (scene.stageOverlay !== undefined) {
-      get().setStageOverlay(scene.stageOverlay);
+      get().setStageOverlay(scene.stageOverlay || null);
     } else if (scene.overlayUrl !== undefined) {
-      get().setOverlay(scene.overlayUrl);
+      get().setOverlay(scene.overlayUrl || null);
     }
 
     // 6. Banner
     if (scene.banner !== undefined) {
-      get().setBanner(scene.banner);
+      get().setBanner(scene.banner || null);
     }
 
     // 7. Spotlight
-    if (scene.heroParticipantId !== undefined) {
-      get().setCustomLayoutConfig({ heroParticipantId: scene.heroParticipantId });
-    }
+    get().setCustomLayoutConfig({ heroParticipantId: scene.heroParticipantId || undefined });
   },
   saveCurrentStageToScene: (id) => {
     const state = get();
@@ -1235,12 +1241,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       layout: state.activeLayout,
       splitRatio: state.layoutSplitRatio,
       onStageParticipantIds: onStageIds,
-      activeMedia: state.activeMedia,
-      backgroundUrl: state.activeBackgroundUrl,
+      activeMedia: state.activeMedia || null,
+      backgroundUrl: state.activeBackgroundUrl || null,
       backgroundType: state.activeBackgroundType,
-      stageOverlay: state.activeStageOverlay,
-      banner: state.activeBanner,
-      heroParticipantId: state.customLayoutConfig?.heroParticipantId,
+      stageOverlay: state.activeStageOverlay || null,
+      banner: state.activeBanner || null,
+      heroParticipantId: state.customLayoutConfig?.heroParticipantId || null,
     });
   },
 }));

@@ -1081,8 +1081,8 @@ export const StagePreview: React.FC = () => {
           );
         })}
 
-        {/* Empty Guest Placeholder Slots (rendered whenever layout capacity exceeds currently onstage participants) */}
-        {!hasVisualMedia && orderedParticipants.length < expectedSlots && (
+        {/* Empty Guest Placeholder Slots (Only rendered in non-full-bleed layouts when capacity exceeds participants) */}
+        {!hasVisualMedia && !isFullBleedLayout && orderedParticipants.length < expectedSlots && (
           <>
             {Array.from({ length: expectedSlots - orderedParticipants.length }).map((_, i) => {
               const slotIdx = orderedParticipants.length + i;
@@ -1095,9 +1095,7 @@ export const StagePreview: React.FC = () => {
               );
               const isCopied = copiedSlotIndex === slotIdx;
               const slotTitle =
-                activeLayout === "cropped" || activeLayout === "podcast"
-                  ? "Guest Slot 2"
-                  : activeLayout === "presentation"
+                activeLayout === "presentation"
                   ? "Slide Deck / Screen Slot"
                   : `Guest Slot ${slotIdx + 1}`;
 
@@ -1169,7 +1167,7 @@ export const StagePreview: React.FC = () => {
         )}
 
         {/* StreamYard Responsive Stage Split Dividers (Multi-Layout Parity) */}
-        {!hasVisualMedia && (() => {
+        {!hasVisualMedia && orderedParticipants.length >= 2 && (() => {
           const isVerticalSplit =
             activeLayout === "side-by-side" ||
             activeLayout === "fit" ||
@@ -1252,14 +1250,14 @@ export const StagePreview: React.FC = () => {
       onClick={() => setSelectedParticipantId(null)}
       className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
       style={{
-        backgroundImage: activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
+        backgroundImage: !isFullBleedLayout && activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
       }}
     >
       {/* Real-time Video Background Layer (Seamless continuous loop) */}
-      {isVideoBg && activeBackgroundUrl && (
+      {!isFullBleedLayout && isVideoBg && activeBackgroundUrl && (
         <video
           key={activeBackgroundUrl}
           src={activeBackgroundUrl}
