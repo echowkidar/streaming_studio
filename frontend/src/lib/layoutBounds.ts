@@ -102,12 +102,14 @@ export function getDefaultSlotBounds(
     }
 
     case "stacked": {
+      const topH = Math.max(15, safeSplit - 5);
+      const botH = Math.max(15, 100 - safeSplit - 5);
       if (index === 0) {
         return {
           x: 4,
           y: 4,
           width: 92,
-          height: 44,
+          height: topH,
           zIndex: 10,
           isLockedRatio: true,
         };
@@ -115,9 +117,9 @@ export function getDefaultSlotBounds(
       if (index === 1) {
         return {
           x: 4,
-          y: 52,
+          y: Math.min(85, safeSplit + 1),
           width: 92,
-          height: 44,
+          height: botH,
           zIndex: 10,
           isLockedRatio: true,
         };
@@ -180,16 +182,18 @@ export function getDefaultSlotBounds(
 
     case "speaker-large":
     case "screen-speaker": {
+      const heroSplit = splitRatio ? Math.max(40, Math.min(80, splitRatio)) : 68;
       if (index === 0) {
-        return { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
+        return { x: 2, y: 4, width: Math.max(30, heroSplit - 3), height: 92, zIndex: 10, isLockedRatio: true };
       }
       const sideTotal = Math.max(2, effectiveTotal - 1);
       const sideHeight = Math.max(20, (92 - (sideTotal - 1) * 3) / sideTotal);
       const sideY = 4 + (index - 1) * (sideHeight + 3);
+      const sideW = Math.max(15, 100 - heroSplit - 3);
       return {
-        x: 72,
+        x: Math.min(85, heroSplit + 1),
         y: Math.min(76, sideY),
-        width: 26,
+        width: sideW,
         height: Math.min(92, sideHeight),
         zIndex: 10,
         isLockedRatio: true,
@@ -198,17 +202,19 @@ export function getDefaultSlotBounds(
 
     case "presentation": {
       // Presentation deck has primary focus area on top/center (68% height), speakers on bottom strip
+      const presSplit = splitRatio ? Math.max(40, Math.min(80, splitRatio)) : 68;
       if (index === 0) {
-        return { x: 2, y: 2, width: 96, height: 68, zIndex: 10, isLockedRatio: true };
+        return { x: 2, y: 2, width: 96, height: Math.max(30, presSplit - 3), zIndex: 10, isLockedRatio: true };
       }
       const bottomTotal = Math.max(2, effectiveTotal - 1);
       const botW = Math.max(15, Math.min(30, (96 - (bottomTotal - 1) * 2) / bottomTotal));
       const botX = 2 + (index - 1) * (botW + 2);
+      const botH = Math.max(15, 100 - presSplit - 5);
       return {
         x: Math.min(100 - botW - 2, botX),
-        y: 72,
+        y: Math.min(85, presSplit + 2),
         width: botW,
-        height: 25,
+        height: botH,
         zIndex: 10,
         isLockedRatio: true,
       };
@@ -240,16 +246,16 @@ export function getDefaultSlotBounds(
     }
 
     case "three-equal": {
-      const w = 31;
-      const x = 2 + index * 32.5;
-      return {
-        x: Math.min(67, x),
-        y: 4,
-        width: w,
-        height: 92,
-        zIndex: 10,
-        isLockedRatio: true,
-      };
+      const col0W = Math.max(15, Math.min(55, Number(((safeSplit / 50) * 31).toFixed(1))));
+      const remainingW = 96 - col0W - 4;
+      const otherW = Number((remainingW / 2).toFixed(1));
+      if (index === 0) {
+        return { x: 2, y: 4, width: col0W, height: 92, zIndex: 10, isLockedRatio: true };
+      }
+      if (index === 1) {
+        return { x: 2 + col0W + 2, y: 4, width: otherW, height: 92, zIndex: 10, isLockedRatio: true };
+      }
+      return { x: 2 + col0W + 2 + otherW + 2, y: 4, width: otherW, height: 92, zIndex: 10, isLockedRatio: true };
     }
 
     case "six-grid": {
@@ -286,35 +292,10 @@ export function getDefaultSlotBounds(
         return getDefaultSlotBounds("podcast", index, total, splitRatio);
       }
       if (mode === "hero-side") {
-        if (index === 0) {
-          return { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
-        }
-        const sideTotal = Math.max(2, effectiveTotal - 1);
-        const sideHeight = Math.max(20, (92 - (sideTotal - 1) * 3) / sideTotal);
-        const sideY = 4 + (index - 1) * (sideHeight + 3);
-        return {
-          x: 72,
-          y: Math.min(76, sideY),
-          width: 26,
-          height: Math.min(92, sideHeight),
-          zIndex: 10,
-          isLockedRatio: true,
-        };
+        return getDefaultSlotBounds("speaker-large", index, total, splitRatio);
       }
       if (mode === "hero-bottom") {
-        if (index === 0) {
-          return { x: 2, y: 4, width: 96, height: 66, zIndex: 10, isLockedRatio: true };
-        }
-        const botTotal = Math.max(2, effectiveTotal - 1);
-        const botW = Math.max(15, (96 - (botTotal - 1) * 2) / botTotal);
-        return {
-          x: 2 + (index - 1) * (botW + 2),
-          y: 72,
-          width: botW,
-          height: 24,
-          zIndex: 10,
-          isLockedRatio: true,
-        };
+        return getDefaultSlotBounds("presentation", index, total, splitRatio);
       }
       if (mode === "grid") {
         const cols = customConfig?.columns || 2;

@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Crosshair,
   Repeat,
+  Sparkles,
   UserPlus,
   Copy,
   Check,
@@ -25,7 +26,7 @@ import {
   Globe,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ export const StagePreview: React.FC = () => {
   const {
     activeLayout,
     customLayoutConfig,
+    setCustomLayoutConfig,
     participants,
     showLogo,
     logoPosition,
@@ -146,8 +148,8 @@ export const StagePreview: React.FC = () => {
     hasMoved: boolean;
   } | null>(null);
 
-  // Split Divider Drag Handlers (60fps requestAnimationFrame)
-  const handleSplitDividerMouseDown = (e: React.MouseEvent) => {
+  // Split Divider Drag Handlers (60fps requestAnimationFrame) - Supports both vertical & horizontal dividers
+  const handleSplitDividerMouseDown = (e: React.MouseEvent, orientation: "vertical" | "horizontal" = "vertical") => {
     e.preventDefault();
     e.stopPropagation();
     if (!stageContainerRef.current) return;
@@ -161,11 +163,19 @@ export const StagePreview: React.FC = () => {
       rafId = requestAnimationFrame(() => {
         if (!stageContainerRef.current) return;
         const rect = stageContainerRef.current.getBoundingClientRect();
-        const availableWidth = Math.max(10, rect.width - 24);
-        const relativeX = moveEvt.clientX - (rect.left + 12);
-        const percentage = Math.round((relativeX / availableWidth) * 100);
-        const clamped = Math.max(20, Math.min(80, percentage));
-        setLayoutSplitRatio(clamped);
+        if (orientation === "vertical") {
+          const availableWidth = Math.max(10, rect.width - 24);
+          const relativeX = moveEvt.clientX - (rect.left + 12);
+          const percentage = Math.round((relativeX / availableWidth) * 100);
+          const clamped = Math.max(20, Math.min(80, percentage));
+          setLayoutSplitRatio(clamped);
+        } else {
+          const availableHeight = Math.max(10, rect.height - 24);
+          const relativeY = moveEvt.clientY - (rect.top + 12);
+          const percentage = Math.round((relativeY / availableHeight) * 100);
+          const clamped = Math.max(20, Math.min(80, percentage));
+          setLayoutSplitRatio(clamped);
+        }
       });
     };
 
@@ -181,7 +191,7 @@ export const StagePreview: React.FC = () => {
     window.addEventListener("mouseup", handleMouseUp);
   };
 
-  const handleSplitDividerTouchStart = (e: React.TouchEvent) => {
+  const handleSplitDividerTouchStart = (e: React.TouchEvent, orientation: "vertical" | "horizontal" = "vertical") => {
     e.stopPropagation();
     if (!stageContainerRef.current || e.touches.length === 0) return;
     isDraggingSplitRef.current = true;
@@ -194,11 +204,19 @@ export const StagePreview: React.FC = () => {
       rafId = requestAnimationFrame(() => {
         if (!stageContainerRef.current) return;
         const rect = stageContainerRef.current.getBoundingClientRect();
-        const availableWidth = Math.max(10, rect.width - 24);
-        const relativeX = touchEvt.touches[0].clientX - (rect.left + 12);
-        const percentage = Math.round((relativeX / availableWidth) * 100);
-        const clamped = Math.max(20, Math.min(80, percentage));
-        setLayoutSplitRatio(clamped);
+        if (orientation === "vertical") {
+          const availableWidth = Math.max(10, rect.width - 24);
+          const relativeX = touchEvt.touches[0].clientX - (rect.left + 12);
+          const percentage = Math.round((relativeX / availableWidth) * 100);
+          const clamped = Math.max(20, Math.min(80, percentage));
+          setLayoutSplitRatio(clamped);
+        } else {
+          const availableHeight = Math.max(10, rect.height - 24);
+          const relativeY = touchEvt.touches[0].clientY - (rect.top + 12);
+          const percentage = Math.round((relativeY / availableHeight) * 100);
+          const clamped = Math.max(20, Math.min(80, percentage));
+          setLayoutSplitRatio(clamped);
+        }
       });
     };
 
@@ -225,7 +243,10 @@ export const StagePreview: React.FC = () => {
 
     setSelectedParticipantId(p.id);
 
-    if (!stageContainerRef.current) return;
+    // StreamYard standard: in grid/column layouts, clicking selects the tile without displacing it.
+    // Only in floating PiP mode can the small floating window be dragged.
+    const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
+    if (!isPipMode || !stageContainerRef.current) return;
 
     const startClientX = e.clientX;
     const startClientY = e.clientY;
@@ -300,7 +321,8 @@ export const StagePreview: React.FC = () => {
 
     e.stopPropagation();
     setSelectedParticipantId(p.id);
-    if (!stageContainerRef.current) return;
+    const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
+    if (!isPipMode || !stageContainerRef.current) return;
 
     const startClientX = touch.clientX;
     const startClientY = touch.clientY;
@@ -365,193 +387,6 @@ export const StagePreview: React.FC = () => {
 
     window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("touchend", onTouchEnd);
-  };
-
-  // 8-Handle Window Resizing (Corner & Edge Handles with 16:9 ratio lock or freeform)
-  const handleStartResize = (
-    e: React.MouseEvent | React.TouchEvent,
-    handle: "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w",
-    participantId: string | number,
-    currentBounds: ParticipantBounds
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!stageContainerRef.current) return;
-
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-    const isLocked = currentBounds.isLockedRatio !== false;
-
-    dragSessionRef.current = {
-      type: "resize",
-      handle,
-      participantId,
-      startClientX: clientX,
-      startClientY: clientY,
-      startBounds: { ...currentBounds },
-      isLockedRatio: isLocked,
-      hasMoved: true,
-    };
-
-    setActiveDragState({ type: "resize", handle, participantId });
-
-    let rafId: number | null = null;
-
-    const onMove = (moveX: number, moveY: number) => {
-      if (!dragSessionRef.current || !stageContainerRef.current) return;
-      if (rafId !== null) cancelAnimationFrame(rafId);
-
-      rafId = requestAnimationFrame(() => {
-        if (!dragSessionRef.current || !stageContainerRef.current) return;
-        const rect = stageContainerRef.current.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return;
-
-        const deltaXPercent = ((moveX - clientX) / rect.width) * 100;
-        const deltaYPercent = ((moveY - clientY) / rect.height) * 100;
-
-        const { startBounds, isLockedRatio, participantId, handle: activeHandle } = dragSessionRef.current;
-
-        let newX = startBounds.x;
-        let newY = startBounds.y;
-        let newWidth = startBounds.width;
-        let newHeight = startBounds.height;
-
-        const MIN_SIZE = 12; // Minimum 12% width/height so tile is never lost
-
-        switch (activeHandle) {
-          case "se": {
-            newWidth = Math.max(MIN_SIZE, Math.min(100 - startBounds.x, startBounds.width + deltaXPercent));
-            newHeight = isLockedRatio
-              ? Math.min(100 - startBounds.y, newWidth)
-              : Math.max(MIN_SIZE, Math.min(100 - startBounds.y, startBounds.height + deltaYPercent));
-            if (isLockedRatio) newWidth = newHeight;
-            break;
-          }
-          case "sw": {
-            newWidth = Math.max(MIN_SIZE, Math.min(startBounds.x + startBounds.width, startBounds.width - deltaXPercent));
-            newX = startBounds.x + (startBounds.width - newWidth);
-            newHeight = isLockedRatio
-              ? Math.min(100 - startBounds.y, newWidth)
-              : Math.max(MIN_SIZE, Math.min(100 - startBounds.y, startBounds.height + deltaYPercent));
-            if (isLockedRatio) {
-              newWidth = newHeight;
-              newX = startBounds.x + (startBounds.width - newWidth);
-            }
-            break;
-          }
-          case "ne": {
-            newWidth = Math.max(MIN_SIZE, Math.min(100 - startBounds.x, startBounds.width + deltaXPercent));
-            newHeight = isLockedRatio
-              ? Math.min(startBounds.y + startBounds.height, newWidth)
-              : Math.max(MIN_SIZE, Math.min(startBounds.y + startBounds.height, startBounds.height - deltaYPercent));
-            newY = startBounds.y + (startBounds.height - newHeight);
-            if (isLockedRatio) {
-              newWidth = newHeight;
-            }
-            break;
-          }
-          case "nw": {
-            newWidth = Math.max(MIN_SIZE, Math.min(startBounds.x + startBounds.width, startBounds.width - deltaXPercent));
-            newHeight = isLockedRatio
-              ? Math.min(startBounds.y + startBounds.height, newWidth)
-              : Math.max(MIN_SIZE, Math.min(startBounds.y + startBounds.height, startBounds.height - deltaYPercent));
-            newX = startBounds.x + (startBounds.width - newWidth);
-            newY = startBounds.y + (startBounds.height - newHeight);
-            if (isLockedRatio) {
-              newWidth = newHeight;
-              newX = startBounds.x + (startBounds.width - newWidth);
-              newY = startBounds.y + (startBounds.height - newHeight);
-            }
-            break;
-          }
-          case "e": {
-            newWidth = Math.max(MIN_SIZE, Math.min(100 - startBounds.x, startBounds.width + deltaXPercent));
-            if (isLockedRatio) {
-              newHeight = Math.min(100 - startBounds.y, newWidth);
-              newWidth = newHeight;
-            }
-            break;
-          }
-          case "w": {
-            newWidth = Math.max(MIN_SIZE, Math.min(startBounds.x + startBounds.width, startBounds.width - deltaXPercent));
-            newX = startBounds.x + (startBounds.width - newWidth);
-            if (isLockedRatio) {
-              newHeight = Math.min(100 - startBounds.y, newWidth);
-              newWidth = newHeight;
-              newX = startBounds.x + (startBounds.width - newWidth);
-            }
-            break;
-          }
-          case "s": {
-            newHeight = Math.max(MIN_SIZE, Math.min(100 - startBounds.y, startBounds.height + deltaYPercent));
-            if (isLockedRatio) {
-              newWidth = Math.min(100 - startBounds.x, newHeight);
-              newHeight = newWidth;
-            }
-            break;
-          }
-          case "n": {
-            newHeight = Math.max(MIN_SIZE, Math.min(startBounds.y + startBounds.height, startBounds.height - deltaYPercent));
-            newY = startBounds.y + (startBounds.height - newHeight);
-            if (isLockedRatio) {
-              newWidth = Math.min(100 - startBounds.x, newHeight);
-              newHeight = newWidth;
-              newY = startBounds.y + (startBounds.height - newHeight);
-            }
-            break;
-          }
-        }
-
-        setParticipantBounds(participantId, {
-          x: Number(Math.max(0, Math.min(100 - newWidth, newX)).toFixed(1)),
-          y: Number(Math.max(0, Math.min(100 - newHeight, newY)).toFixed(1)),
-          width: Number(newWidth.toFixed(1)),
-          height: Number(newHeight.toFixed(1)),
-          isLockedRatio,
-        });
-      });
-    };
-
-    const handleMouseMove = (moveEvt: MouseEvent) => {
-      onMove(moveEvt.clientX, moveEvt.clientY);
-    };
-
-    const handleTouchMove = (touchEvt: TouchEvent) => {
-      if (touchEvt.touches.length > 0) {
-        onMove(touchEvt.touches[0].clientX, touchEvt.touches[0].clientY);
-      }
-    };
-
-    const handleEnd = () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      dragSessionRef.current = null;
-      setActiveDragState(null);
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleEnd);
-      window.removeEventListener("touchmove", handleTouchMove);
-      window.removeEventListener("touchend", handleEnd);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove, { passive: false });
-    window.addEventListener("mouseup", handleEnd);
-    window.addEventListener("touchmove", handleTouchMove, { passive: false });
-    window.addEventListener("touchend", handleEnd);
-  };
-
-  // Action Pill Controls
-  const handleToggleRatioLock = (id: string | number, currentBounds: ParticipantBounds) => {
-    const next = currentBounds.isLockedRatio === false ? true : false;
-    setParticipantBounds(id, { isLockedRatio: next });
-  };
-
-  const handleCenterTile = (id: string | number, currentBounds: ParticipantBounds) => {
-    const newX = Math.max(0, (100 - currentBounds.width) / 2);
-    const newY = Math.max(0, (100 - currentBounds.height) / 2);
-    setParticipantBounds(id, {
-      x: Number(newX.toFixed(1)),
-      y: Number(newY.toFixed(1)),
-    });
   };
 
   // Overlay Dragging Handlers
@@ -857,6 +692,7 @@ export const StagePreview: React.FC = () => {
 
   // Layout Engine: StreamYard-Parity Canvas with Selection Tool & Independent Window Resizing
   const renderLayoutContent = () => {
+    const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
     const hasVisualMedia = Boolean(
       activeMedia &&
         (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
@@ -911,7 +747,7 @@ export const StagePreview: React.FC = () => {
             className={cn(
               "rounded-2xl overflow-visible select-none border transition-shadow",
               isMediaSelected
-                ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-move"
+                ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer"
                 : "border-white/10 hover:border-indigo-400/50 cursor-pointer"
             )}
           >
@@ -924,54 +760,29 @@ export const StagePreview: React.FC = () => {
             {isMediaSelected && (
               <div
                 className={cn(
-                  "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
+                  "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
                   mediaBounds.y < 12 ? "-bottom-11" : "-top-11"
                 )}
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 onTouchStart={(e) => e.stopPropagation()}
               >
-                {/* Drag Move Handle */}
-                <span className="text-slate-400 p-0.5 cursor-move" title="Click and drag to move media">
-                  <Move className="w-3.5 h-3.5" />
-                </span>
-
                 {/* Media Name Tag */}
-                <span className="text-[10px] font-semibold text-emerald-300 px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[120px] truncate">
+                <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[120px] truncate">
                   🎬 {activeMedia.name}
                 </span>
 
                 <span className="w-px h-3 bg-white/20" />
-
-                {/* 16:9 Aspect Ratio Lock Toggle */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleRatioLock("active-media", mediaBounds)}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
-                    mediaBounds.isLockedRatio !== false
-                      ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
-                      : "bg-white/10 text-slate-300 border-white/20"
-                  )}
-                  title={
-                    mediaBounds.isLockedRatio !== false
-                      ? "16:9 Ratio Locked (Click to allow freeform resize)"
-                      : "Freeform Ratio Active (Click to lock 16:9)"
-                  }
-                >
-                  {mediaBounds.isLockedRatio !== false ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                  <span>{mediaBounds.isLockedRatio !== false ? "16:9" : "Free"}</span>
-                </button>
 
                 {/* Crop vs Fit Toggle Button */}
                 <button
                   type="button"
                   onClick={handleToggleMediaCrop}
                   className={cn(
-                    "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
+                    "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
                     mediaFitMode === "cover"
                       ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                      : "bg-white/10 text-slate-300 border-white/20"
+                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
                   )}
                   title={
                     mediaFitMode === "cover"
@@ -980,7 +791,7 @@ export const StagePreview: React.FC = () => {
                   }
                 >
                   <Crop className="w-3 h-3 text-amber-400" />
-                  <span>{mediaFitMode === "cover" ? "Cropped" : "Fit"}</span>
+                  <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
                 </button>
 
                 {/* Auto-Repeat Toggle Button for Video */}
@@ -994,7 +805,7 @@ export const StagePreview: React.FC = () => {
                       })
                     }
                     className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
+                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
                       (activeMedia.loop ?? true)
                         ? "bg-indigo-500/30 text-indigo-300 border-indigo-400 font-bold"
                         : "bg-white/10 text-slate-300 border-white/20"
@@ -1010,48 +821,18 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
-                {/* Center on Stage */}
-                <button
-                  type="button"
-                  onClick={() => handleCenterTile("active-media", mediaBounds)}
-                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                  title="Center Media on Stage"
-                >
-                  <Crosshair className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Layer Up */}
-                <button
-                  type="button"
-                  onClick={() => bringToFront("active-media")}
-                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                  title="Bring Media Forward"
-                >
-                  <ChevronUp className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Layer Down */}
-                <button
-                  type="button"
-                  onClick={() => sendToBack("active-media")}
-                  className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                  title="Send Media Backward"
-                >
-                  <ChevronDown className="w-3.5 h-3.5" />
-                </button>
-
-                <span className="w-px h-3 bg-white/20" />
-
                 {/* Reset to Default */}
-                <button
-                  type="button"
-                  onClick={() => resetParticipantBounds("active-media")}
-                  className="px-1.5 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
-                  title="Reset Media Position"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Reset</span>
-                </button>
+                {participantBounds["active-media"] && (
+                  <button
+                    type="button"
+                    onClick={() => resetParticipantBounds("active-media")}
+                    className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
+                    title="Reset Media Position"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset</span>
+                  </button>
+                )}
 
                 {/* Stop / Remove Media */}
                 <button
@@ -1060,7 +841,7 @@ export const StagePreview: React.FC = () => {
                     resetParticipantBounds("active-media");
                     setActiveMedia(null);
                   }}
-                  className="px-1.5 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors"
+                  className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors"
                   title="Stop and Remove Media from Stage"
                 >
                   Remove
@@ -1076,60 +857,6 @@ export const StagePreview: React.FC = () => {
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
-            )}
-
-            {/* 8 Resize Handles for Media Window */}
-            {isMediaSelected && (
-              <>
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "nw", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "nw", "active-media", mediaBounds)}
-                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Top-Left"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "ne", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "ne", "active-media", mediaBounds)}
-                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Top-Right"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "se", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "se", "active-media", mediaBounds)}
-                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Bottom-Right"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "sw", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "sw", "active-media", mediaBounds)}
-                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Bottom-Left"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "n", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "n", "active-media", mediaBounds)}
-                  className="absolute -top-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Top Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "s", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "s", "active-media", mediaBounds)}
-                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Bottom Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "w", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "w", "active-media", mediaBounds)}
-                  className="absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Left Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleStartResize(e, "e", "active-media", mediaBounds)}
-                  onTouchStart={(e) => handleStartResize(e, "e", "active-media", mediaBounds)}
-                  className="absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
-                  title="Resize Right Edge"
-                />
-              </>
             )}
           </div>
         )}
@@ -1184,7 +911,10 @@ export const StagePreview: React.FC = () => {
               className={cn(
                 "overflow-visible select-none transition-shadow",
                 isSelected
-                  ? "ring-2 ring-indigo-500 rounded-2xl shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-move"
+                  ? cn(
+                      "ring-2 ring-indigo-500 rounded-2xl shadow-[0_0_25px_rgba(99,102,241,0.5)]",
+                      isPipMode ? "cursor-move" : "cursor-pointer"
+                    )
                   : "cursor-pointer"
               )}
             >
@@ -1215,166 +945,128 @@ export const StagePreview: React.FC = () => {
                 {renderTile(p, idx, "w-full h-full")}
               </div>
 
-              {/* Floating Action Pill Toolbar (Above or Below Selected Window) */}
+              {/* StreamYard Floating Action Pill Toolbar for Selected Participant */}
               {isSelected && (
                 <div
                   className={cn(
-                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
+                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
                     bounds.y < 12 ? "-bottom-11" : "-top-11"
                   )}
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onTouchStart={(e) => e.stopPropagation()}
                 >
-                  {/* Drag Move Handle */}
-                  <span className="text-slate-400 p-0.5 cursor-move" title="Click and drag window to move">
-                    <Move className="w-3.5 h-3.5" />
-                  </span>
-
                   {/* Participant Name Tag */}
-                  <span className="text-[10px] font-semibold text-white px-1.5 py-0.5 rounded bg-white/10 max-w-[100px] truncate">
+                  <span className="text-[10px] font-bold text-white px-2 py-0.5 rounded bg-white/10 max-w-[110px] truncate flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
                     {p.name || "Guest"}
                   </span>
 
                   <span className="w-px h-3 bg-white/20" />
 
-                  {/* 16:9 Aspect Ratio Lock Toggle */}
+                  {/* Spotlight / Hero Speaker Toggle */}
                   <button
                     type="button"
-                    onClick={() => handleToggleRatioLock(p.id, bounds)}
+                    onClick={() => {
+                      if (customLayoutConfig.heroParticipantId === p.id) {
+                        setCustomLayoutConfig({ ...customLayoutConfig, heroParticipantId: undefined });
+                      } else {
+                        setCustomLayoutConfig({ ...customLayoutConfig, heroParticipantId: p.id, mode: "hero-side" });
+                      }
+                    }}
                     className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 border transition-colors",
-                      bounds.isLockedRatio !== false
-                        ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
-                        : "bg-white/10 text-slate-300 border-white/20"
+                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
+                      customLayoutConfig.heroParticipantId === p.id
+                        ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                        : "bg-white/10 text-slate-300 border-white/15 hover:bg-white/20 hover:text-white"
                     )}
                     title={
-                      bounds.isLockedRatio !== false
-                        ? "16:9 Ratio Locked (Click to allow freeform resize)"
-                        : "Freeform Ratio Active (Click to lock 16:9)"
+                      customLayoutConfig.heroParticipantId === p.id
+                        ? "Currently Spotlighted (Click to un-spotlight)"
+                        : "Spotlight this participant as primary speaker"
                     }
                   >
-                    {bounds.isLockedRatio !== false ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                    <span>{bounds.isLockedRatio !== false ? "16:9" : "Free"}</span>
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>{customLayoutConfig.heroParticipantId === p.id ? "Spotlighted" : "Spotlight"}</span>
                   </button>
 
-                  {/* Center on Stage */}
+                  {/* Fit vs Fill Frame Toggle */}
                   <button
                     type="button"
-                    onClick={() => handleCenterTile(p.id, bounds)}
-                    className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                    title="Center on Stage"
+                    onClick={() => {
+                      const curFit = (tileTransforms[p.id]?.fitMode as "contain" | "cover") || "cover";
+                      setTileTransform(p.id, { fitMode: curFit === "cover" ? "contain" : "cover" });
+                    }}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
+                      (tileTransforms[p.id]?.fitMode || "cover") === "contain"
+                        ? "bg-indigo-500/25 text-indigo-300 border-indigo-500/50"
+                        : "bg-white/10 text-slate-300 border-white/15 hover:bg-white/20 hover:text-white"
+                    )}
+                    title={
+                      (tileTransforms[p.id]?.fitMode || "cover") === "contain"
+                        ? "Currently: Fit to Frame (letterboxed). Click to Fill frame."
+                        : "Currently: Fill Frame (cropped). Click to Fit frame (16:9 full view)."
+                    }
                   >
-                    <Crosshair className="w-3.5 h-3.5" />
+                    <Crop className="w-3 h-3 text-indigo-400" />
+                    <span>{(tileTransforms[p.id]?.fitMode || "cover") === "contain" ? "Fit (16:9)" : "Fill"}</span>
                   </button>
 
-                  {/* Layer Up */}
-                  <button
-                    type="button"
-                    onClick={() => bringToFront(p.id)}
-                    className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                    title="Bring Forward"
-                  >
-                    <ChevronUp className="w-3.5 h-3.5" />
-                  </button>
+                  {/* PiP repositioning if in PiP mode */}
+                  {isPipMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const currentPos = customLayoutConfig.pipPosition || "bottom-right";
+                        const nextPos: CustomLayoutConfig["pipPosition"] =
+                          currentPos === "bottom-right"
+                            ? "bottom-left"
+                            : currentPos === "bottom-left"
+                            ? "top-left"
+                            : currentPos === "top-left"
+                            ? "top-right"
+                            : "bottom-right";
+                        setCustomLayoutConfig({ pipPosition: nextPos });
+                      }}
+                      className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/10 hover:bg-white/20 text-slate-200 border border-white/15 flex items-center gap-1 transition-colors"
+                      title="Move PiP to next corner"
+                    >
+                      <Move className="w-3 h-3 text-slate-300" />
+                      <span>Corner</span>
+                    </button>
+                  )}
 
-                  {/* Layer Down */}
-                  <button
-                    type="button"
-                    onClick={() => sendToBack(p.id)}
-                    className="p-1 hover:bg-white/15 rounded text-slate-300 hover:text-white transition-colors"
-                    title="Send Backward"
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </button>
+                  {/* Reset to Grid (only shown if custom bounds are attached to this participant) */}
+                  {participantBounds[p.id] && (
+                    <button
+                      type="button"
+                      onClick={() => resetParticipantBounds(p.id)}
+                      className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
+                      title="Reset window to default layout position"
+                    >
+                      <RotateCcw className="w-3 h-3 text-amber-400" />
+                      <span>Reset</span>
+                    </button>
+                  )}
 
-                  <span className="w-px h-3 bg-white/20" />
-
-                  {/* Reset to Grid */}
-                  <button
-                    type="button"
-                    onClick={() => resetParticipantBounds(p.id)}
-                    className="px-1.5 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
-                    title="Reset to Grid position"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Reset</span>
-                  </button>
-
-                  {/* Deselect */}
+                  {/* Deselect / Close */}
                   <button
                     type="button"
                     onClick={() => setSelectedParticipantId(null)}
                     className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
-                    title="Deselect window"
+                    title="Close selection"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
-
-              {/* 8 Resize Handles (Rendered when selected) */}
-              {isSelected && (
-                <>
-                  {/* 4 Corner Handles */}
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "nw", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "nw", p.id, bounds)}
-                    className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Top-Left"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "ne", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "ne", p.id, bounds)}
-                    className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Top-Right"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "se", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "se", p.id, bounds)}
-                    className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nwse-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Bottom-Right"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "sw", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "sw", p.id, bounds)}
-                    className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-sm shadow-md cursor-nesw-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Bottom-Left"
-                  />
-
-                  {/* 4 Edge Handles */}
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "n", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "n", p.id, bounds)}
-                    className="absolute -top-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Top Edge"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "s", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "s", p.id, bounds)}
-                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-5 h-2 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ns-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Bottom Edge"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "w", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "w", p.id, bounds)}
-                    className="absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Left Edge"
-                  />
-                  <div
-                    onMouseDown={(e) => handleStartResize(e, "e", p.id, bounds)}
-                    onTouchStart={(e) => handleStartResize(e, "e", p.id, bounds)}
-                    className="absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-5 bg-white border-2 border-indigo-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform z-40"
-                    title="Resize Right Edge"
-                  />
-                </>
-              )}
             </div>
           );
         })}
 
-        {/* Empty Guest Placeholder Slots (rendered when layout capacity exceeds currently onstage participants) */}
-        {!hasVisualMedia && !hasAnyCustomBounds && orderedParticipants.length < expectedSlots && (
+        {/* Empty Guest Placeholder Slots (rendered whenever layout capacity exceeds currently onstage participants) */}
+        {!hasVisualMedia && orderedParticipants.length < expectedSlots && (
           <>
             {Array.from({ length: expectedSlots - orderedParticipants.length }).map((_, i) => {
               const slotIdx = orderedParticipants.length + i;
@@ -1456,21 +1148,127 @@ export const StagePreview: React.FC = () => {
           </>
         )}
 
-        {/* Center Split Divider (Visible in 2-person side-by-side when neither tile has custom bounds) */}
-        {onStageParticipants.length === 2 && !hasAnyCustomBounds && (activeLayout === "side-by-side" || activeLayout === "podcast" || activeLayout === "interview") && (
-          <div
-            style={{ left: `${layoutSplitRatio}%` }}
-            className="absolute top-0 bottom-0 -ml-2 w-4 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
-            onMouseDown={handleSplitDividerMouseDown}
-            onTouchStart={handleSplitDividerTouchStart}
-            title="Drag to resize windows (Left: Host, Right: Guest)"
-          >
-            <div className="w-1 h-full rounded-full bg-white/15 group-hover/divider:bg-indigo-500 transition-colors" />
-            <div className="absolute w-5 h-8 rounded-full bg-black/90 border border-white/20 flex items-center justify-center shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 transition-all">
-              <span className="w-0.5 h-2 bg-slate-300 rounded-full" />
-            </div>
-          </div>
-        )}
+        {/* StreamYard Responsive Stage Split Dividers (Multi-Layout Parity) */}
+        {!hasVisualMedia && (() => {
+          // 1. Two-Column Side-by-Side Dividers
+          const isTwoCol =
+            activeLayout === "side-by-side" ||
+            activeLayout === "podcast" ||
+            activeLayout === "interview" ||
+            (activeLayout === "custom" && customLayoutConfig?.mode === "side-by-side");
+          if (isTwoCol) {
+            return (
+              <div
+                style={{ left: `${layoutSplitRatio}%` }}
+                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
+                onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
+                onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
+                title={`Drag to resize columns (${layoutSplitRatio}% / ${100 - layoutSplitRatio}%)`}
+              >
+                <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            );
+          }
+
+          // 2. Three-Column Trio Divider
+          const isThreeCol =
+            activeLayout === "three-equal" ||
+            (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
+          if (isThreeCol) {
+            const col0W = Math.max(15, Math.min(55, Number(((layoutSplitRatio / 50) * 31).toFixed(1))));
+            const dividerX = 2 + col0W + 1;
+            return (
+              <div
+                style={{ left: `${dividerX}%` }}
+                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
+                onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
+                onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
+                title={`Drag to resize primary column (${Math.round((layoutSplitRatio / 50) * 31)}% width)`}
+              >
+                <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            );
+          }
+
+          // 3. Hero + Side Speaker Divider
+          const isHeroSide =
+            activeLayout === "speaker-large" ||
+            activeLayout === "screen-speaker" ||
+            (activeLayout === "custom" && customLayoutConfig?.mode === "hero-side");
+          if (isHeroSide) {
+            const heroSplit = Math.max(40, Math.min(80, layoutSplitRatio));
+            return (
+              <div
+                style={{ left: `${heroSplit}%` }}
+                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
+                onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
+                onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
+                title={`Drag to resize hero speaker (${heroSplit}% / ${100 - heroSplit}%)`}
+              >
+                <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            );
+          }
+
+          // 4. Stacked Vertical Divider
+          const isStacked =
+            activeLayout === "stacked" ||
+            (activeLayout === "custom" && customLayoutConfig?.mode === "stacked");
+          if (isStacked) {
+            return (
+              <div
+                style={{ top: `${layoutSplitRatio}%` }}
+                className="absolute left-1 right-1 -mt-2.5 h-5 flex items-center justify-center cursor-row-resize select-none group/divider z-30 pointer-events-auto"
+                onMouseDown={(e) => handleSplitDividerMouseDown(e, "horizontal")}
+                onTouchStart={(e) => handleSplitDividerTouchStart(e, "horizontal")}
+                title={`Drag to resize vertical split (${layoutSplitRatio}% top / ${100 - layoutSplitRatio}% bottom)`}
+              >
+                <div className="h-1 w-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:h-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                <div className="absolute h-5 w-9 rounded-full bg-black/90 border border-white/25 flex items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
+                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
+                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            );
+          }
+
+          // 5. Presentation / Hero-Bottom Divider
+          const isPresentation =
+            activeLayout === "presentation" ||
+            (activeLayout === "custom" && customLayoutConfig?.mode === "hero-bottom");
+          if (isPresentation) {
+            const presSplit = Math.max(40, Math.min(80, layoutSplitRatio));
+            return (
+              <div
+                style={{ top: `${presSplit}%` }}
+                className="absolute left-1 right-1 -mt-2.5 h-5 flex items-center justify-center cursor-row-resize select-none group/divider z-30 pointer-events-auto"
+                onMouseDown={(e) => handleSplitDividerMouseDown(e, "horizontal")}
+                onTouchStart={(e) => handleSplitDividerTouchStart(e, "horizontal")}
+                title={`Drag to resize presentation area (${presSplit}% height)`}
+              >
+                <div className="h-1 w-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:h-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                <div className="absolute h-5 w-9 rounded-full bg-black/90 border border-white/25 flex items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
+                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
+                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
+                </div>
+              </div>
+            );
+          }
+
+          return null;
+        })()}
       </div>
     );
   };
@@ -1556,8 +1354,8 @@ export const StagePreview: React.FC = () => {
         </div>
       )}
 
-      {/* StreamYard Stage Window Quick-Split Controller (appears when 2+ on stage and no custom bounds) */}
-      {onStageParticipants.length >= 2 && !hasAnyCustomBounds && (
+      {/* StreamYard Stage Window Quick-Split Controller (appears when 2+ slots or participants on stage) */}
+      {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover/stage:opacity-100 hover:opacity-100 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto">
           <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
           {[
