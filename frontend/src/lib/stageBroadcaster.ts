@@ -559,16 +559,45 @@ class StageBroadcaster {
       const scaleY = H / containerRect.height;
 
       const stageTiles = container.querySelectorAll("[data-stage-tile]");
+      const store = useStudioStore.getState();
+      const isFullBleed =
+        store.activeLayout === "cropped" ||
+        store.activeLayout === "podcast" ||
+        store.activeLayout === "cinema" ||
+        store.activeLayout === "solo" ||
+        (store.activeLayout === "custom" &&
+          (store.customLayoutConfig?.mode === "solo" ||
+            store.customLayoutConfig?.mode === "cinema" ||
+            store.customLayoutConfig?.mode === "podcast"));
+
       const nextLayouts: CachedTileLayout[] = [];
 
       stageTiles.forEach((el) => {
         const tile = el as HTMLElement;
         const tileRect = tile.getBoundingClientRect();
 
-        const x = (tileRect.left - containerRect.left) * scaleX;
-        const y = (tileRect.top - containerRect.top) * scaleY;
-        const w = tileRect.width * scaleX;
-        const h = tileRect.height * scaleY;
+        let x = (tileRect.left - containerRect.left) * scaleX;
+        let y = (tileRect.top - containerRect.top) * scaleY;
+        let w = tileRect.width * scaleX;
+        let h = tileRect.height * scaleY;
+
+        if (isFullBleed) {
+          // Snap flush to edge borders to eliminate any sub-pixel/margin gaps in canvas recording
+          if (x < 35) {
+            w += x;
+            x = 0;
+          }
+          if (y < 35) {
+            h += y;
+            y = 0;
+          }
+          if (x + w > W - 35) {
+            w = W - x;
+          }
+          if (y + h > H - 35) {
+            h = H - y;
+          }
+        }
 
         if (w <= 0 || h <= 0) return;
 
@@ -730,8 +759,28 @@ class StageBroadcaster {
       const { element: el, x, y, w, h, isMedia } = tile;
 
       ctx.save();
-      this.drawRoundedRect(ctx, x, y, w, h, 14);
-      ctx.clip();
+      const currentStore = useStudioStore.getState();
+      const isFullBleed =
+        currentStore.activeLayout === "cropped" ||
+        currentStore.activeLayout === "podcast" ||
+        currentStore.activeLayout === "cinema" ||
+        currentStore.activeLayout === "solo" ||
+        (currentStore.activeLayout === "custom" &&
+          (currentStore.customLayoutConfig?.mode === "solo" ||
+            currentStore.customLayoutConfig?.mode === "cinema" ||
+            currentStore.customLayoutConfig?.mode === "podcast"));
+
+      if (!isFullBleed) {
+        const radius =
+          currentStore.activeLayout === "custom" &&
+          currentStore.customLayoutConfig?.borderRadius !== undefined
+            ? currentStore.customLayoutConfig.borderRadius
+            : 14;
+        if (radius > 0) {
+          this.drawRoundedRect(ctx, x, y, w, h, radius);
+          ctx.clip();
+        }
+      }
 
       // Card background
       ctx.fillStyle = "#0a0a14";

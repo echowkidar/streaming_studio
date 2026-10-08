@@ -714,9 +714,19 @@ export const StagePreview: React.FC = () => {
     const isMediaSelected = String(selectedParticipantId) === "active-media";
     const isMediaDragging = activeDragState?.participantId === "active-media";
 
+    const isFullBleedLayout =
+      activeLayout === "cropped" ||
+      activeLayout === "podcast" ||
+      activeLayout === "cinema" ||
+      activeLayout === "solo" ||
+      (activeLayout === "custom" &&
+        (customLayoutConfig?.mode === "solo" ||
+          customLayoutConfig?.mode === "cinema" ||
+          customLayoutConfig?.mode === "podcast"));
+
     // Unified Stage Canvas with Independent Moving & Resizing for all Participants & Media
     return (
-      <div className="w-full h-full relative p-2 select-none">
+      <div className={cn("w-full h-full relative select-none", isFullBleedLayout ? "p-0" : "p-2")}>
         {/* Active Stage Media Window (Interactive & Resizable) */}
         {hasVisualMedia && activeMedia && (
           <div
@@ -907,7 +917,9 @@ export const StagePreview: React.FC = () => {
                 "overflow-visible select-none transition-shadow",
                 isSelected
                   ? cn(
-                      "ring-2 ring-indigo-500 rounded-2xl shadow-[0_0_25px_rgba(99,102,241,0.5)]",
+                      "ring-2 ring-indigo-500",
+                      isFullBleedLayout ? "rounded-none" : "rounded-2xl",
+                      "shadow-[0_0_25px_rgba(99,102,241,0.5)]",
                       isPipMode ? "cursor-move" : "cursor-pointer"
                     )
                   : "cursor-pointer"
@@ -916,16 +928,24 @@ export const StagePreview: React.FC = () => {
               {/* Inner Video Container */}
               <div
                 className={cn(
-                  "w-full h-full overflow-hidden relative pointer-events-auto border transition-all",
-                  isSelected
-                    ? "border-indigo-400"
-                    : "border-white/10 hover:border-indigo-400/50",
-                  activeLayout === "custom" || activeLayout === "cropped" || activeLayout === "podcast" ? "" : "rounded-2xl"
+                  "w-full h-full overflow-hidden relative pointer-events-auto transition-all",
+                  isFullBleedLayout
+                    ? isSelected
+                      ? "border border-indigo-400 rounded-none"
+                      : "border-0 rounded-none"
+                    : cn(
+                        "border rounded-2xl",
+                        isSelected
+                          ? "border-indigo-400"
+                          : "border-white/10 hover:border-indigo-400/50"
+                      )
                 )}
                 style={{
                   borderRadius:
                     activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
                       ? `${customLayoutConfig.borderRadius}px`
+                      : isFullBleedLayout
+                      ? "0px"
                       : undefined,
                   boxShadow:
                     activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
@@ -1103,11 +1123,13 @@ export const StagePreview: React.FC = () => {
                       borderRadius:
                         activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
                           ? `${customLayoutConfig.borderRadius}px`
+                          : isFullBleedLayout
+                          ? "0px"
                           : undefined,
                     }}
                     className={cn(
                       "w-full h-full border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group",
-                      activeLayout === "custom" || activeLayout === "cropped" || activeLayout === "podcast" ? "" : "rounded-2xl"
+                      isFullBleedLayout ? "rounded-none" : "rounded-2xl"
                     )}
                   >
                   <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">

@@ -60,7 +60,7 @@ export function getDefaultSlotBounds(
   switch (layout) {
     case "solo": {
       if (index === 0) {
-        return { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true };
+        return { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true };
       }
       // Extra participants in solo mode appear as small floating badges
       const topOffset = Math.min(76, 4 + (index - 1) * 22);
@@ -160,8 +160,8 @@ export function getDefaultSlotBounds(
     case "podcast":
     case "interview": {
       // StreamYard "Cropped layout": 100% full height bleed from top to bottom, vertical center-crop
-      const col0W = Math.max(15, safeSplit - 0.25);
-      const col1W = Math.max(15, 100 - safeSplit - 0.25);
+      const col0W = safeSplit;
+      const col1W = 100 - safeSplit;
       if (index === 0) {
         return {
           x: 0,
@@ -174,7 +174,7 @@ export function getDefaultSlotBounds(
       }
       if (index === 1) {
         return {
-          x: Math.min(85, safeSplit + 0.25),
+          x: safeSplit,
           y: 0,
           width: col1W,
           height: 100,
@@ -186,10 +186,10 @@ export function getDefaultSlotBounds(
       const col = index % 2;
       const row = Math.floor(index / 2);
       const totalRows = Math.ceil(effectiveTotal / 2);
-      const h = Math.max(20, (100 - (totalRows - 1) * 1) / totalRows);
+      const h = 100 / totalRows;
       return {
-        x: col === 0 ? 0 : Math.min(85, safeSplit + 0.25),
-        y: row * (h + 1),
+        x: col === 0 ? 0 : safeSplit,
+        y: row * h,
         width: col === 0 ? col0W : col1W,
         height: h,
         zIndex: 10,
