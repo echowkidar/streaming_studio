@@ -48,7 +48,19 @@ export function VideoTrackView({
     resetTileTransform, 
     activeThemeColor,
     chromaKeyConfig,
+    activeLayout,
+    customLayoutConfig,
   } = useStudioStore();
+
+  const isFullBleedLayout =
+    activeLayout === "cropped" ||
+    activeLayout === "podcast" ||
+    activeLayout === "cinema" ||
+    activeLayout === "solo" ||
+    (activeLayout === "custom" &&
+      (customLayoutConfig?.mode === "solo" ||
+        customLayoutConfig?.mode === "cinema" ||
+        customLayoutConfig?.mode === "podcast"));
 
   const tileId = String(id || name || "tile");
 
@@ -249,14 +261,24 @@ export function VideoTrackView({
       onMouseMove={handlePanMouseMove}
       onMouseUp={handlePanMouseUp}
       onMouseLeave={handlePanMouseUp}
-      style={isSpeaking ? {
-        borderColor: activeThemeColor,
-        boxShadow: `0 0 24px ${activeThemeColor}70`,
-      } : {}}
+      style={{
+        ...(isSpeaking ? {
+          borderColor: activeThemeColor,
+          boxShadow: `0 0 24px ${activeThemeColor}70`,
+        } : {}),
+        ...(activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+          ? { borderRadius: `${customLayoutConfig.borderRadius}px` }
+          : isFullBleedLayout
+          ? { borderRadius: "0px" }
+          : {}),
+      }}
       className={cn(
-        "relative w-full h-full rounded-2xl overflow-hidden flex items-center justify-center border transition-all duration-300 group",
+        "relative w-full h-full overflow-hidden flex items-center justify-center transition-all duration-300 group",
+        isFullBleedLayout ? "rounded-none border-0" : "rounded-2xl border",
         chromaKeyConfig?.enabled && !isScreen ? "bg-transparent" : "bg-[#0c0c14]",
-        isSpeaking ? "border-2" : "border-white/10 hover:border-white/25",
+        isSpeaking
+          ? isFullBleedLayout ? "ring-2 ring-indigo-400 ring-inset" : "border-2"
+          : isFullBleedLayout ? "" : "border-white/10 hover:border-white/25",
         zoom > 1 && "cursor-grab active:cursor-grabbing",
         className
       )}

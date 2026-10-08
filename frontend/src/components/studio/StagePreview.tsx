@@ -115,6 +115,16 @@ export const StagePreview: React.FC = () => {
   const hasAnyCustomBounds = Object.keys(participantBounds).length > 0;
   const expectedSlots = getLayoutExpectedSlots(activeLayout, customLayoutConfig);
 
+  const isFullBleedLayout =
+    activeLayout === "cropped" ||
+    activeLayout === "podcast" ||
+    activeLayout === "cinema" ||
+    activeLayout === "solo" ||
+    (activeLayout === "custom" &&
+      (customLayoutConfig?.mode === "solo" ||
+        customLayoutConfig?.mode === "cinema" ||
+        customLayoutConfig?.mode === "podcast"));
+
   const logoPositionClasses = {
     "top-left": "top-6 left-6",
     "top-right": "top-6 right-6",
@@ -573,6 +583,7 @@ export const StagePreview: React.FC = () => {
           isLocal={p.isLocal}
           isScreen={isScreen}
           role={p.role}
+          className={isFullBleedLayout ? "rounded-none border-0" : undefined}
         />
       </div>
     );
@@ -713,16 +724,6 @@ export const StagePreview: React.FC = () => {
     const mediaBounds: ParticipantBounds = participantBounds["active-media"] || defaultMediaBounds;
     const isMediaSelected = String(selectedParticipantId) === "active-media";
     const isMediaDragging = activeDragState?.participantId === "active-media";
-
-    const isFullBleedLayout =
-      activeLayout === "cropped" ||
-      activeLayout === "podcast" ||
-      activeLayout === "cinema" ||
-      activeLayout === "solo" ||
-      (activeLayout === "custom" &&
-        (customLayoutConfig?.mode === "solo" ||
-          customLayoutConfig?.mode === "cinema" ||
-          customLayoutConfig?.mode === "podcast"));
 
     // Unified Stage Canvas with Independent Moving & Resizing for all Participants & Media
     return (
@@ -931,10 +932,10 @@ export const StagePreview: React.FC = () => {
                   "w-full h-full overflow-hidden relative pointer-events-auto transition-all",
                   isFullBleedLayout
                     ? isSelected
-                      ? "border border-indigo-400 rounded-none"
-                      : "border-0 rounded-none"
+                      ? "border border-indigo-400 rounded-none bg-[#0c0c14]"
+                      : "border-0 rounded-none bg-[#0c0c14]"
                     : cn(
-                        "border rounded-2xl",
+                        "border rounded-2xl bg-[#0c0c14]",
                         isSelected
                           ? "border-indigo-400"
                           : "border-white/10 hover:border-indigo-400/50"
@@ -1128,8 +1129,10 @@ export const StagePreview: React.FC = () => {
                           : undefined,
                     }}
                     className={cn(
-                      "w-full h-full border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group",
-                      isFullBleedLayout ? "rounded-none" : "rounded-2xl"
+                      "w-full h-full flex flex-col items-center justify-center p-4 text-center transition-all group",
+                      isFullBleedLayout
+                        ? "rounded-none border-0 bg-[#0c0c14]"
+                        : "rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs"
                     )}
                   >
                   <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
@@ -1270,7 +1273,7 @@ export const StagePreview: React.FC = () => {
       )}
 
       {/* Active Video Stage Content */}
-      <div className="flex-1 w-full relative z-10">{renderLayoutContent()}</div>
+      <div className="absolute inset-0 z-10">{renderLayoutContent()}</div>
 
       {/* Global Transparent Drag Overlay (captures all pointer events anywhere on screen while dragging/resizing) */}
       {(activeDragState || isDraggingSplit) && (
