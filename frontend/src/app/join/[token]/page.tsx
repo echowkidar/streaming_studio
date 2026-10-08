@@ -1181,6 +1181,14 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                         : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
                       const mBounds = participantBounds["active-media"] || defaultMediaBounds;
                       const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || "contain";
+                      const mediaTf = tileTransforms["active-media"];
+                      const panX = mediaTf?.panX || 0;
+                      const panY = mediaTf?.panY || 0;
+                      const objX = Math.max(0, Math.min(100, 50 + panX));
+                      const objY = Math.max(0, Math.min(100, 50 + panY));
+                      const effObjX = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objX;
+                      const effObjY = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objY;
+                      const zoom = Math.max(1, mediaTf?.zoom || 1);
 
                       return (
                         <div
@@ -1203,7 +1211,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                               playsInline
                               controls
                               loop={activeMedia.loop ?? true}
-                              style={{ objectFit: mediaFit }}
+                              style={{
+                                objectFit: mediaFit,
+                                objectPosition: `${effObjX}% ${effObjY}%`,
+                                transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                transformOrigin: `${effObjX}% ${effObjY}%`,
+                              }}
                               className="w-full h-full"
                             />
                           )}
@@ -1211,7 +1224,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                             <img
                               src={activeMedia.url}
                               alt={activeMedia.name}
-                              style={{ objectFit: mediaFit }}
+                              style={{
+                                objectFit: mediaFit,
+                                objectPosition: `${effObjX}% ${effObjY}%`,
+                                transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                transformOrigin: `${effObjX}% ${effObjY}%`,
+                              }}
                               className="w-full h-full"
                             />
                           )}

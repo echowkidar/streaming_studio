@@ -95,12 +95,27 @@ export const StagePreview: React.FC = () => {
   const mediaPanX = mediaTransform.panX || 0;
   const mediaPanY = mediaTransform.panY || 0;
 
+  // Convert pan coordinates (-50 to +50) to CSS object-position (0% to 100%)
+  // panY = -50 => objectPosY = 0%   (TOP / Header / Letterhead)
+  // panY = 0   => objectPosY = 50%  (CENTER / Body)
+  // panY = +50 => objectPosY = 100% (BOTTOM / Footer / Signatures)
+  const objectPosX = Math.max(0, Math.min(100, 50 + mediaPanX));
+  const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY));
+  const effectiveObjectPosX = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosX;
+  const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosY;
+
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
 
   const handleToggleMediaCrop = () => {
-    const next = mediaFitMode === "contain" ? "cover" : "contain";
-    setTileTransform("active-media", { fitMode: next, panX: 0, panY: 0 });
+    if (mediaFitMode === "contain") {
+      // Switching to Crop (Fill) mode:
+      // Default directly to TOP (panY: -50) so document header/letterhead is preserved and immediately visible!
+      setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: -50 });
+    } else {
+      // Switching to Fit mode:
+      setTileTransform("active-media", { fitMode: "contain", panX: 0, panY: 0, zoom: 1 });
+    }
   };
 
   const handleMediaZoomIn = () => {
@@ -119,11 +134,14 @@ export const StagePreview: React.FC = () => {
 
   const handleMediaCropPreset = (preset: "top" | "center" | "bottom") => {
     if (preset === "top") {
-      setTileTransform("active-media", { fitMode: "cover", panY: 35, panX: 0 });
+      // Align to Top / Header (0%)
+      setTileTransform("active-media", { fitMode: "cover", panY: -50, panX: 0 });
     } else if (preset === "center") {
+      // Center (50%)
       setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
     } else if (preset === "bottom") {
-      setTileTransform("active-media", { fitMode: "cover", panY: -35, panX: 0 });
+      // Align to Bottom / Signatures (100%)
+      setTileTransform("active-media", { fitMode: "cover", panY: 50, panX: 0 });
     }
   };
 
@@ -138,7 +156,7 @@ export const StagePreview: React.FC = () => {
 
   const handleMediaPanMouseDown = (e: React.MouseEvent) => {
     if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
-    if ((e.target as HTMLElement).closest("button")) return;
+    if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("input")) return;
     e.stopPropagation();
     e.preventDefault();
     setIsDraggingMediaPan(true);
@@ -153,14 +171,17 @@ export const StagePreview: React.FC = () => {
   const handleMediaPanMouseMove = React.useCallback(
     (e: MouseEvent) => {
       if (!isDraggingMediaPan) return;
-      const deltaX = (e.clientX - mediaPanStartRef.current.startX) / 3.5;
-      const deltaY = (e.clientY - mediaPanStartRef.current.startY) / 3.5;
+      // Dragging mouse DOWN (e.clientY > startY): pulls document down to reveal top (Header) -> panY decreases towards -50
+      // Dragging mouse UP (e.clientY < startY): pushes document up to reveal bottom (Footer) -> panY increases towards +50
+      const deltaX = (e.clientX - mediaPanStartRef.current.startX) / 3.0;
+      const deltaY = (e.clientY - mediaPanStartRef.current.startY) / 3.0;
+      const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
       setTileTransform("active-media", {
-        panX: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanX + deltaX).toFixed(1)))),
-        panY: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanY + deltaY).toFixed(1)))),
+        panX: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanX - deltaX).toFixed(1)))),
+        panY: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanY - deltaY).toFixed(1)))),
       });
     },
-    [isDraggingMediaPan, setTileTransform]
+    [isDraggingMediaPan, mediaZoom, setTileTransform]
   );
 
   const handleMediaPanMouseUp = React.useCallback(() => {
@@ -193,16 +214,26 @@ export const StagePreview: React.FC = () => {
 
   const handleMediaPanTouchMove = (e: React.TouchEvent) => {
     if (!isDraggingMediaPan || e.touches.length !== 1) return;
-    const deltaX = (e.touches[0].clientX - mediaPanStartRef.current.startX) / 3.5;
-    const deltaY = (e.touches[0].clientY - mediaPanStartRef.current.startY) / 3.5;
+    const deltaX = (e.touches[0].clientX - mediaPanStartRef.current.startX) / 3.0;
+    const deltaY = (e.touches[0].clientY - mediaPanStartRef.current.startY) / 3.0;
+    const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
     setTileTransform("active-media", {
-      panX: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanX + deltaX).toFixed(1)))),
-      panY: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanY + deltaY).toFixed(1)))),
+      panX: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanX - deltaX).toFixed(1)))),
+      panY: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanY - deltaY).toFixed(1)))),
     });
   };
 
   const handleMediaPanTouchEnd = () => {
     setIsDraggingMediaPan(false);
+  };
+
+  const handleMediaWheel = (e: React.WheelEvent) => {
+    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
+    e.stopPropagation();
+    const step = e.deltaY > 0 ? 5 : -5;
+    const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
+    const nextPanY = Math.max(-maxPan, Math.min(maxPan, Number((mediaPanY + step).toFixed(1))));
+    setTileTransform("active-media", { panY: nextPanY });
   };
 
   const params = useParams();
@@ -729,6 +760,7 @@ export const StagePreview: React.FC = () => {
           onTouchStart={handleMediaPanTouchStart}
           onTouchMove={handleMediaPanTouchMove}
           onTouchEnd={handleMediaPanTouchEnd}
+          onWheel={handleMediaWheel}
         >
           {activeMedia.type === "video" ? (
             <video
@@ -741,16 +773,14 @@ export const StagePreview: React.FC = () => {
               crossOrigin="anonymous"
               style={{
                 objectFit: mediaFitMode,
-                transform: `translate(${mediaPanX}%, ${mediaPanY}%) scale(${mediaZoom})`,
-                transformOrigin: "center center",
+                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                transform: mediaZoom > 1 ? `scale(${mediaZoom})` : undefined,
+                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
-                transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
+                transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
               }}
-              className={cn(
-                "max-w-none transition-transform pointer-events-auto",
-                mediaFitMode === "cover" ? "w-full h-full" : "max-w-full max-h-full"
-              )}
+              className="w-full h-full max-w-none pointer-events-auto"
             />
           ) : (
             <img
@@ -760,16 +790,14 @@ export const StagePreview: React.FC = () => {
               draggable={false}
               style={{
                 objectFit: mediaFitMode,
-                transform: `translate(${mediaPanX}%, ${mediaPanY}%) scale(${mediaZoom})`,
-                transformOrigin: "center center",
+                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                transform: mediaZoom > 1 ? `scale(${mediaZoom})` : undefined,
+                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
-                transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
+                transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
               }}
-              className={cn(
-                "max-w-none transition-transform pointer-events-auto",
-                mediaFitMode === "cover" ? "w-full h-full" : "max-w-full max-h-full"
-              )}
+              className="w-full h-full max-w-none pointer-events-auto"
             />
           )}
 
@@ -777,7 +805,7 @@ export const StagePreview: React.FC = () => {
           {isDraggingMediaPan && (
             <div className="absolute inset-0 pointer-events-none border-2 border-cyan-400/80 bg-cyan-950/20 flex items-center justify-center z-30">
               <span className="px-2.5 py-1 rounded-md bg-black/90 text-[11px] text-cyan-300 font-mono shadow-xl border border-cyan-500/40">
-                ✋ Pan: X {mediaPanX}% • Y {mediaPanY}% • Zoom {Math.round(mediaZoom * 100)}%
+                ✋ Pos: {Math.round(objectPosY)}% ({objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})
               </span>
             </div>
           )}
@@ -785,9 +813,9 @@ export const StagePreview: React.FC = () => {
           {/* Help hint when hovering in crop mode */}
           {(mediaFitMode === "cover" || mediaZoom > 1) && !isDraggingMediaPan && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
-              <span>✋ Drag to pan custom crop</span>
+              <span>✋ Drag or scroll wheel to move</span>
               <span className="text-white/40">•</span>
-              <span>Use Top / Bottom buttons</span>
+              <span>Use Top / Btm buttons</span>
             </div>
           )}
         </div>
@@ -898,7 +926,7 @@ export const StagePreview: React.FC = () => {
                   }}
                   className={cn(
                     "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                    mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                   )}
                   title="Show Top / Letterhead"
                 >
@@ -912,7 +940,7 @@ export const StagePreview: React.FC = () => {
                   }}
                   className={cn(
                     "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanY === 0 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                    Math.abs(mediaPanY) < 20 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                   )}
                   title="Center Alignment"
                 >
@@ -926,13 +954,31 @@ export const StagePreview: React.FC = () => {
                   }}
                   className={cn(
                     "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                    mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                   )}
                   title="Show Bottom / Signatures"
                 >
                   Btm
                 </button>
               </div>
+
+              {/* Vertical Pan Slider */}
+              <input
+                type="range"
+                min="-50"
+                max="50"
+                step="1"
+                value={Math.round(mediaPanY)}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  setTileTransform("active-media", {
+                    fitMode: "cover",
+                    panY: Number(e.target.value),
+                  });
+                }}
+                className="w-12 h-1 accent-amber-400 bg-white/20 rounded cursor-pointer"
+                title={`Vertical Position: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
+              />
 
               {/* Reset Crop */}
               <button
@@ -1101,7 +1147,7 @@ export const StagePreview: React.FC = () => {
                         onClick={() => handleMediaCropPreset("top")}
                         className={cn(
                           "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                          mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                         )}
                         title="Show Top / Letterhead"
                       >
@@ -1112,7 +1158,7 @@ export const StagePreview: React.FC = () => {
                         onClick={() => handleMediaCropPreset("center")}
                         className={cn(
                           "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanY === 0 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                          Math.abs(mediaPanY) < 20 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                         )}
                         title="Center Alignment"
                       >
@@ -1123,13 +1169,30 @@ export const StagePreview: React.FC = () => {
                         onClick={() => handleMediaCropPreset("bottom")}
                         className={cn(
                           "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                          mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
                         )}
                         title="Show Bottom / Signatures"
                       >
                         Btm
                       </button>
                     </div>
+
+                    {/* Vertical Pan Slider */}
+                    <input
+                      type="range"
+                      min="-50"
+                      max="50"
+                      step="1"
+                      value={Math.round(mediaPanY)}
+                      onChange={(e) => {
+                        setTileTransform("active-media", {
+                          fitMode: "cover",
+                          panY: Number(e.target.value),
+                        });
+                      }}
+                      className="w-14 h-1 accent-amber-400 bg-white/20 rounded cursor-pointer"
+                      title={`Position: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
+                    />
 
                     <button
                       type="button"

@@ -800,6 +800,9 @@ class StageBroadcaster {
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
           const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
           const tRatio = w / h;
+          const objectPosX = Math.max(0, Math.min(100, 50 + panX));
+          const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+
           if (isCover) {
             let sw = mediaVideo.videoWidth;
             let sh = mediaVideo.videoHeight;
@@ -810,8 +813,8 @@ class StageBroadcaster {
             }
             sw = sw / zoom;
             sh = sh / zoom;
-            let sx = (mediaVideo.videoWidth - sw) / 2 - (panX / 100) * mediaVideo.videoWidth;
-            let sy = (mediaVideo.videoHeight - sh) / 2 - (panY / 100) * mediaVideo.videoHeight;
+            let sx = (mediaVideo.videoWidth - sw) * (objectPosX / 100);
+            let sy = (mediaVideo.videoHeight - sh) * (objectPosY / 100);
             sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
             sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
             try {
@@ -829,8 +832,8 @@ class StageBroadcaster {
             if (zoom > 1) {
               let sw = mediaVideo.videoWidth / zoom;
               let sh = mediaVideo.videoHeight / zoom;
-              let sx = (mediaVideo.videoWidth - sw) / 2 - (panX / 100) * mediaVideo.videoWidth;
-              let sy = (mediaVideo.videoHeight - sh) / 2 - (panY / 100) * mediaVideo.videoHeight;
+              let sx = (mediaVideo.videoWidth - sw) * (objectPosX / 100);
+              let sy = (mediaVideo.videoHeight - sh) * (objectPosY / 100);
               sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
               sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
               try {
@@ -845,6 +848,9 @@ class StageBroadcaster {
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
           const tRatio = w / h;
+          const objectPosX = Math.max(0, Math.min(100, 50 + panX));
+          const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+
           if (isCover) {
             let sw = mediaImg.naturalWidth;
             let sh = mediaImg.naturalHeight;
@@ -855,8 +861,8 @@ class StageBroadcaster {
             }
             sw = sw / zoom;
             sh = sh / zoom;
-            let sx = (mediaImg.naturalWidth - sw) / 2 - (panX / 100) * mediaImg.naturalWidth;
-            let sy = (mediaImg.naturalHeight - sh) / 2 - (panY / 100) * mediaImg.naturalHeight;
+            let sx = (mediaImg.naturalWidth - sw) * (objectPosX / 100);
+            let sy = (mediaImg.naturalHeight - sh) * (objectPosY / 100);
             sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
             sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
             try {
@@ -874,8 +880,8 @@ class StageBroadcaster {
             if (zoom > 1) {
               let sw = mediaImg.naturalWidth / zoom;
               let sh = mediaImg.naturalHeight / zoom;
-              let sx = (mediaImg.naturalWidth - sw) / 2 - (panX / 100) * mediaImg.naturalWidth;
-              let sy = (mediaImg.naturalHeight - sh) / 2 - (panY / 100) * mediaImg.naturalHeight;
+              let sx = (mediaImg.naturalWidth - sw) * (objectPosX / 100);
+              let sy = (mediaImg.naturalHeight - sh) * (objectPosY / 100);
               sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
               sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
               try {
