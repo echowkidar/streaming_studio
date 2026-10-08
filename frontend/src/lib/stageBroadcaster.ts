@@ -55,6 +55,7 @@ class StageBroadcaster {
   // Audio Connections
   private connectedAudioTracks = new Set<string>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
+  private mediaGainNode: GainNode | null = null;
 
   // Cached Background & Overlay Images
   private cachedBgUrl: string | null = null;
@@ -284,6 +285,13 @@ class StageBroadcaster {
         this.audioCtx.close();
       } catch {}
       this.audioCtx = null;
+    }
+
+    if (this.mediaGainNode) {
+      try {
+        this.mediaGainNode.disconnect();
+      } catch {}
+      this.mediaGainNode = null;
     }
 
     this.connectedAudioTracks.clear();
@@ -677,8 +685,28 @@ class StageBroadcaster {
       });
 
       // 2. Active Stage Media Video / Audio Element
-      const mediaVideo = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-      if (mediaVideo && !mediaVideo.muted) {
+      const mediaVideo =
+        (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
+        (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
+
+      if (mediaVideo && this.audioCtx && this.audioDestination) {
+        if (!this.mediaGainNode) {
+          try {
+            this.mediaGainNode = this.audioCtx.createGain();
+            this.mediaGainNode.connect(this.audioDestination);
+          } catch (gainErr) {
+            console.warn("[StageBroadcaster] Failed to create mediaGainNode:", gainErr);
+          }
+        }
+
+        const isMediaMuted = Boolean(store.activeMedia?.isMuted || mediaVideo.muted);
+        if (this.mediaGainNode) {
+          this.mediaGainNode.gain.value = isMediaMuted ? 0 : (typeof store.activeMedia?.volume === "number" ? store.activeMedia.volume : 1);
+        }
+        if (mediaVideo.muted !== isMediaMuted) {
+          mediaVideo.muted = isMediaMuted;
+        }
+
         try {
           const stream =
             (mediaVideo as any).captureStream?.() ||
@@ -688,13 +716,21 @@ class StageBroadcaster {
             const audioTrack = stream.getAudioTracks()[0];
             if (audioTrack && !this.connectedAudioTracks.has(audioTrack.id)) {
               const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-              srcNode.connect(this.audioDestination);
+              if (this.mediaGainNode) {
+                srcNode.connect(this.mediaGainNode);
+              } else {
+                srcNode.connect(this.audioDestination);
+              }
               this.connectedAudioTracks.add(audioTrack.id);
               console.log("[StageBroadcaster] Connected media video audio stream to broadcast mix");
             }
           } else if (!this.connectedMediaElements.has(mediaVideo)) {
             const src = this.audioCtx.createMediaElementSource(mediaVideo);
-            src.connect(this.audioDestination);
+            if (this.mediaGainNode) {
+              src.connect(this.mediaGainNode);
+            } else {
+              src.connect(this.audioDestination);
+            }
             src.connect(this.audioCtx.destination);
             this.connectedMediaElements.add(mediaVideo);
             console.log("[StageBroadcaster] Connected media video element node to broadcast mix");

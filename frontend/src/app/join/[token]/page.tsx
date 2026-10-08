@@ -1211,6 +1211,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                               playsInline
                               controls
                               loop={activeMedia.loop ?? true}
+                              muted={activeMedia.isMuted ?? false}
                               style={{
                                 objectFit: mediaFit,
                                 objectPosition: `${effObjX}% ${effObjY}%`,
@@ -1464,7 +1465,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
 
       {/* Synchronized Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
-        <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} />
+        <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} muted={activeMedia.isMuted ?? false} />
       )}
 
       {/* Host Grace Period Timeout Overlay */}

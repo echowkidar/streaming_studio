@@ -60,6 +60,8 @@ export interface MediaFileItem {
   loop?: boolean;
   isUploaded?: boolean;
   desc?: string;
+  isMuted?: boolean;
+  volume?: number;
 }
 
 export type ActiveMedia = MediaFileItem;
@@ -235,6 +237,9 @@ interface StudioState {
   // Media playback on stage
   activeMedia: MediaFileItem | null;
   setActiveMedia: (media: MediaFileItem | null) => void;
+  toggleMediaMute: () => void;
+  setMediaMuted: (muted: boolean) => void;
+  setMediaVolume: (volume: number) => void;
 
   // Unified Media Library
   mediaLibrary: MediaFileItem[];
@@ -1092,6 +1097,49 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setActiveMedia: (media) => {
     persistStudioLayout({ activeMedia: media });
     set({ activeMedia: media });
+  },
+  toggleMediaMute: () => {
+    const current = get().activeMedia;
+    if (!current) return;
+    const nextMuted = !(current.isMuted ?? false);
+    const updated = { ...current, isMuted: nextMuted };
+    persistStudioLayout({ activeMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.activeMedia?.id === current.id) {
+        return { ...s, activeMedia: updated };
+      }
+      return s;
+    });
+    set({ activeMedia: updated, scenes });
+  },
+  setMediaMuted: (muted: boolean) => {
+    const current = get().activeMedia;
+    if (!current) return;
+    const updated = { ...current, isMuted: muted };
+    persistStudioLayout({ activeMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.activeMedia?.id === current.id) {
+        return { ...s, activeMedia: updated };
+      }
+      return s;
+    });
+    set({ activeMedia: updated, scenes });
+  },
+  setMediaVolume: (volume: number) => {
+    const current = get().activeMedia;
+    if (!current) return;
+    const updated = { ...current, volume };
+    persistStudioLayout({ activeMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.activeMedia?.id === current.id) {
+        return { ...s, activeMedia: updated };
+      }
+      return s;
+    });
+    set({ activeMedia: updated, scenes });
   },
 
   mediaLibrary: loadSavedMediaLibrary(),

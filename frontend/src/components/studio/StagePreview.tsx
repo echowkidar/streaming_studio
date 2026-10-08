@@ -79,6 +79,7 @@ export const StagePreview: React.FC = () => {
     tileTransforms,
     setTileTransform,
     isDrawingMode,
+    toggleMediaMute,
   } = useStudioStore();
 
   const mediaTransform = tileTransforms["active-media"] || {
@@ -235,6 +236,24 @@ export const StagePreview: React.FC = () => {
     const nextPanY = Math.max(-maxPan, Math.min(maxPan, Number((mediaPanY + step).toFixed(1))));
     setTileTransform("active-media", { panY: nextPanY });
   };
+
+  // Sync active media video & audio elements with store isMuted and volume
+  React.useEffect(() => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl && activeMedia) {
+      videoEl.muted = Boolean(activeMedia.isMuted);
+      if (typeof activeMedia.volume === "number") {
+        videoEl.volume = activeMedia.volume;
+      }
+    }
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (audioEl && activeMedia) {
+      audioEl.muted = Boolean(activeMedia.isMuted);
+      if (typeof activeMedia.volume === "number") {
+        audioEl.volume = activeMedia.volume;
+      }
+    }
+  }, [activeMedia?.isMuted, activeMedia?.volume]);
 
   const params = useParams();
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null);
@@ -770,6 +789,7 @@ export const StagePreview: React.FC = () => {
               controls={mediaFitMode === "contain" && mediaZoom === 1}
               playsInline
               loop={activeMedia.loop ?? true}
+              muted={activeMedia.isMuted ?? false}
               crossOrigin="anonymous"
               style={{
                 objectFit: mediaFitMode,
@@ -829,6 +849,11 @@ export const StagePreview: React.FC = () => {
               (Loop)
             </span>
           )}
+          {activeMedia.isMuted && (
+            <span className="text-[9px] text-rose-400 font-mono font-bold flex items-center gap-0.5 bg-rose-950/60 px-1 py-0.5 rounded border border-rose-500/30">
+              <VolumeX className="w-2.5 h-2.5" /> Muted
+            </span>
+          )}
         </div>
 
         {/* Floating Quick Crop, Pan, Zoom, Fit Controls on Tile Hover */}
@@ -857,6 +882,40 @@ export const StagePreview: React.FC = () => {
             >
               <Repeat className="w-3 h-3" />
               <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
+            </button>
+          )}
+
+          {/* Mute vs Sound Toggle Button */}
+          {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMediaMute();
+              }}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
+                activeMedia.isMuted
+                  ? "bg-rose-500/25 border-rose-500/50 text-rose-300 font-bold"
+                  : "bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 text-emerald-300"
+              )}
+              title={
+                activeMedia.isMuted
+                  ? "Media Audio is Muted (Click to Unmute)"
+                  : "Media Audio is Playing (Click to Mute)"
+              }
+            >
+              {activeMedia.isMuted ? (
+                <>
+                  <VolumeX className="w-3 h-3 text-rose-400" />
+                  <span>Muted</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="w-3 h-3 text-emerald-400" />
+                  <span>Audio</span>
+                </>
+              )}
             </button>
           )}
 
@@ -1229,6 +1288,40 @@ export const StagePreview: React.FC = () => {
                   >
                     <Repeat className="w-3 h-3 text-indigo-400" />
                     <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
+                  </button>
+                )}
+
+                {/* Audio Mute / Unmute Button for Video / Audio */}
+                {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMediaMute();
+                    }}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
+                      activeMedia.isMuted
+                        ? "bg-rose-500/25 border-rose-500/50 text-rose-300 font-bold"
+                        : "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                    )}
+                    title={
+                      activeMedia.isMuted
+                        ? "Media Audio is Muted (Click to Unmute)"
+                        : "Media Audio is Playing (Click to Mute)"
+                    }
+                  >
+                    {activeMedia.isMuted ? (
+                      <>
+                        <VolumeX className="w-3 h-3 text-rose-400" />
+                        <span>Muted</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-3 h-3 text-emerald-400" />
+                        <span>Audio</span>
+                      </>
+                    )}
                   </button>
                 )}
 
@@ -2132,13 +2225,30 @@ export const StagePreview: React.FC = () => {
       {/* Active Stage Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
         <>
-          <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} />
+          <audio
+            id="livestudio-active-media-audio"
+            src={activeMedia.url}
+            autoPlay
+            loop={activeMedia.loop ?? true}
+            muted={activeMedia.isMuted ?? false}
+          />
           <div className="absolute top-6 left-6 z-30 animate-in fade-in">
             <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-cyan-500/40 flex items-center gap-2.5 shadow-xl">
-              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span className={cn("w-2 h-2 rounded-full", activeMedia.isMuted ? "bg-rose-400" : "bg-cyan-400 animate-ping")} />
               <span className="text-[11px] font-medium text-cyan-200 truncate max-w-[160px]">
                 🎵 {activeMedia.name}
               </span>
+              <button
+                type="button"
+                onClick={toggleMediaMute}
+                className={cn(
+                  "p-1 rounded text-[10px] flex items-center gap-1 transition-colors",
+                  activeMedia.isMuted ? "text-rose-400 hover:text-rose-300" : "text-cyan-300 hover:text-cyan-200"
+                )}
+                title={activeMedia.isMuted ? "Unmute Background Audio" : "Mute Background Audio"}
+              >
+                {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+              </button>
               <button
                 onClick={() => setActiveMedia(null)}
                 className="text-[10px] text-slate-400 hover:text-rose-400 font-bold ml-1 transition-colors"

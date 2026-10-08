@@ -21,6 +21,8 @@ import {
   Presentation,
   Play,
   Pause,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 
 interface BackstageStripProps {
@@ -40,6 +42,7 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
     moveToBackstage,
     activeMedia,
     setActiveMedia,
+    toggleMediaMute,
     tileTransforms,
     setTileTransform,
     customLayoutConfig,
@@ -254,16 +257,97 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
             </span>
           </div>
 
+          {/* Audio Mute/Unmute Quick Button (Top-left on Media Card) */}
+          {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMediaMute();
+              }}
+              className={cn(
+                "absolute top-1.5 left-1.5 z-40 px-1.5 py-0.5 rounded-md backdrop-blur-md border text-[9px] font-bold flex items-center gap-1 shadow-md transition-all pointer-events-auto",
+                activeMedia.isMuted
+                  ? "bg-rose-500/30 border-rose-500/50 text-rose-300"
+                  : "bg-emerald-500/25 border-emerald-500/40 text-emerald-300"
+              )}
+              title={activeMedia.isMuted ? "Media audio is Muted (Click to Unmute)" : "Media audio is Playing (Click to Mute)"}
+            >
+              {activeMedia.isMuted ? (
+                <>
+                  <VolumeX className="w-3 h-3 text-rose-400" />
+                  <span>Muted</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="w-3 h-3 text-emerald-400" />
+                  <span>Audio</span>
+                </>
+              )}
+            </button>
+          )}
+
           {/* Top-right menu indicator */}
-          <div className="absolute top-1 right-1 z-20">
-            <span className="p-0.5 rounded bg-black/60 text-slate-400">
+          <div className="absolute top-1 right-1 z-40 pointer-events-auto">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveMenuId(activeMenuId === "media-active" ? null : "media-active");
+              }}
+              className="p-1 rounded bg-black/60 hover:bg-black/80 text-slate-400 hover:text-white"
+              title="Media Options"
+            >
               <MoreVertical className="w-3 h-3" />
-            </span>
+            </button>
           </div>
+
+          {/* 3-dots Dropdown Context Menu for Media */}
+          {activeMenuId === "media-active" && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-8 right-1.5 z-50 w-44 bg-[#141524] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95 pointer-events-auto"
+            >
+              {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleMediaMute();
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-slate-200 hover:bg-white/10"
+                >
+                  {activeMedia.isMuted ? (
+                    <>
+                      <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Unmute Media Audio</span>
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Mute Media Audio</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveMedia(null);
+                  setActiveMenuId(null);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-rose-400 hover:bg-rose-500/10"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Remove from Stage</span>
+              </button>
+            </div>
+          )}
 
           {/* Bottom StreamYard Slide Navigation Pill on Card */}
           <div className="absolute bottom-1 inset-x-1.5 z-20 flex items-center justify-between bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-white/10 text-[9px]">
-            <span className="font-semibold text-slate-300">Slide 1 ▾</span>
+            <span className="font-semibold text-slate-300 truncate max-w-[90px]">{activeMedia.name || "Media"}</span>
             <div className="flex items-center gap-1 text-slate-400">
               <span className="hover:text-white px-0.5">‹</span>
               <span className="hover:text-white px-0.5">›</span>
