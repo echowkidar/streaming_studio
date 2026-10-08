@@ -1169,17 +1169,9 @@ export const StagePreview: React.FC = () => {
                 width: `${bounds.width}%`,
                 height: `${bounds.height}%`,
                 zIndex: isSelected ? 35 : (bounds.zIndex || 10),
-                borderRadius:
-                  activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
-                    ? `${customLayoutConfig.borderRadius}px`
-                    : undefined,
-                boxShadow:
-                  activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
-                    ? `0 0 20px ${customLayoutConfig.highlightColor || "#6366f1"}`
-                    : undefined,
-                borderColor:
-                  activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
-                    ? (customLayoutConfig.highlightColor || "#6366f1")
+                padding:
+                  activeLayout === "custom" && customLayoutConfig?.gap !== undefined
+                    ? `${customLayoutConfig.gap / 2}px`
                     : undefined,
                 transition: isThisDragging ? "none" : "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
               }}
@@ -1190,14 +1182,36 @@ export const StagePreview: React.FC = () => {
                 setSelectedParticipantId(p.id);
               }}
               className={cn(
-                "rounded-2xl overflow-visible select-none border transition-shadow",
+                "overflow-visible select-none transition-shadow",
                 isSelected
-                  ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-move"
-                  : "border-white/10 hover:border-indigo-400/50 cursor-pointer"
+                  ? "ring-2 ring-indigo-500 rounded-2xl shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-move"
+                  : "cursor-pointer"
               )}
             >
               {/* Inner Video Container */}
-              <div className="w-full h-full rounded-2xl overflow-hidden relative pointer-events-auto">
+              <div
+                className={cn(
+                  "w-full h-full overflow-hidden relative pointer-events-auto border transition-all",
+                  isSelected
+                    ? "border-indigo-400"
+                    : "border-white/10 hover:border-indigo-400/50",
+                  activeLayout === "custom" ? "" : "rounded-2xl"
+                )}
+                style={{
+                  borderRadius:
+                    activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                      ? `${customLayoutConfig.borderRadius}px`
+                      : undefined,
+                  boxShadow:
+                    activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
+                      ? `0 0 20px ${customLayoutConfig.highlightColor || "#6366f1"}`
+                      : undefined,
+                  borderColor:
+                    activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
+                      ? (customLayoutConfig.highlightColor || "#6366f1")
+                      : undefined,
+                }}
+              >
                 {renderTile(p, idx, "w-full h-full")}
               </div>
 
@@ -1389,14 +1403,26 @@ export const StagePreview: React.FC = () => {
                     width: `${emptySlotBounds.width}%`,
                     height: `${emptySlotBounds.height}%`,
                     zIndex: 5,
-                    borderRadius:
-                      activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
-                        ? `${customLayoutConfig.borderRadius}px`
+                    padding:
+                      activeLayout === "custom" && customLayoutConfig?.gap !== undefined
+                        ? `${customLayoutConfig.gap / 2}px`
                         : undefined,
                     transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
                   }}
-                  className="rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group pointer-events-auto select-none"
+                  className="select-none pointer-events-auto"
                 >
+                  <div
+                    style={{
+                      borderRadius:
+                        activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                          ? `${customLayoutConfig.borderRadius}px`
+                          : undefined,
+                    }}
+                    className={cn(
+                      "w-full h-full border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center transition-all group",
+                      activeLayout === "custom" ? "" : "rounded-2xl"
+                    )}
+                  >
                   <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
                     <UserPlus className="w-5 h-5" />
                   </div>
@@ -1424,7 +1450,8 @@ export const StagePreview: React.FC = () => {
                     <span>{isCopied ? "Copied! ✓" : "Invite Guest"}</span>
                   </button>
                 </div>
-              );
+              </div>
+            );
             })}
           </>
         )}

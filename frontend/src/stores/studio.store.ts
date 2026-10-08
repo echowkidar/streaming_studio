@@ -20,10 +20,23 @@ export type StudioLayout =
   | "cinema"
   | "custom";
 
+export type CustomCompositionMode =
+  | "grid"
+  | "hero-side"
+  | "hero-bottom"
+  | "pip"
+  | "cinema"
+  | "solo"
+  | "side-by-side"
+  | "stacked"
+  | "three-equal"
+  | "six-grid"
+  | "podcast";
+
 export interface CustomLayoutConfig {
-  mode: "grid" | "hero-side" | "hero-bottom" | "pip" | "cinema";
+  mode: CustomCompositionMode;
   columns: 1 | 2 | 3 | 4;
-  gap: number; // 0, 8, 12, 16, 24
+  gap: number; // 0, 8, 12, 20
   borderRadius: number; // 0, 8, 16, 24
   heroParticipantId: string | number | null;
   pipPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";

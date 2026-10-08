@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useStudioStore, StudioLayout } from "@/stores/studio.store";
+import { useStudioStore, StudioLayout, CustomCompositionMode } from "@/stores/studio.store";
 import { cn } from "@/lib/utils";
 import {
   Sliders,
@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   Check,
   User,
+  Users,
   Square,
   Maximize2,
   Columns,
@@ -210,6 +211,24 @@ export const LayoutSelector: React.FC = () => {
               key={l.id}
               onClick={() => {
                 resetAllParticipantBounds();
+                if (l.id === "custom") {
+                  const presetToCustomMode: Record<string, CustomCompositionMode> = {
+                    "solo": "solo",
+                    "side-by-side": "side-by-side",
+                    "stacked": "stacked",
+                    "speaker-large": "hero-side",
+                    "presentation": "hero-bottom",
+                    "pip": "pip",
+                    "cinema": "cinema",
+                    "three-equal": "three-equal",
+                    "four-grid": "grid",
+                    "six-grid": "six-grid",
+                    "podcast": "podcast",
+                  };
+                  if (activeLayout !== "custom" && presetToCustomMode[activeLayout]) {
+                    setCustomLayoutConfig({ mode: presetToCustomMode[activeLayout] });
+                  }
+                }
                 setLayout(l.id);
               }}
               className={cn(
@@ -234,6 +253,41 @@ export const LayoutSelector: React.FC = () => {
         })}
       </div>
 
+      {/* Quick Customize Callout when on a Preset */}
+      {activeLayout !== "custom" && (
+        <div className="p-2.5 rounded-xl border border-white/5 bg-[#12121e]/60 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs text-slate-300 min-w-0">
+            <Sliders className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span className="truncate text-[11px]">Customize borders, corners & spacing</span>
+          </div>
+          <button
+            onClick={() => {
+              const presetToCustomMode: Record<string, CustomCompositionMode> = {
+                "solo": "solo",
+                "side-by-side": "side-by-side",
+                "stacked": "stacked",
+                "speaker-large": "hero-side",
+                "presentation": "hero-bottom",
+                "pip": "pip",
+                "cinema": "cinema",
+                "three-equal": "three-equal",
+                "four-grid": "grid",
+                "six-grid": "six-grid",
+                "podcast": "podcast",
+              };
+              resetAllParticipantBounds();
+              if (presetToCustomMode[activeLayout]) {
+                setCustomLayoutConfig({ mode: presetToCustomMode[activeLayout] });
+              }
+              setLayout("custom");
+            }}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-[11px] font-semibold text-indigo-300 hover:bg-indigo-500/25 hover:text-white transition-all cursor-pointer"
+          >
+            Open in Custom →
+          </button>
+        </div>
+      )}
+
       {/* Custom Layout Designer Panel */}
       {activeLayout === "custom" && (
         <div className="p-3.5 rounded-2xl border border-indigo-500/30 bg-indigo-950/20 backdrop-blur-md space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -252,12 +306,23 @@ export const LayoutSelector: React.FC = () => {
 
           {/* 1. Stage Composition Mode */}
           <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">Stage Composition</label>
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">Stage Composition</label>
+              <span className="text-[10px] text-indigo-400 font-mono capitalize">
+                {customLayoutConfig.mode.replace(/-/g, " ")}
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-1.5">
               {[
+                { id: "solo" as const, label: "Solo Speaker", icon: User },
+                { id: "side-by-side" as const, label: "Side by Side", icon: Columns },
+                { id: "stacked" as const, label: "Stacked Vertical", icon: Rows },
                 { id: "hero-side" as const, label: "Hero + Side Strip", icon: Columns },
                 { id: "hero-bottom" as const, label: "Hero + Bottom Row", icon: Rows },
                 { id: "grid" as const, label: "Equal Grid", icon: LayoutGrid },
+                { id: "three-equal" as const, label: "3-Column Trio", icon: Columns },
+                { id: "six-grid" as const, label: "6-Tile Grid", icon: LayoutGrid },
+                { id: "podcast" as const, label: "Video Podcast", icon: Users },
                 { id: "pip" as const, label: "Floating PiP", icon: Square },
                 { id: "cinema" as const, label: "Cinema 21:9", icon: Maximize2 },
               ].map((m) => {
@@ -267,7 +332,7 @@ export const LayoutSelector: React.FC = () => {
                     key={m.id}
                     onClick={() => setCustomLayoutConfig({ mode: m.id })}
                     className={cn(
-                      "px-2.5 py-2 rounded-xl text-left border text-xs font-medium flex items-center gap-2 transition-all",
+                      "px-2.5 py-2 rounded-xl text-left border text-xs font-medium flex items-center gap-2 transition-all cursor-pointer",
                       isCurrent
                         ? "bg-indigo-600 border-indigo-400 text-white shadow-md shadow-indigo-600/30"
                         : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10 hover:text-white"

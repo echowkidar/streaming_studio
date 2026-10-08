@@ -29,11 +29,11 @@ export function getLayoutExpectedSlots(
       return 6;
     case "custom": {
       const mode = customConfig?.mode || "hero-side";
+      if (mode === "solo" || mode === "cinema") return 1;
+      if (mode === "side-by-side" || mode === "stacked" || mode === "podcast" || mode === "pip") return 2;
+      if (mode === "hero-side" || mode === "hero-bottom" || mode === "three-equal") return 3;
+      if (mode === "six-grid") return 6;
       if (mode === "grid") return Math.min(8, (customConfig?.columns || 2) * 2);
-      if (mode === "hero-side") return 3;
-      if (mode === "hero-bottom") return 3;
-      if (mode === "pip") return 2;
-      if (mode === "cinema") return 1;
       return 2;
     }
     default:
@@ -267,6 +267,24 @@ export function getDefaultSlotBounds(
 
     case "custom": {
       const mode = customConfig?.mode || "hero-side";
+      if (mode === "solo") {
+        return getDefaultSlotBounds("solo", index, total, splitRatio);
+      }
+      if (mode === "side-by-side") {
+        return getDefaultSlotBounds("side-by-side", index, total, splitRatio);
+      }
+      if (mode === "stacked") {
+        return getDefaultSlotBounds("stacked", index, total, splitRatio);
+      }
+      if (mode === "three-equal") {
+        return getDefaultSlotBounds("three-equal", index, total, splitRatio);
+      }
+      if (mode === "six-grid") {
+        return getDefaultSlotBounds("six-grid", index, total, splitRatio);
+      }
+      if (mode === "podcast") {
+        return getDefaultSlotBounds("podcast", index, total, splitRatio);
+      }
       if (mode === "hero-side") {
         if (index === 0) {
           return { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
