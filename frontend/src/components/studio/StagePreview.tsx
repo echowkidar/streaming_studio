@@ -622,7 +622,7 @@ export const StagePreview: React.FC = () => {
             className="w-full h-full"
           />
         )}
-        <div className="absolute top-3 left-3 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-10">
+        <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-10">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="truncate max-w-[180px]">{activeMedia.name}</span>
           {activeMedia.loop !== false && (

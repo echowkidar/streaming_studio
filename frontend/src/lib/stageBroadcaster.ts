@@ -851,29 +851,7 @@ class StageBroadcaster {
           }
         }
 
-        // Media Name Pill
-        if (tile.mediaName) {
-          ctx.font = "bold 11px Inter, system-ui, sans-serif";
-          const pillW = Math.min(220, tile.mediaName.length * 7 + 28);
-          const pillH = 22;
-          const pillX = x + 10;
-          const pillY = y + 10;
-
-          ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-          this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
-          ctx.fill();
-
-          // Emerald dot
-          ctx.fillStyle = "#10b981";
-          ctx.beginPath();
-          ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = "#ffffff";
-          ctx.textAlign = "left";
-          ctx.textBaseline = "middle";
-          ctx.fillText(tile.mediaName.slice(0, 24), pillX + 16, pillY + pillH / 2);
-        }
+        // Clean broadcast video output (StreamYard parity: raw file names like 'Intro Video.mp4' are never burned onto the live stream or recording)
       } else {
         // ── Participant Tile ──
         const video = el.querySelector("video") as HTMLVideoElement | null;
