@@ -791,20 +791,29 @@ class StageBroadcaster {
         const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
         const mediaImg = el.querySelector("img") as HTMLImageElement | null;
 
-        const isCover = tile.fitMode === "cover";
+        const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: "contain", zoom: 1, panX: 0, panY: 0 };
+        const isCover = (tile.fitMode === "cover" || mediaTf.fitMode === "cover");
+        const zoom = Math.max(1, mediaTf.zoom || 1);
+        const panX = mediaTf.panX || 0;
+        const panY = mediaTf.panY || 0;
 
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
           const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
           const tRatio = w / h;
           if (isCover) {
-            let sx = 0, sy = 0, sw = mediaVideo.videoWidth, sh = mediaVideo.videoHeight;
+            let sw = mediaVideo.videoWidth;
+            let sh = mediaVideo.videoHeight;
             if (vRatio > tRatio) {
               sw = mediaVideo.videoHeight * tRatio;
-              sx = (mediaVideo.videoWidth - sw) / 2;
             } else {
               sh = mediaVideo.videoWidth / tRatio;
-              sy = (mediaVideo.videoHeight - sh) / 2;
             }
+            sw = sw / zoom;
+            sh = sh / zoom;
+            let sx = (mediaVideo.videoWidth - sw) / 2 - (panX / 100) * mediaVideo.videoWidth;
+            let sy = (mediaVideo.videoHeight - sh) / 2 - (panY / 100) * mediaVideo.videoHeight;
+            sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
+            sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
             try {
               ctx.drawImage(mediaVideo, sx, sy, sw, sh, x, y, w, h);
             } catch {}
@@ -817,22 +826,39 @@ class StageBroadcaster {
               dw = h * vRatio;
               dx = x + (w - dw) / 2;
             }
-            try {
-              ctx.drawImage(mediaVideo, dx, dy, dw, dh);
-            } catch {}
+            if (zoom > 1) {
+              let sw = mediaVideo.videoWidth / zoom;
+              let sh = mediaVideo.videoHeight / zoom;
+              let sx = (mediaVideo.videoWidth - sw) / 2 - (panX / 100) * mediaVideo.videoWidth;
+              let sy = (mediaVideo.videoHeight - sh) / 2 - (panY / 100) * mediaVideo.videoHeight;
+              sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
+              sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
+              try {
+                ctx.drawImage(mediaVideo, sx, sy, sw, sh, dx, dy, dw, dh);
+              } catch {}
+            } else {
+              try {
+                ctx.drawImage(mediaVideo, dx, dy, dw, dh);
+              } catch {}
+            }
           }
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
           const tRatio = w / h;
           if (isCover) {
-            let sx = 0, sy = 0, sw = mediaImg.naturalWidth, sh = mediaImg.naturalHeight;
+            let sw = mediaImg.naturalWidth;
+            let sh = mediaImg.naturalHeight;
             if (iRatio > tRatio) {
               sw = mediaImg.naturalHeight * tRatio;
-              sx = (mediaImg.naturalWidth - sw) / 2;
             } else {
               sh = mediaImg.naturalWidth / tRatio;
-              sy = (mediaImg.naturalHeight - sh) / 2;
             }
+            sw = sw / zoom;
+            sh = sh / zoom;
+            let sx = (mediaImg.naturalWidth - sw) / 2 - (panX / 100) * mediaImg.naturalWidth;
+            let sy = (mediaImg.naturalHeight - sh) / 2 - (panY / 100) * mediaImg.naturalHeight;
+            sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
+            sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
             try {
               ctx.drawImage(mediaImg, sx, sy, sw, sh, x, y, w, h);
             } catch {}
@@ -845,9 +871,21 @@ class StageBroadcaster {
               dw = h * iRatio;
               dx = x + (w - dw) / 2;
             }
-            try {
-              ctx.drawImage(mediaImg, dx, dy, dw, dh);
-            } catch {}
+            if (zoom > 1) {
+              let sw = mediaImg.naturalWidth / zoom;
+              let sh = mediaImg.naturalHeight / zoom;
+              let sx = (mediaImg.naturalWidth - sw) / 2 - (panX / 100) * mediaImg.naturalWidth;
+              let sy = (mediaImg.naturalHeight - sh) / 2 - (panY / 100) * mediaImg.naturalHeight;
+              sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
+              sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
+              try {
+                ctx.drawImage(mediaImg, sx, sy, sw, sh, dx, dy, dw, dh);
+              } catch {}
+            } else {
+              try {
+                ctx.drawImage(mediaImg, dx, dy, dw, dh);
+              } catch {}
+            }
           }
         }
 

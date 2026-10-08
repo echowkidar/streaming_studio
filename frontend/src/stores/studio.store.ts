@@ -49,19 +49,28 @@ export interface CustomLayoutConfig {
   showSpeakerBorder: boolean;
 }
 
+export interface MediaFileItem {
+  id: string;
+  name: string;
+  type: "video" | "audio" | "image" | "pdf";
+  url: string;
+  duration?: string;
+  durationSeconds?: number;
+  thumbnail?: string;
+  loop?: boolean;
+  isUploaded?: boolean;
+  desc?: string;
+}
+
+export type ActiveMedia = MediaFileItem;
+
 export interface StudioScene {
   id: string;
   name: string;
   layout: StudioLayout;
   splitRatio?: number;
   onStageParticipantIds?: (string | number)[];
-  activeMedia?: {
-    id: string;
-    name: string;
-    type: "video" | "audio" | "image" | "pdf";
-    url: string;
-    loop?: boolean;
-  } | null;
+  activeMedia?: MediaFileItem | null;
   backgroundUrl?: string | null;
   backgroundType?: "image" | "video";
   overlayUrl?: string | null;
@@ -224,22 +233,13 @@ interface StudioState {
   restoreDefaultOverlays: () => void;
 
   // Media playback on stage
-  activeMedia: {
-    id: string;
-    name: string;
-    type: "video" | "audio" | "image" | "pdf";
-    url: string;
-    loop?: boolean;
-  } | null;
-  setActiveMedia: (
-    media: {
-      id: string;
-      name: string;
-      type: "video" | "audio" | "image" | "pdf";
-      url: string;
-      loop?: boolean;
-    } | null
-  ) => void;
+  activeMedia: MediaFileItem | null;
+  setActiveMedia: (media: MediaFileItem | null) => void;
+
+  // Unified Media Library
+  mediaLibrary: MediaFileItem[];
+  addMediaLibraryItem: (item: MediaFileItem) => void;
+  removeMediaLibraryItem: (id: string) => void;
 
   // Chat
   messages: ChatMessage[];
@@ -441,7 +441,74 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
   },
 ];
 
+export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [
+  {
+    id: "media-slides",
+    name: "Product_Architecture_2026.pdf",
+    type: "pdf",
+    desc: "Presentation Deck (18 slides)",
+    duration: "18 slides",
+    url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+    thumbnail: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=400&q=80",
+  },
+  {
+    id: "media-countdown",
+    name: "Intro_Countdown_30s.mp4",
+    type: "video",
+    desc: "Countdown Video (00:30)",
+    duration: "00:30",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    thumbnail: "https://images.unsplash.com/photo-1518173946687-a4c8a383392e?auto=format&fit=crop&w=400&q=80",
+    loop: true,
+  },
+  {
+    id: "media-keynote-clip",
+    name: "Product_Demo_Highlights.mp4",
+    type: "video",
+    desc: "Demo Highlights Clip (01:15)",
+    duration: "01:15",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    thumbnail: "https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&w=400&q=80",
+    loop: true,
+  },
+  {
+    id: "media-lofi",
+    name: "Background_Lofi_Stream.mp3",
+    type: "audio",
+    desc: "Audio Stream (03:45)",
+    duration: "03:45",
+    url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
+    loop: true,
+  },
+];
+
 const STUDIO_LAYOUT_STORAGE_KEY = "livestudio_saved_studio_layout";
+const STUDIO_MEDIA_STORAGE_KEY = "livestudio_media_library";
+
+function loadSavedMediaLibrary(): MediaFileItem[] {
+  if (typeof window === "undefined") return DEFAULT_STUDIO_MEDIA;
+  try {
+    const raw = localStorage.getItem(STUDIO_MEDIA_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const defaultIds = new Set(DEFAULT_STUDIO_MEDIA.map((m) => m.id));
+        const custom = parsed.filter((m: MediaFileItem) => !defaultIds.has(m.id));
+        return [...custom, ...DEFAULT_STUDIO_MEDIA];
+      }
+    }
+  } catch {}
+  return DEFAULT_STUDIO_MEDIA;
+}
+
+function persistMediaLibrary(items: MediaFileItem[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STUDIO_MEDIA_STORAGE_KEY, JSON.stringify(items.slice(0, 25)));
+  } catch (err) {
+    console.warn("Failed to persist media library to localStorage:", err);
+  }
+}
 
 interface SavedStudioLayoutState {
   activeLayout?: StudioLayout;
@@ -467,6 +534,7 @@ interface SavedStudioLayoutState {
   scenes?: StudioScene[];
   activeSceneId?: string | null;
   isScenesPanelOpen?: boolean;
+  activeMedia?: MediaFileItem | null;
 }
 
 function loadSavedStudioLayout(): SavedStudioLayoutState {
@@ -1014,8 +1082,32 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { overlayHistory: DEFAULT_STUDIO_OVERLAYS };
     }),
 
-  activeMedia: null,
-  setActiveMedia: (media) => set({ activeMedia: media }),
+  // StreamYard Parity: activeMedia restored from saved layout or current scene on refresh
+  activeMedia:
+    savedLayout.activeMedia !== undefined
+      ? savedLayout.activeMedia
+      : (savedLayout.activeSceneId
+          ? (savedLayout.scenes || DEFAULT_STUDIO_SCENES).find((s) => s.id === savedLayout.activeSceneId)?.activeMedia
+          : null) || null,
+  setActiveMedia: (media) => {
+    persistStudioLayout({ activeMedia: media });
+    set({ activeMedia: media });
+  },
+
+  mediaLibrary: loadSavedMediaLibrary(),
+  addMediaLibraryItem: (item) => {
+    const current = get().mediaLibrary;
+    const filtered = current.filter((m) => m.id !== item.id && m.url !== item.url);
+    const next = [item, ...filtered];
+    persistMediaLibrary(next);
+    set({ mediaLibrary: next });
+  },
+  removeMediaLibraryItem: (id) => {
+    const current = get().mediaLibrary;
+    const next = current.filter((m) => m.id !== id);
+    persistMediaLibrary(next);
+    set({ mediaLibrary: next });
+  },
 
   messages: [
     {
@@ -1158,8 +1250,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   },
   updateScene: (id, updates) => {
     const next = get().scenes.map((s) => (s.id === id ? { ...s, ...updates } : s));
-    persistStudioLayout({ scenes: next });
-    set({ scenes: next });
+    const isTargetActive = get().activeSceneId === id;
+    if (isTargetActive && updates.activeMedia !== undefined) {
+      persistStudioLayout({ scenes: next, activeMedia: updates.activeMedia });
+      set({ scenes: next, activeMedia: updates.activeMedia });
+    } else {
+      persistStudioLayout({ scenes: next });
+      set({ scenes: next });
+    }
   },
   deleteScene: (id) => {
     const current = get().scenes;

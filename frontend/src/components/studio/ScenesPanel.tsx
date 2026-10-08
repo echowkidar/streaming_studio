@@ -47,6 +47,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     reorderScenes,
     setActiveMedia,
     setLayout,
+    mediaLibrary,
+    addMediaLibraryItem,
+    removeMediaLibraryItem,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -57,39 +60,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const defaultMediaOptions = [
-    {
-      id: "media-slides",
-      name: "Product_Architecture_2026.pdf",
-      type: "pdf" as const,
-      desc: "Presentation Deck (18 slides)",
-      url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-    },
-    {
-      id: "media-countdown",
-      name: "Intro_Countdown_30s.mp4",
-      type: "video" as const,
-      desc: "Countdown Video (00:30)",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      loop: true,
-    },
-    {
-      id: "media-keynote-clip",
-      name: "Product_Demo_Highlights.mp4",
-      type: "video" as const,
-      desc: "Demo Highlights Clip (01:15)",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-      loop: true,
-    },
-    {
-      id: "media-lofi",
-      name: "Background_Lofi_Stream.mp3",
-      type: "audio" as const,
-      desc: "Audio Stream (03:45)",
-      url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
-      loop: true,
-    },
-  ];
+  const [isProcessingUpload, setIsProcessingUpload] = useState(false);
 
   const handleAttachMedia = (sceneId: string, mediaItem: any | null) => {
     const targetScene = scenes.find((s) => s.id === sceneId);
@@ -111,25 +82,182 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     setActiveMenuId(null);
   };
 
-  const handleCustomFileUpload = (e: React.ChangeEvent<HTMLInputElement>, sceneId: string) => {
+  const handleCustomFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, sceneId: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setIsProcessingUpload(true);
     let type: "video" | "audio" | "image" | "pdf" = "video";
     if (file.type.startsWith("audio/")) type = "audio";
     else if (file.type.startsWith("image/")) type = "image";
     else if (file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf")) type = "pdf";
 
+    const itemId = `media-upload-${Date.now()}`;
+
+    // Process image into an optimized Data URL so it is 100% persistent across browser refresh (F5)
+    if (type === "image") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawDataUrl = event.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          // Downscale to max 1920x1080 to maintain broadcast crispness while ensuring instant localStorage loading
+          const maxW = 1920;
+          const maxH = 1080;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxW || h > maxH) {
+            const ratio = Math.min(maxW / w, maxH / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          let finalDataUrl = rawDataUrl;
+          let thumbUrl = rawDataUrl;
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            finalDataUrl = canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.9);
+
+            const thumbCanvas = document.createElement("canvas");
+            thumbCanvas.width = 160;
+            thumbCanvas.height = Math.round(160 * (h / w));
+            const thumbCtx = thumbCanvas.getContext("2d");
+            if (thumbCtx) {
+              thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
+              thumbUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
+            }
+          }
+
+          const customItem = {
+            id: itemId,
+            name: file.name,
+            type: "image" as const,
+            url: finalDataUrl,
+            thumbnail: thumbUrl,
+            duration: "Image",
+            isUploaded: true,
+            loop: true,
+          };
+
+          addMediaLibraryItem(customItem);
+          handleAttachMedia(sceneId, customItem);
+          setIsProcessingUpload(false);
+          uploadToServer(file, customItem, sceneId);
+        };
+        img.onerror = () => {
+          fallbackUpload(file, itemId, type, sceneId, rawDataUrl);
+        };
+        img.src = rawDataUrl;
+      };
+      reader.onerror = () => {
+        fallbackUpload(file, itemId, type, sceneId);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (type === "pdf") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const customItem = {
+          id: itemId,
+          name: file.name,
+          type: "pdf" as const,
+          url: dataUrl,
+          duration: "Document",
+          isUploaded: true,
+          loop: true,
+        };
+        addMediaLibraryItem(customItem);
+        handleAttachMedia(sceneId, customItem);
+        setIsProcessingUpload(false);
+        uploadToServer(file, customItem, sceneId);
+      };
+      reader.onerror = () => {
+        fallbackUpload(file, itemId, type, sceneId);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    // Video / Audio: use objectUrl for immediate playback + background upload
     const objectUrl = URL.createObjectURL(file);
     const customItem = {
-      id: `media-upload-${Date.now()}`,
+      id: itemId,
       name: file.name,
       type,
       url: objectUrl,
+      duration: type === "video" ? "Video Clip" : "Audio Track",
+      isUploaded: true,
       loop: true,
     };
-
+    addMediaLibraryItem(customItem);
     handleAttachMedia(sceneId, customItem);
+    setIsProcessingUpload(false);
+    uploadToServer(file, customItem, sceneId);
+  };
+
+  const fallbackUpload = (
+    file: File,
+    itemId: string,
+    type: "video" | "audio" | "image" | "pdf",
+    sceneId: string,
+    fallbackUrl?: string
+  ) => {
+    const url = fallbackUrl || URL.createObjectURL(file);
+    const item = {
+      id: itemId,
+      name: file.name,
+      type,
+      url,
+      duration: "Media",
+      isUploaded: true,
+      loop: true,
+    };
+    addMediaLibraryItem(item);
+    handleAttachMedia(sceneId, item);
+    setIsProcessingUpload(false);
+    uploadToServer(file, item, sceneId);
+  };
+
+  const uploadToServer = async (file: File, item: any, sceneId: string) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("name", file.name);
+      formData.append("assetType", item.type.toUpperCase());
+      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.success && json.data?.url) {
+          const serverUrl = json.data.url;
+          const updatedItem = { ...item, url: serverUrl, id: json.data.id || item.id };
+          addMediaLibraryItem(updatedItem);
+          const currentScene = useStudioStore.getState().scenes.find((s) => s.id === sceneId);
+          if (currentScene?.activeMedia?.id === item.id) {
+            updateScene(sceneId, { activeMedia: updatedItem });
+          }
+          if (useStudioStore.getState().activeMedia?.id === item.id) {
+            setActiveMedia(updatedItem);
+          }
+        }
+      }
+    } catch {
+      // Backend upload skipped or offline; local data URL continues working smoothly
+    } finally {
+      if (mediaFileInputRef.current) mediaFileInputRef.current.value = "";
+    }
   };
 
   const handleStartRename = (scene: StudioScene) => {
@@ -177,12 +305,95 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     return (
       <div className="absolute inset-0 p-1 flex items-center justify-center">
         {scene.activeMedia ? (
-          <div className="w-full h-full bg-cyan-950/40 border border-cyan-500/30 rounded flex flex-col items-center justify-center gap-0.5">
-            <Clapperboard className="w-4 h-4 text-cyan-400" />
-            <span className="text-[7px] text-cyan-200 line-clamp-1 max-w-[90%]">
-              {scene.activeMedia.name}
-            </span>
-          </div>
+          isPresentation ? (
+            <div className="w-full h-full flex gap-1 p-0.5">
+              {/* Left Presentation Slide/Media View (68%) */}
+              <div className="flex-[2] relative rounded overflow-hidden bg-black/80 border border-cyan-500/40 shadow-sm flex items-center justify-center">
+                {scene.activeMedia.type === "video" ? (
+                  <video
+                    src={scene.activeMedia.url}
+                    className="w-full h-full object-cover"
+                    muted
+                    playsInline
+                  />
+                ) : (
+                  <img
+                    src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                )}
+                <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/85 text-[7px] text-cyan-300 font-mono flex items-center gap-0.5 shadow">
+                  <MonitorUp className="w-2 h-2" />
+                  <span className="truncate max-w-[50px]">Deck</span>
+                </div>
+              </div>
+              {/* Right Host Slot (32%) */}
+              <div className="flex-1 rounded bg-indigo-950/70 border border-indigo-500/30 flex flex-col items-center justify-center gap-0.5">
+                <User className="w-3 h-3 text-indigo-300" />
+                <span className="text-[6px] text-indigo-200">Host</span>
+              </div>
+            </div>
+          ) : isCinema ? (
+            <div className="w-full h-full relative rounded overflow-hidden bg-black/90 border border-indigo-500/40 flex items-center justify-center">
+              {scene.activeMedia.type === "video" ? (
+                <video
+                  src={scene.activeMedia.url}
+                  className="w-full h-full object-cover"
+                  muted
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              )}
+              <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                <div className="w-5 h-5 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow-lg">
+                  <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
+                </div>
+              </div>
+            </div>
+          ) : isSpeaker ? (
+            <div className="w-full h-full flex gap-1 p-0.5">
+              <div className="flex-[2] relative rounded overflow-hidden bg-black/80 border border-indigo-500/40 flex items-center justify-center">
+                <img
+                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 flex flex-col gap-0.5">
+                <div className="flex-1 bg-indigo-900/40 rounded flex items-center justify-center">
+                  <User className="w-2.5 h-2.5 text-indigo-300" />
+                </div>
+                <div className="flex-1 bg-indigo-900/30 rounded" />
+              </div>
+            </div>
+          ) : (
+            <div className="w-full h-full relative rounded overflow-hidden bg-cyan-950/60 border border-cyan-500/40 flex items-center justify-center">
+              {scene.activeMedia.type === "video" ? (
+                <video
+                  src={scene.activeMedia.url}
+                  className="w-full h-full object-cover"
+                  muted
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              )}
+              <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 rounded bg-black/85 text-[7px] text-cyan-300 font-mono flex items-center gap-0.5 shadow">
+                <Clapperboard className="w-2 h-2" />
+                <span className="truncate max-w-[65px]">{scene.activeMedia.name}</span>
+              </div>
+            </div>
+          )
         ) : isSolo || isCinema ? (
           <div className="w-full h-full bg-indigo-950/40 border border-indigo-500/30 rounded flex items-center justify-center">
             <User className="w-4 h-4 text-indigo-300 opacity-80" />
@@ -532,7 +743,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               Attach presentation slides (PDF), demo video, or stream media that automatically goes live when switching to this scene.
             </p>
 
-            <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar my-2">
+
+
+            <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar my-2 pr-1">
               {/* Option to clear media */}
               <button
                 type="button"
@@ -548,30 +761,134 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 </div>
               </button>
 
-              {defaultMediaOptions.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
-                  className="w-full p-2 rounded-xl text-left border border-white/10 hover:border-cyan-500/50 bg-white/5 hover:bg-cyan-950/20 flex items-center gap-2.5 transition-all text-xs group"
-                >
-                  <div className="w-7 h-7 rounded-lg bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    {opt.type === "pdf" ? (
-                      <FileText className="w-4 h-4 text-cyan-300" />
-                    ) : opt.type === "video" ? (
-                      <Video className="w-4 h-4 text-indigo-300" />
-                    ) : (
-                      <Music className="w-4 h-4 text-amber-300" />
-                    )}
+              {/* ─── Uploaded Presentations & Media (Persistent & Selectable) ─── */}
+              {mediaLibrary.filter((m) => m.isUploaded || m.id.startsWith("media-upload")).length > 0 && (
+                <div className="pt-1">
+                  <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider mb-1.5 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    <span>Your Uploaded Presentations & Media</span>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-slate-200 group-hover:text-white truncate">
-                      {opt.name}
-                    </div>
-                    <div className="text-[10px] text-slate-400">{opt.desc}</div>
+                  <div className="space-y-1.5">
+                    {mediaLibrary
+                      .filter((m) => m.isUploaded || m.id.startsWith("media-upload"))
+                      .map((opt) => {
+                        const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
+                        const isAttached = targetScene?.activeMedia?.id === opt.id;
+                        return (
+                          <div
+                            key={opt.id}
+                            className={cn(
+                              "w-full p-2 rounded-xl border flex items-center gap-2.5 transition-all text-xs group",
+                              isAttached
+                                ? "bg-cyan-950/40 border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.15)]"
+                                : "border-white/10 hover:border-cyan-500/40 bg-white/5 hover:bg-white/10"
+                            )}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
+                              className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
+                            >
+                              <div className="w-8 h-8 rounded-lg overflow-hidden bg-black/60 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                                {opt.type === "image" || opt.thumbnail ? (
+                                  <img
+                                    src={opt.thumbnail || opt.url}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : opt.type === "pdf" ? (
+                                  <FileText className="w-4 h-4 text-cyan-300" />
+                                ) : opt.type === "video" ? (
+                                  <Video className="w-4 h-4 text-indigo-300" />
+                                ) : (
+                                  <Music className="w-4 h-4 text-amber-300" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-slate-200 group-hover:text-white truncate">
+                                  {opt.name}
+                                </div>
+                                <div className="text-[10px] text-cyan-300/80 flex items-center gap-1.5">
+                                  <span className="capitalize">{opt.type}</span>
+                                  {opt.duration && <span>• {opt.duration}</span>}
+                                  {isAttached && (
+                                    <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
+                                      Attached
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeMediaLibraryItem(opt.id);
+                              }}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                              title="Delete from Media Library"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
                   </div>
-                </button>
-              ))}
+                </div>
+              )}
+
+              {/* ─── Sample Media & Templates ─── */}
+              <div className="pt-1">
+                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">
+                  Sample Presentations & Clips
+                </div>
+                <div className="space-y-1.5">
+                  {mediaLibrary
+                    .filter((m) => !m.isUploaded && !m.id.startsWith("media-upload"))
+                    .map((opt) => {
+                      const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
+                      const isAttached = targetScene?.activeMedia?.id === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
+                          className={cn(
+                            "w-full p-2 rounded-xl text-left border flex items-center gap-2.5 transition-all text-xs group",
+                            isAttached
+                              ? "bg-cyan-950/40 border-cyan-500/60"
+                              : "border-white/10 hover:border-cyan-500/50 bg-white/5 hover:bg-cyan-950/20"
+                          )}
+                        >
+                          <div className="w-8 h-8 rounded-lg overflow-hidden bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                            {opt.thumbnail ? (
+                              <img src={opt.thumbnail} alt="" className="w-full h-full object-cover" />
+                            ) : opt.type === "pdf" ? (
+                              <FileText className="w-4 h-4 text-cyan-300" />
+                            ) : opt.type === "video" ? (
+                              <Video className="w-4 h-4 text-indigo-300" />
+                            ) : (
+                              <Music className="w-4 h-4 text-amber-300" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-slate-200 group-hover:text-white truncate">
+                              {opt.name}
+                            </div>
+                            <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                              <span>{opt.desc || opt.type}</span>
+                              {isAttached && (
+                                <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
+                                  Attached
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
             </div>
 
             {/* Upload from Computer */}
@@ -584,11 +901,21 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
             />
             <button
               type="button"
+              disabled={isProcessingUpload}
               onClick={() => mediaFileInputRef.current?.click()}
-              className="w-full mt-2 py-2 px-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 hover:text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-95"
+              className="w-full mt-2 py-2 px-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 hover:text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
             >
-              <Upload className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Upload Presentation / Video from PC</span>
+              {isProcessingUpload ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                  <span>Processing Upload...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Upload Presentation / Video from PC</span>
+                </>
+              )}
             </button>
           </div>
         </div>

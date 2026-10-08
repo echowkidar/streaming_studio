@@ -24,6 +24,11 @@ import {
   Youtube,
   Twitch,
   Globe,
+  ZoomIn,
+  ZoomOut,
+  Hand,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
@@ -76,11 +81,128 @@ export const StagePreview: React.FC = () => {
     isDrawingMode,
   } = useStudioStore();
 
-  const mediaFitMode = (tileTransforms["active-media"]?.fitMode as "contain" | "cover") || "contain";
+  const mediaTransform = tileTransforms["active-media"] || {
+    fitMode: "contain",
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    rotation: 0,
+    flipH: false,
+    flipV: false,
+  };
+  const mediaFitMode = (mediaTransform.fitMode as "contain" | "cover") || "contain";
+  const mediaZoom = Math.max(1, mediaTransform.zoom || 1);
+  const mediaPanX = mediaTransform.panX || 0;
+  const mediaPanY = mediaTransform.panY || 0;
+
+  const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
+  const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
 
   const handleToggleMediaCrop = () => {
     const next = mediaFitMode === "contain" ? "cover" : "contain";
-    setTileTransform("active-media", { fitMode: next });
+    setTileTransform("active-media", { fitMode: next, panX: 0, panY: 0 });
+  };
+
+  const handleMediaZoomIn = () => {
+    const nextZoom = Math.min(3.0, Number((mediaZoom + 0.25).toFixed(2)));
+    setTileTransform("active-media", { zoom: nextZoom, fitMode: "cover" });
+  };
+
+  const handleMediaZoomOut = () => {
+    const nextZoom = Math.max(1.0, Number((mediaZoom - 0.25).toFixed(2)));
+    setTileTransform("active-media", {
+      zoom: nextZoom,
+      panX: nextZoom === 1.0 && mediaFitMode === "contain" ? 0 : mediaPanX,
+      panY: nextZoom === 1.0 && mediaFitMode === "contain" ? 0 : mediaPanY,
+    });
+  };
+
+  const handleMediaCropPreset = (preset: "top" | "center" | "bottom") => {
+    if (preset === "top") {
+      setTileTransform("active-media", { fitMode: "cover", panY: 35, panX: 0 });
+    } else if (preset === "center") {
+      setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
+    } else if (preset === "bottom") {
+      setTileTransform("active-media", { fitMode: "cover", panY: -35, panX: 0 });
+    }
+  };
+
+  const handleResetMediaTransform = () => {
+    setTileTransform("active-media", {
+      fitMode: "contain",
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+    });
+  };
+
+  const handleMediaPanMouseDown = (e: React.MouseEvent) => {
+    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setIsDraggingMediaPan(true);
+    mediaPanStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialPanX: mediaPanX,
+      initialPanY: mediaPanY,
+    };
+  };
+
+  const handleMediaPanMouseMove = React.useCallback(
+    (e: MouseEvent) => {
+      if (!isDraggingMediaPan) return;
+      const deltaX = (e.clientX - mediaPanStartRef.current.startX) / 3.5;
+      const deltaY = (e.clientY - mediaPanStartRef.current.startY) / 3.5;
+      setTileTransform("active-media", {
+        panX: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanX + deltaX).toFixed(1)))),
+        panY: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanY + deltaY).toFixed(1)))),
+      });
+    },
+    [isDraggingMediaPan, setTileTransform]
+  );
+
+  const handleMediaPanMouseUp = React.useCallback(() => {
+    setIsDraggingMediaPan(false);
+  }, []);
+
+  React.useEffect(() => {
+    if (isDraggingMediaPan) {
+      window.addEventListener("mousemove", handleMediaPanMouseMove);
+      window.addEventListener("mouseup", handleMediaPanMouseUp);
+      return () => {
+        window.removeEventListener("mousemove", handleMediaPanMouseMove);
+        window.removeEventListener("mouseup", handleMediaPanMouseUp);
+      };
+    }
+  }, [isDraggingMediaPan, handleMediaPanMouseMove, handleMediaPanMouseUp]);
+
+  const handleMediaPanTouchStart = (e: React.TouchEvent) => {
+    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
+    if (e.touches.length !== 1) return;
+    e.stopPropagation();
+    setIsDraggingMediaPan(true);
+    mediaPanStartRef.current = {
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      initialPanX: mediaPanX,
+      initialPanY: mediaPanY,
+    };
+  };
+
+  const handleMediaPanTouchMove = (e: React.TouchEvent) => {
+    if (!isDraggingMediaPan || e.touches.length !== 1) return;
+    const deltaX = (e.touches[0].clientX - mediaPanStartRef.current.startX) / 3.5;
+    const deltaY = (e.touches[0].clientY - mediaPanStartRef.current.startY) / 3.5;
+    setTileTransform("active-media", {
+      panX: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanX + deltaX).toFixed(1)))),
+      panY: Math.max(-55, Math.min(55, Number((mediaPanStartRef.current.initialPanY + deltaY).toFixed(1)))),
+    });
+  };
+
+  const handleMediaPanTouchEnd = () => {
+    setIsDraggingMediaPan(false);
   };
 
   const params = useParams();
@@ -598,31 +720,80 @@ export const StagePreview: React.FC = () => {
         data-stage-media="true"
         data-media-name={activeMedia.name}
         data-participant-fit={mediaFitMode}
-        className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group"
+        className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group select-none"
       >
-        {activeMedia.type === "video" && (
-          <video
-            id="livestudio-active-media-video"
-            src={activeMedia.url}
-            autoPlay
-            controls
-            playsInline
-            loop={activeMedia.loop ?? true}
-            crossOrigin="anonymous"
-            style={{ objectFit: mediaFitMode }}
-            className="w-full h-full"
-          />
-        )}
-        {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
-          <img
-            src={activeMedia.url}
-            alt={activeMedia.name}
-            crossOrigin="anonymous"
-            style={{ objectFit: mediaFitMode }}
-            className="w-full h-full"
-          />
-        )}
-        <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-10">
+        {/* Inner Media Viewport with Pan & Zoom Transform */}
+        <div
+          className="relative w-full h-full overflow-hidden flex items-center justify-center select-none"
+          onMouseDown={handleMediaPanMouseDown}
+          onTouchStart={handleMediaPanTouchStart}
+          onTouchMove={handleMediaPanTouchMove}
+          onTouchEnd={handleMediaPanTouchEnd}
+        >
+          {activeMedia.type === "video" ? (
+            <video
+              id="livestudio-active-media-video"
+              src={activeMedia.url}
+              autoPlay
+              controls={mediaFitMode === "contain" && mediaZoom === 1}
+              playsInline
+              loop={activeMedia.loop ?? true}
+              crossOrigin="anonymous"
+              style={{
+                objectFit: mediaFitMode,
+                transform: `translate(${mediaPanX}%, ${mediaPanY}%) scale(${mediaZoom})`,
+                transformOrigin: "center center",
+                cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                userSelect: "none",
+                transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
+              }}
+              className={cn(
+                "max-w-none transition-transform pointer-events-auto",
+                mediaFitMode === "cover" ? "w-full h-full" : "max-w-full max-h-full"
+              )}
+            />
+          ) : (
+            <img
+              src={activeMedia.url}
+              alt={activeMedia.name}
+              crossOrigin="anonymous"
+              draggable={false}
+              style={{
+                objectFit: mediaFitMode,
+                transform: `translate(${mediaPanX}%, ${mediaPanY}%) scale(${mediaZoom})`,
+                transformOrigin: "center center",
+                cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                userSelect: "none",
+                transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
+              }}
+              className={cn(
+                "max-w-none transition-transform pointer-events-auto",
+                mediaFitMode === "cover" ? "w-full h-full" : "max-w-full max-h-full"
+              )}
+            />
+          )}
+
+          {/* Active Pan coordinates indicator when dragging */}
+          {isDraggingMediaPan && (
+            <div className="absolute inset-0 pointer-events-none border-2 border-cyan-400/80 bg-cyan-950/20 flex items-center justify-center z-30">
+              <span className="px-2.5 py-1 rounded-md bg-black/90 text-[11px] text-cyan-300 font-mono shadow-xl border border-cyan-500/40">
+                ✋ Pan: X {mediaPanX}% • Y {mediaPanY}% • Zoom {Math.round(mediaZoom * 100)}%
+              </span>
+            </div>
+          )}
+
+          {/* Help hint when hovering in crop mode */}
+          {(mediaFitMode === "cover" || mediaZoom > 1) && !isDraggingMediaPan && (
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
+              <span>✋ Drag to pan custom crop</span>
+              <span className="text-white/40">•</span>
+              <span>Use Top / Bottom buttons</span>
+            </div>
+          )}
+        </div>
+
+        {/* Media Name Badge on Tile Hover */}
+        <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-20">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="truncate max-w-[180px]">{activeMedia.name}</span>
           {activeMedia.loop !== false && (
@@ -632,8 +803,8 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
-        {/* Floating Quick Crop / Repeat / Fit Buttons on Tile Hover */}
-        <div className="absolute top-3 right-3 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+        {/* Floating Quick Crop, Pan, Zoom, Fit Controls on Tile Hover */}
+        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-black/80 backdrop-blur-md p-1 rounded-xl border border-white/20 shadow-2xl">
           {activeMedia.type === "video" && (
             <button
               type="button"
@@ -645,10 +816,10 @@ export const StagePreview: React.FC = () => {
                 });
               }}
               className={cn(
-                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-lg backdrop-blur-md transition-all",
+                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
                 (activeMedia.loop ?? true)
                   ? "bg-indigo-600 text-white border-indigo-400 font-bold"
-                  : "bg-black/80 hover:bg-black border-white/20 text-slate-300"
+                  : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-300"
               )}
               title={
                 (activeMedia.loop ?? true)
@@ -660,6 +831,8 @@ export const StagePreview: React.FC = () => {
               <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
             </button>
           )}
+
+          {/* Fit vs Crop Toggle */}
           <button
             type="button"
             onClick={(e) => {
@@ -667,10 +840,10 @@ export const StagePreview: React.FC = () => {
               handleToggleMediaCrop();
             }}
             className={cn(
-              "px-2.5 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-lg backdrop-blur-md transition-all",
+              "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
               mediaFitMode === "cover"
                 ? "bg-amber-500 text-black font-bold border-amber-400"
-                : "bg-black/80 hover:bg-black border-white/20 text-slate-200"
+                : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
             )}
             title={
               mediaFitMode === "cover"
@@ -681,16 +854,112 @@ export const StagePreview: React.FC = () => {
             <Crop className="w-3 h-3" />
             <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Crop"}</span>
           </button>
+
+          {/* Zoom & Document Alignment Controls when in Crop / Fill mode */}
+          {(mediaFitMode === "cover" || mediaZoom > 1) && (
+            <>
+              {/* Zoom Out */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleMediaZoomOut();
+                }}
+                disabled={mediaZoom <= 1}
+                className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-3 h-3" />
+              </button>
+              <span className="text-[10px] font-mono font-bold text-slate-200 px-0.5">
+                {Math.round(mediaZoom * 100)}%
+              </span>
+              {/* Zoom In */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleMediaZoomIn();
+                }}
+                disabled={mediaZoom >= 3}
+                className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-3 h-3" />
+              </button>
+
+              {/* Document Alignment Presets (Top for letterhead, Bottom for signatures) */}
+              <div className="flex items-center gap-0.5 bg-white/5 rounded-lg border border-white/10 px-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("top");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Show Top / Letterhead"
+                >
+                  Top
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("center");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    mediaPanY === 0 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Center Alignment"
+                >
+                  Mid
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("bottom");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Show Bottom / Signatures"
+                >
+                  Btm
+                </button>
+              </div>
+
+              {/* Reset Crop */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResetMediaTransform();
+                }}
+                className="p-1 rounded text-slate-400 hover:text-amber-300"
+                title="Reset Crop to Fit"
+              >
+                <RotateCcw className="w-3 h-3" />
+              </button>
+            </>
+          )}
+
+          {/* Remove Media */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               setActiveMedia(null);
             }}
-            className="px-2 py-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white text-[10px] font-medium border border-white/20 transition-colors shadow-lg backdrop-blur-md"
+            className="p-1 rounded hover:bg-rose-600 text-slate-300 hover:text-white transition-colors"
             title="Remove Media from Stage"
           >
-            ✕
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -800,6 +1069,78 @@ export const StagePreview: React.FC = () => {
                   <Crop className="w-3 h-3 text-amber-400" />
                   <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
                 </button>
+
+                {/* Additional Crop & Zoom Controls */}
+                {(mediaFitMode === "cover" || mediaZoom > 1) && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleMediaZoomOut}
+                      disabled={mediaZoom <= 1}
+                      className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                      title="Zoom Out"
+                    >
+                      <ZoomOut className="w-3 h-3" />
+                    </button>
+                    <span className="text-[10px] font-mono font-bold text-slate-200">
+                      {Math.round(mediaZoom * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleMediaZoomIn}
+                      disabled={mediaZoom >= 3}
+                      className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                      title="Zoom In"
+                    >
+                      <ZoomIn className="w-3 h-3" />
+                    </button>
+
+                    <div className="flex items-center gap-0.5 bg-white/5 rounded border border-white/10 px-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleMediaCropPreset("top")}
+                        className={cn(
+                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Show Top / Letterhead"
+                      >
+                        Top
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMediaCropPreset("center")}
+                        className={cn(
+                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          mediaPanY === 0 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Center Alignment"
+                      >
+                        Mid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMediaCropPreset("bottom")}
+                        className={cn(
+                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Show Bottom / Signatures"
+                      >
+                        Btm
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleResetMediaTransform}
+                      className="p-1 rounded text-slate-400 hover:text-amber-300"
+                      title="Reset Crop to Fit"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                    </button>
+                  </>
+                )}
 
                 {/* Auto-Repeat Toggle Button for Video */}
                 {activeMedia.type === "video" && (

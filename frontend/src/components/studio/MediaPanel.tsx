@@ -19,19 +19,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { useStudioStore } from "@/stores/studio.store";
+import { useStudioStore, MediaFileItem } from "@/stores/studio.store";
 import { StageOverlayAsset } from "@/types";
 import { cn } from "@/lib/utils";
-
-interface MediaFileItem {
-  id: string;
-  name: string;
-  type: "video" | "audio" | "pdf" | "image";
-  duration: string;
-  durationSeconds?: number;
-  url: string;
-  isUploaded?: boolean;
-}
 
 interface MediaPanelProps {
   studioId?: string;
@@ -45,41 +35,58 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     activeStageOverlay,
     setStageOverlay,
     saveToOverlayHistory,
+    mediaLibrary,
+    addMediaLibraryItem,
+    removeMediaLibraryItem,
   } = useStudioStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [autoRepeat, setAutoRepeat] = useState(true);
 
-  const [mediaList, setMediaList] = useState<MediaFileItem[]>([
-    {
-      id: "media-countdown",
-      name: "Intro_Countdown_30s.mp4",
-      type: "video",
-      duration: "00:30",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    },
-    {
-      id: "media-keynote-clip",
-      name: "Product_Demo_Highlights.mp4",
-      type: "video",
-      duration: "01:15",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    },
-    {
-      id: "media-slides",
-      name: "Product_Architecture_2026.pdf",
-      type: "pdf",
-      duration: "18 slides",
-      url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-    },
-    {
-      id: "media-lofi",
-      name: "Background_Lofi_Stream.mp3",
-      type: "audio",
-      duration: "03:45",
-      url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
-    },
-  ]);
+  const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
+    return mediaLibrary && mediaLibrary.length > 0 ? mediaLibrary : [
+      {
+        id: "media-countdown",
+        name: "Intro_Countdown_30s.mp4",
+        type: "video",
+        duration: "00:30",
+        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+      },
+      {
+        id: "media-keynote-clip",
+        name: "Product_Demo_Highlights.mp4",
+        type: "video",
+        duration: "01:15",
+        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      },
+      {
+        id: "media-slides",
+        name: "Product_Architecture_2026.pdf",
+        type: "pdf",
+        duration: "18 slides",
+        url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+      },
+      {
+        id: "media-lofi",
+        name: "Background_Lofi_Stream.mp3",
+        type: "audio",
+        duration: "03:45",
+        url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
+      },
+    ];
+  });
+
+  React.useEffect(() => {
+    if (mediaLibrary && mediaLibrary.length > 0) {
+      setMediaList((prev) => {
+        const prevIds = new Set(prev.map((p) => p.id));
+        const newOnes = mediaLibrary.filter((m) => !prevIds.has(m.id));
+        if (newOnes.length > 0) return [...newOnes, ...prev];
+        return prev;
+      });
+    }
+  }, [mediaLibrary]);
+
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,7 +103,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
 
     const currentTotalVideoSec = uploadedVideos.reduce((acc, item) => {
       if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
-      const parts = item.duration.split(":");
+      const parts = (item.duration || "").split(":");
       if (parts.length === 2) {
         const m = parseInt(parts[0], 10);
         const s = parseInt(parts[1], 10);
@@ -224,6 +231,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     };
 
     setMediaList((prev) => [newItem, ...prev]);
+    addMediaLibraryItem(newItem);
 
     // Background upload to backend MinIO/Local API
     setIsUploading(true);
@@ -352,6 +360,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     if (activeMedia?.id === id) setActiveMedia(null);
     if (activeStageOverlay?.id === id) setStageOverlay(null);
     setMediaList((prev) => prev.filter((m) => m.id !== id));
+    removeMediaLibraryItem(id);
 
     const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
     try {
@@ -370,7 +379,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
 
   const totalVideoDurationSec = uploadedVideos.reduce((acc, item) => {
     if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
-    const parts = item.duration.split(":");
+    const parts = (item.duration || "").split(":");
     if (parts.length === 2) {
       const m = parseInt(parts[0], 10);
       const s = parseInt(parts[1], 10);
