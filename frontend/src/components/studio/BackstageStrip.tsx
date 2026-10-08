@@ -223,42 +223,57 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
               )}
             </div>
 
-            {/* Hover Stage Action Overlay */}
-            <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-10 pointer-events-none">
+            {/* Hover Stage Action Overlay (StreamYard 'Add to stage' & 'Remove' style) */}
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-10 pointer-events-none">
               <span
                 className={cn(
-                  "px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-lg flex items-center gap-1",
+                  "px-3 py-1 rounded-md text-[11px] font-bold shadow-lg transition-transform group-hover:scale-105",
                   isOnStage
-                    ? "bg-rose-600 text-white"
-                    : "bg-indigo-600 text-white"
+                    ? "bg-[#8cb4f5] text-[#0a1128] font-black shadow-[0_2px_10px_rgba(0,0,0,0.5)]"
+                    : "bg-[#1b1c2b] text-white border border-white/20 shadow-xl"
                 )}
               >
-                {isOnStage ? "Remove from Stream" : "+ Add to Stream"}
+                {isOnStage ? "Remove" : "Add to stage"}
               </span>
             </div>
           </div>
         );
       })}
 
-      {/* Shared Active Media Card (Slides / Screen Share / Video Clip) */}
+      {/* Shared Active Media / Slide Deck Card */}
       {activeMedia && (
         <div
           onClick={() => setActiveMedia(null)}
-          className="group relative w-36 sm:w-44 h-20 sm:h-22 rounded-xl border border-cyan-500/80 bg-cyan-950/20 overflow-hidden shrink-0 cursor-pointer shadow-lg hover:border-cyan-400 transition-all"
-          title="Click to remove presentation/media from stream"
+          className="group relative w-36 sm:w-44 h-20 sm:h-22 rounded-xl border border-indigo-500/80 bg-[#121324] overflow-hidden shrink-0 cursor-pointer shadow-lg hover:border-indigo-400 transition-all"
+          title="Click to remove presentation/media from stage"
         >
-          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-            <Presentation className="w-6 h-6 text-cyan-400 mb-1" />
+          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-2 text-center">
+            <Presentation className="w-5 h-5 text-indigo-400 mb-0.5" />
+            <span className="text-[10px] font-semibold text-slate-200 line-clamp-1">
+              {activeMedia.name || "Presentation Slide"}
+            </span>
           </div>
-          <div className="absolute top-1.5 left-1.5 z-20 px-1.5 py-0.5 rounded bg-cyan-500/20 border border-cyan-500/40 text-[9px] font-bold text-cyan-300">
-            Media
+
+          {/* Top-right menu indicator */}
+          <div className="absolute top-1 right-1 z-20">
+            <span className="p-0.5 rounded bg-black/60 text-slate-400">
+              <MoreVertical className="w-3 h-3" />
+            </span>
           </div>
-          <div className="absolute bottom-1 left-1.5 right-1.5 z-20 truncate text-[10px] font-semibold text-white bg-black/80 px-2 py-0.5 rounded">
-            {activeMedia.name || "Presentation Slide"}
+
+          {/* Bottom StreamYard Slide Navigation Pill on Card */}
+          <div className="absolute bottom-1 inset-x-1.5 z-20 flex items-center justify-between bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-white/10 text-[9px]">
+            <span className="font-semibold text-slate-300">Slide 1 ▾</span>
+            <div className="flex items-center gap-1 text-slate-400">
+              <span className="hover:text-white px-0.5">‹</span>
+              <span className="hover:text-white px-0.5">›</span>
+            </div>
           </div>
-          <div className="absolute inset-0 bg-rose-950/80 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-30">
-            <span className="text-[10px] font-bold text-rose-300 flex items-center gap-1">
-              <X className="w-3.5 h-3.5" /> Remove Media
+
+          {/* Hover Remove Pill */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-30">
+            <span className="px-3 py-1 rounded-md text-[11px] font-black bg-[#8cb4f5] text-[#0a1128] shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
+              Remove
             </span>
           </div>
         </div>

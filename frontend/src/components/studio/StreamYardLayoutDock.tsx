@@ -63,8 +63,10 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
         className
       )}
     >
-      <div className="flex items-center gap-1 sm:gap-1.5 bg-[#0e0f18]/90 border border-white/10 backdrop-blur-xl px-2 py-1 rounded-xl shadow-2xl">
-        {/* 1. Solo Speaker */}
+      <div className="flex flex-col items-center gap-1.5 bg-[#0e0f18]/90 border border-white/10 backdrop-blur-xl px-2 py-1.5 rounded-xl shadow-2xl">
+        {/* Row 1: Primary Broadcast Layouts */}
+        <div className="flex items-center gap-1 sm:gap-1.5">
+          {/* 1. Solo Speaker */}
         <button
           type="button"
           onClick={() => handleSelectLayout("solo")}
@@ -239,125 +241,43 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
           </div>
         </button>
 
-        {/* 7. Presentation Deck (Slide focus + bottom strip) */}
+        {/* 7. Fullscreen / Cinema */}
         <button
           type="button"
-          onClick={() => handleSelectLayout("presentation")}
+          onClick={() => handleSelectLayout("cinema")}
           className={cn(
             "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
-            activeLayout === "presentation"
+            activeLayout === "cinema"
               ? "bg-indigo-600/30 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] ring-1 ring-indigo-500/50"
               : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
           )}
-          aria-label="Presentation"
+          aria-label="Fullscreen"
         >
-          {/* Slide deck on top, speaker row bottom */}
-          <div className="w-5 h-4 rounded-[3px] border border-current p-[1px] flex flex-col gap-[1px]">
-            <div className="w-full flex-[2.2] bg-current/45 rounded-[1px] flex items-center justify-center">
-              <span className="text-[7px] font-mono leading-none">■</span>
-            </div>
-            <div className="w-full flex-1 flex gap-[1px]">
-              <div className="flex-1 bg-current/25 rounded-[1px]" />
-              <div className="flex-1 bg-current/25 rounded-[1px]" />
-            </div>
-          </div>
-          {/* Tooltip */}
+          <Maximize2 className="w-4 h-4 text-slate-300 group-hover:text-white transition-colors" />
           <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
-            Presentation
+            Fullscreen
             <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
           </div>
         </button>
 
-        {/* 8. Picture in Picture (PiP) */}
+        {/* 8. Expand Extra Layouts Drawer (Chevron Up/Down Button - Blue when open) */}
         <button
           type="button"
-          onClick={() => handleSelectLayout("pip")}
+          onClick={() => setIsMoreOpen(!isMoreOpen)}
           className={cn(
-            "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
-            activeLayout === "pip"
-              ? "bg-indigo-600/30 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] ring-1 ring-indigo-500/50"
-              : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+            "group relative flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-lg border transition-all duration-150",
+            isMoreOpen || ["presentation", "pip", "screen-speaker", "six-grid", "stacked"].includes(activeLayout)
+              ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_14px_rgba(99,102,241,0.6)]"
+              : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/15"
           )}
-          aria-label="Picture in Picture"
+          title={isMoreOpen ? "Collapse extra layouts" : "Expand extra layout presets"}
         >
-          {/* PiP icon */}
-          <div className="w-5 h-4 rounded-[3px] border border-current relative p-[1px]">
-            <div className="w-full h-full bg-current/20 rounded-[1px]" />
-            <div className="absolute bottom-[2px] right-[2px] w-2 h-1.5 bg-current opacity-90 rounded-[1px]" />
-          </div>
-          {/* Tooltip */}
+          <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", isMoreOpen ? "rotate-180 text-white" : "text-slate-400 group-hover:text-white")} />
           <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
-            Picture in Picture
+            {isMoreOpen ? "Hide extra" : "More layouts"}
             <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
           </div>
         </button>
-
-        {/* 9. More Layouts Dropdown (Chevron) */}
-        <div className="relative" ref={moreRef}>
-          <button
-            type="button"
-            onClick={() => setIsMoreOpen(!isMoreOpen)}
-            className={cn(
-              "group relative flex items-center justify-center w-6 h-7 sm:w-7 sm:h-8 rounded-lg border transition-all duration-150",
-              isMoreOpen || ["cinema", "stacked", "six-grid"].includes(activeLayout)
-                ? "bg-indigo-600/30 border-indigo-400 text-white"
-                : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10"
-            )}
-            title="More broadcast layouts"
-          >
-            <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", isMoreOpen && "rotate-180")} />
-          </button>
-
-          {isMoreOpen && (
-            <div className="absolute bottom-full mb-2.5 left-1/2 -translate-x-1/2 w-48 bg-[#121320] border border-white/15 rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95">
-              <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                More Layouts
-              </div>
-              <button
-                type="button"
-                onClick={() => handleSelectLayout("cinema")}
-                className={cn(
-                  "w-full px-3 py-2 text-xs flex items-center justify-between text-left transition-colors",
-                  activeLayout === "cinema" ? "bg-indigo-600/20 text-indigo-300 font-semibold" : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Cinema Fullscreen</span>
-                </div>
-                {activeLayout === "cinema" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectLayout("stacked")}
-                className={cn(
-                  "w-full px-3 py-2 text-xs flex items-center justify-between text-left transition-colors",
-                  activeLayout === "stacked" ? "bg-indigo-600/20 text-indigo-300 font-semibold" : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Rows className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Stacked Vertical</span>
-                </div>
-                {activeLayout === "stacked" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectLayout("six-grid")}
-                className={cn(
-                  "w-full px-3 py-2 text-xs flex items-center justify-between text-left transition-colors",
-                  activeLayout === "six-grid" ? "bg-indigo-600/20 text-indigo-300 font-semibold" : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Grid3X3 className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>6-Tile Grid (3x2)</span>
-                </div>
-                {activeLayout === "six-grid" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-              </button>
-            </div>
-          )}
-        </div>
 
         {/* Divider */}
         <div className="w-px h-5 bg-white/15 mx-0.5" />
@@ -408,6 +328,135 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
             <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
           </div>
         </button>
+      </div>
+
+        {/* Row 2: Expanded Extra Broadcast Layouts Drawer (StreamYard Parity) */}
+        {isMoreOpen && (
+          <div className="flex items-center gap-1 sm:gap-1.5 pt-1.5 border-t border-white/10 w-full justify-center animate-in fade-in slide-in-from-top-1 duration-150">
+            {/* 1. Presentation Deck (Slide focus + bottom strip) */}
+            <button
+              type="button"
+              onClick={() => handleSelectLayout("presentation")}
+              className={cn(
+                "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
+                activeLayout === "presentation"
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] ring-1 ring-indigo-500/50"
+                  : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+              )}
+              aria-label="Presentation Deck"
+            >
+              <div className="w-5 h-4 rounded-[3px] border border-current p-[1px] flex flex-col gap-[1px]">
+                <div className="w-full flex-[2.2] bg-current/45 rounded-[1px] flex items-center justify-center">
+                  <span className="text-[7px] font-mono leading-none">■</span>
+                </div>
+                <div className="w-full flex-1 flex gap-[1px]">
+                  <div className="flex-1 bg-current/25 rounded-[1px]" />
+                  <div className="flex-1 bg-current/25 rounded-[1px]" />
+                </div>
+              </div>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                Presentation Deck
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+              </div>
+            </button>
+
+            {/* 2. Picture in Picture (PiP) */}
+            <button
+              type="button"
+              onClick={() => handleSelectLayout("pip")}
+              className={cn(
+                "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
+                activeLayout === "pip"
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] ring-1 ring-indigo-500/50"
+                  : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+              )}
+              aria-label="Picture in Picture"
+            >
+              <div className="w-5 h-4 rounded-[3px] border border-current relative p-[1px]">
+                <div className="w-full h-full bg-current/20 rounded-[1px]" />
+                <div className="absolute bottom-[2px] right-[2px] w-2 h-1.5 bg-current opacity-90 rounded-[1px]" />
+              </div>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                Picture in Picture
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+              </div>
+            </button>
+
+            {/* 3. Screen + Speaker (Hero Screen Split) */}
+            <button
+              type="button"
+              onClick={() => handleSelectLayout("screen-speaker")}
+              className={cn(
+                "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
+                activeLayout === "screen-speaker"
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] ring-1 ring-indigo-500/50"
+                  : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+              )}
+              aria-label="Screen + Speaker"
+            >
+              <div className="w-5 h-4 rounded-[3px] border border-current p-[1px] flex gap-[1px]">
+                <div className="flex-1 h-full flex flex-col items-center justify-center bg-current/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />
+                </div>
+                <div className="flex-[2] h-full bg-current/40 rounded-[1px] flex items-center justify-center">
+                  <span className="text-[6px] font-mono">■</span>
+                </div>
+              </div>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                Screen + Speaker
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+              </div>
+            </button>
+
+            {/* 4. 6-Tile Grid (3x2) */}
+            <button
+              type="button"
+              onClick={() => handleSelectLayout("six-grid")}
+              className={cn(
+                "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
+                activeLayout === "six-grid"
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] ring-1 ring-indigo-500/50"
+                  : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+              )}
+              aria-label="6-Tile Grid"
+            >
+              <div className="w-5 h-4 rounded-[3px] border border-current grid grid-cols-3 grid-rows-2 gap-[1px] p-[1px]">
+                <div className="bg-current/30 rounded-[1px]" />
+                <div className="bg-current/30 rounded-[1px]" />
+                <div className="bg-current/30 rounded-[1px]" />
+                <div className="bg-current/30 rounded-[1px]" />
+                <div className="bg-current/30 rounded-[1px]" />
+                <div className="bg-current/30 rounded-[1px]" />
+              </div>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                6-Tile Grid
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+              </div>
+            </button>
+
+            {/* 5. Stacked Vertical */}
+            <button
+              type="button"
+              onClick={() => handleSelectLayout("stacked")}
+              className={cn(
+                "group relative flex items-center justify-center w-8 h-7 sm:w-9 sm:h-8 rounded-lg border transition-all duration-150",
+                activeLayout === "stacked"
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)] ring-1 ring-indigo-500/50"
+                  : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+              )}
+              aria-label="Stacked Vertical"
+            >
+              <div className="w-5 h-4 rounded-[3px] border border-current flex flex-col divide-y divide-current overflow-hidden">
+                <div className="flex-1 bg-current/25" />
+                <div className="flex-1 bg-current/25" />
+              </div>
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                Stacked Vertical
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+              </div>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
