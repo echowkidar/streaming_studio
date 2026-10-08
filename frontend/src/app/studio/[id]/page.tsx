@@ -59,6 +59,7 @@ import { useAuthStore } from "@/stores/auth.store";
 import { StreamMonitor } from "@/components/studio/StreamMonitor";
 import { StreamYardLayoutDock } from "@/components/studio/StreamYardLayoutDock";
 import { BackstageStrip } from "@/components/studio/BackstageStrip";
+import { ScenesPanel } from "@/components/studio/ScenesPanel";
 import { Track } from "livekit-client";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
@@ -128,6 +129,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     activeMedia,
     isDrawingMode,
     setIsDrawingMode,
+    isScenesPanelOpen,
+    toggleScenesPanel,
   } = useStudioStore();
 
   const compositeVideoPubRef = React.useRef<any>(null);
@@ -1046,6 +1049,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         )}
         {/* Left Vertical Icon Bar */}
         <div className="w-12 sm:w-14 border-r border-white/5 bg-[#090910] flex flex-col items-center py-2 sm:py-3 gap-1.5 sm:gap-2 z-30 shrink-0">
+          {/* StreamYard Scenes Toggle Button */}
+          <button
+            onClick={toggleScenesPanel}
+            className={cn(
+              "w-10 h-10 rounded-xl flex flex-col items-center justify-center transition-all group relative",
+              isScenesPanelOpen
+                ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 shadow-md shadow-indigo-500/10"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+            )}
+            title="StreamYard Scenes (1-click stage presets)"
+          >
+            <Layers className="w-4 h-4 text-cyan-400" />
+            <span className="text-[8px] mt-0.5 font-medium">Scenes</span>
+          </button>
+
           {[
             { id: "chat" as const, icon: MessageSquare, label: "Chat" },
             { id: "brand" as const, icon: Palette, label: "Brand" },
@@ -1082,6 +1100,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
             </button>
           </div>
         </div>
+
+        {/* StreamYard Left Scenes Panel (Collapsible) */}
+        <ScenesPanel />
 
         {/* Tab Drawer Panel: Docked flex child on desktop so it dynamically resizes stage preview without overlapping */}
         <AnimatePresence initial={false}>

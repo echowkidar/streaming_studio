@@ -49,6 +49,28 @@ export interface CustomLayoutConfig {
   showSpeakerBorder: boolean;
 }
 
+export interface StudioScene {
+  id: string;
+  name: string;
+  layout: StudioLayout;
+  splitRatio?: number;
+  onStageParticipantIds?: (string | number)[];
+  activeMedia?: {
+    id: string;
+    name: string;
+    type: "video" | "audio" | "image" | "pdf";
+    url: string;
+    loop?: boolean;
+  } | null;
+  backgroundUrl?: string | null;
+  backgroundType?: "image" | "video";
+  overlayUrl?: string | null;
+  stageOverlay?: StageOverlayAsset | null;
+  banner?: LowerThirdBanner | null;
+  heroParticipantId?: string | number | null;
+  thumbnailColor?: string;
+}
+
 export interface CommentConfig {
   position: "bottom" | "top";
   theme: "default" | "minimal" | "classic" | "bubble";
@@ -250,6 +272,20 @@ interface StudioState {
   stopRecord: () => void;
   pauseRecord: () => void;
   resumeRecord: () => void;
+
+  // StreamYard Scenes System
+  scenes: StudioScene[];
+  activeSceneId: string | null;
+  isScenesPanelOpen: boolean;
+  setScenesPanelOpen: (open: boolean) => void;
+  toggleScenesPanel: () => void;
+  addScene: (scene?: Partial<StudioScene>) => StudioScene;
+  updateScene: (id: string, updates: Partial<StudioScene>) => void;
+  deleteScene: (id: string) => void;
+  duplicateScene: (id: string) => void;
+  reorderScenes: (fromIdx: number, toIdx: number) => void;
+  switchScene: (id: string) => void;
+  saveCurrentStageToScene: (id: string) => void;
 }
 
 export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
@@ -341,6 +377,60 @@ export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
   },
 ];
 
+export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
+  {
+    id: "scene-flyer",
+    name: "Show Flyer",
+    layout: "cinema",
+    splitRatio: 50,
+    backgroundUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80",
+    backgroundType: "image",
+    thumbnailColor: "#6366f1",
+  },
+  {
+    id: "scene-host",
+    name: "Host Only",
+    layout: "solo",
+    splitRatio: 50,
+    thumbnailColor: "#3b82f6",
+  },
+  {
+    id: "scene-intro",
+    name: "Intro Video",
+    layout: "cinema",
+    splitRatio: 50,
+    activeMedia: {
+      id: "media-intro-1",
+      name: "Intro Video.mp4",
+      type: "video",
+      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      loop: true,
+    },
+    thumbnailColor: "#ec4899",
+  },
+  {
+    id: "scene-interview",
+    name: "Interview Split",
+    layout: "cropped",
+    splitRatio: 50,
+    thumbnailColor: "#10b981",
+  },
+  {
+    id: "scene-speaker",
+    name: "Speaker View",
+    layout: "speaker-large",
+    splitRatio: 65,
+    thumbnailColor: "#8b5cf6",
+  },
+  {
+    id: "scene-slide",
+    name: "Presentation Deck",
+    layout: "presentation",
+    splitRatio: 68,
+    thumbnailColor: "#06b6d4",
+  },
+];
+
 const STUDIO_LAYOUT_STORAGE_KEY = "livestudio_saved_studio_layout";
 
 interface SavedStudioLayoutState {
@@ -364,6 +454,9 @@ interface SavedStudioLayoutState {
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
   commentConfig?: CommentConfig;
+  scenes?: StudioScene[];
+  activeSceneId?: string | null;
+  isScenesPanelOpen?: boolean;
 }
 
 function loadSavedStudioLayout(): SavedStudioLayoutState {
@@ -1015,4 +1108,139 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setDrawingWidth: (width) => set({ drawingWidth: width }),
   isDrawingVisible: true,
   setIsDrawingVisible: (visible) => set({ isDrawingVisible: visible }),
+
+  // StreamYard Scenes System
+  scenes: savedLayout.scenes && savedLayout.scenes.length > 0 ? savedLayout.scenes : DEFAULT_STUDIO_SCENES,
+  activeSceneId: savedLayout.activeSceneId || "scene-host",
+  isScenesPanelOpen: savedLayout.isScenesPanelOpen !== undefined ? savedLayout.isScenesPanelOpen : true,
+  setScenesPanelOpen: (open) => {
+    persistStudioLayout({ isScenesPanelOpen: open });
+    set({ isScenesPanelOpen: open });
+  },
+  toggleScenesPanel: () =>
+    set((s) => {
+      const next = !s.isScenesPanelOpen;
+      persistStudioLayout({ isScenesPanelOpen: next });
+      return { isScenesPanelOpen: next };
+    }),
+  addScene: (custom) => {
+    const state = get();
+    const count = state.scenes.length + 1;
+    const onStageIds = state.participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+    const newScene: StudioScene = {
+      id: `scene-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: custom?.name || `Scene ${count}`,
+      layout: custom?.layout || state.activeLayout || "solo",
+      splitRatio: custom?.splitRatio || state.layoutSplitRatio || 50,
+      onStageParticipantIds: custom?.onStageParticipantIds || onStageIds,
+      activeMedia: custom?.activeMedia !== undefined ? custom?.activeMedia : state.activeMedia,
+      backgroundUrl: custom?.backgroundUrl !== undefined ? custom?.backgroundUrl : state.activeBackgroundUrl,
+      backgroundType: custom?.backgroundType || state.activeBackgroundType,
+      stageOverlay: custom?.stageOverlay !== undefined ? custom?.stageOverlay : state.activeStageOverlay,
+      banner: custom?.banner !== undefined ? custom?.banner : state.activeBanner,
+      thumbnailColor: custom?.thumbnailColor || "#6366f1",
+      ...custom,
+    };
+    const nextScenes = [...state.scenes, newScene];
+    persistStudioLayout({ scenes: nextScenes, activeSceneId: newScene.id });
+    set({ scenes: nextScenes, activeSceneId: newScene.id });
+    return newScene;
+  },
+  updateScene: (id, updates) => {
+    const next = get().scenes.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    persistStudioLayout({ scenes: next });
+    set({ scenes: next });
+  },
+  deleteScene: (id) => {
+    const current = get().scenes;
+    if (current.length <= 1) return;
+    const next = current.filter((s) => s.id !== id);
+    const nextActive = get().activeSceneId === id ? next[0].id : get().activeSceneId;
+    persistStudioLayout({ scenes: next, activeSceneId: nextActive });
+    set({ scenes: next, activeSceneId: nextActive });
+  },
+  duplicateScene: (id) => {
+    const scene = get().scenes.find((s) => s.id === id);
+    if (!scene) return;
+    const copy: StudioScene = {
+      ...scene,
+      id: `scene-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: `${scene.name} (Copy)`,
+    };
+    const next = [...get().scenes, copy];
+    persistStudioLayout({ scenes: next });
+    set({ scenes: next });
+  },
+  reorderScenes: (fromIdx, toIdx) => {
+    const list = [...get().scenes];
+    const [moved] = list.splice(fromIdx, 1);
+    list.splice(toIdx, 0, moved);
+    persistStudioLayout({ scenes: list });
+    set({ scenes: list });
+  },
+  switchScene: (id) => {
+    const scene = get().scenes.find((s) => s.id === id);
+    if (!scene) return;
+
+    persistStudioLayout({ activeSceneId: id });
+    set({ activeSceneId: id });
+
+    // 1. Layout
+    get().setLayout(scene.layout);
+    if (scene.splitRatio) {
+      get().setLayoutSplitRatio(scene.splitRatio);
+    }
+
+    // 2. Onstage Participants
+    if (scene.onStageParticipantIds && scene.onStageParticipantIds.length > 0) {
+      const targetIds = new Set(scene.onStageParticipantIds.map(String));
+      const nextParticipants = get().participants.map((p) => ({
+        ...p,
+        status: (targetIds.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as any,
+      }));
+      set({ participants: nextParticipants });
+    }
+
+    // 3. Active Media
+    if (scene.activeMedia !== undefined) {
+      get().setActiveMedia(scene.activeMedia);
+    }
+
+    // 4. Background
+    if (scene.backgroundUrl !== undefined) {
+      get().setBackground(scene.backgroundUrl, scene.backgroundType);
+    }
+
+    // 5. Overlay
+    if (scene.stageOverlay !== undefined) {
+      get().setStageOverlay(scene.stageOverlay);
+    } else if (scene.overlayUrl !== undefined) {
+      get().setOverlay(scene.overlayUrl);
+    }
+
+    // 6. Banner
+    if (scene.banner !== undefined) {
+      get().setBanner(scene.banner);
+    }
+
+    // 7. Spotlight
+    if (scene.heroParticipantId !== undefined) {
+      get().setCustomLayoutConfig({ heroParticipantId: scene.heroParticipantId });
+    }
+  },
+  saveCurrentStageToScene: (id) => {
+    const state = get();
+    const onStageIds = state.participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+    get().updateScene(id, {
+      layout: state.activeLayout,
+      splitRatio: state.layoutSplitRatio,
+      onStageParticipantIds: onStageIds,
+      activeMedia: state.activeMedia,
+      backgroundUrl: state.activeBackgroundUrl,
+      backgroundType: state.activeBackgroundType,
+      stageOverlay: state.activeStageOverlay,
+      banner: state.activeBanner,
+      heroParticipantId: state.customLayoutConfig?.heroParticipantId,
+    });
+  },
 }));
