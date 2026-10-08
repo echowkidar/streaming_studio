@@ -147,11 +147,13 @@ export function getDefaultSlotBounds(
 
     case "podcast":
     case "interview": {
+      const col0W = Math.max(15, safeSplit - 4);
+      const col1W = Math.max(15, 100 - safeSplit - 4);
       if (index === 0) {
         return {
-          x: 4,
+          x: 3,
           y: 6,
-          width: 44,
+          width: col0W,
           height: 88,
           zIndex: 10,
           isLockedRatio: true,
@@ -159,9 +161,9 @@ export function getDefaultSlotBounds(
       }
       if (index === 1) {
         return {
-          x: 52,
+          x: Math.min(85, safeSplit + 1),
           y: 6,
-          width: 44,
+          width: col1W,
           height: 88,
           zIndex: 10,
           isLockedRatio: true,
@@ -170,11 +172,13 @@ export function getDefaultSlotBounds(
       // Fallback for > 2
       const col = index % 2;
       const row = Math.floor(index / 2);
+      const totalRows = Math.ceil(effectiveTotal / 2);
+      const h = Math.max(20, (88 - (totalRows - 1) * 3) / totalRows);
       return {
-        x: col === 0 ? 4 : 52,
-        y: row === 0 ? 6 : 52,
-        width: 44,
-        height: 42,
+        x: col === 0 ? 3 : Math.min(85, safeSplit + 1),
+        y: 6 + row * (h + 3),
+        width: col === 0 ? col0W : col1W,
+        height: h,
         zIndex: 10,
         isLockedRatio: true,
       };
@@ -182,9 +186,9 @@ export function getDefaultSlotBounds(
 
     case "speaker-large":
     case "screen-speaker": {
-      const heroSplit = splitRatio ? Math.max(40, Math.min(80, splitRatio)) : 68;
+      const heroSplit = splitRatio ? Math.max(25, Math.min(85, splitRatio)) : 65;
       if (index === 0) {
-        return { x: 2, y: 4, width: Math.max(30, heroSplit - 3), height: 92, zIndex: 10, isLockedRatio: true };
+        return { x: 2, y: 4, width: Math.max(20, heroSplit - 3), height: 92, zIndex: 10, isLockedRatio: true };
       }
       const sideTotal = Math.max(2, effectiveTotal - 1);
       const sideHeight = Math.max(20, (92 - (sideTotal - 1) * 3) / sideTotal);
@@ -201,10 +205,10 @@ export function getDefaultSlotBounds(
     }
 
     case "presentation": {
-      // Presentation deck has primary focus area on top/center (68% height), speakers on bottom strip
-      const presSplit = splitRatio ? Math.max(40, Math.min(80, splitRatio)) : 68;
+      // Presentation deck has primary focus area on top/center, speakers on bottom strip
+      const presSplit = splitRatio ? Math.max(25, Math.min(85, splitRatio)) : 68;
       if (index === 0) {
-        return { x: 2, y: 2, width: 96, height: Math.max(30, presSplit - 3), zIndex: 10, isLockedRatio: true };
+        return { x: 2, y: 2, width: 96, height: Math.max(20, presSplit - 3), zIndex: 10, isLockedRatio: true };
       }
       const bottomTotal = Math.max(2, effectiveTotal - 1);
       const botW = Math.max(15, Math.min(30, (96 - (bottomTotal - 1) * 2) / bottomTotal));
@@ -235,10 +239,12 @@ export function getDefaultSlotBounds(
     case "four-grid": {
       const col = index % 2;
       const row = Math.floor(index / 2);
+      const col0W = Math.max(15, safeSplit - 3);
+      const col1W = Math.max(15, 100 - safeSplit - 3);
       return {
-        x: col === 0 ? 2 : 51,
+        x: col === 0 ? 2 : Math.min(85, safeSplit + 1),
         y: row === 0 ? 3 : 51,
-        width: 47,
+        width: col === 0 ? col0W : col1W,
         height: 46,
         zIndex: 10,
         isLockedRatio: true,
@@ -246,7 +252,7 @@ export function getDefaultSlotBounds(
     }
 
     case "three-equal": {
-      const col0W = Math.max(15, Math.min(55, Number(((safeSplit / 50) * 31).toFixed(1))));
+      const col0W = Math.max(15, Math.min(65, safeSplit - 3));
       const remainingW = 96 - col0W - 4;
       const otherW = Number((remainingW / 2).toFixed(1));
       if (index === 0) {

@@ -164,15 +164,13 @@ export const StagePreview: React.FC = () => {
         if (!stageContainerRef.current) return;
         const rect = stageContainerRef.current.getBoundingClientRect();
         if (orientation === "vertical") {
-          const availableWidth = Math.max(10, rect.width - 24);
-          const relativeX = moveEvt.clientX - (rect.left + 12);
-          const percentage = Math.round((relativeX / availableWidth) * 100);
+          const relativeX = moveEvt.clientX - rect.left;
+          const percentage = Math.round((relativeX / rect.width) * 100);
           const clamped = Math.max(20, Math.min(80, percentage));
           setLayoutSplitRatio(clamped);
         } else {
-          const availableHeight = Math.max(10, rect.height - 24);
-          const relativeY = moveEvt.clientY - (rect.top + 12);
-          const percentage = Math.round((relativeY / availableHeight) * 100);
+          const relativeY = moveEvt.clientY - rect.top;
+          const percentage = Math.round((relativeY / rect.height) * 100);
           const clamped = Math.max(20, Math.min(80, percentage));
           setLayoutSplitRatio(clamped);
         }
@@ -205,15 +203,13 @@ export const StagePreview: React.FC = () => {
         if (!stageContainerRef.current) return;
         const rect = stageContainerRef.current.getBoundingClientRect();
         if (orientation === "vertical") {
-          const availableWidth = Math.max(10, rect.width - 24);
-          const relativeX = touchEvt.touches[0].clientX - (rect.left + 12);
-          const percentage = Math.round((relativeX / availableWidth) * 100);
+          const relativeX = touchEvt.touches[0].clientX - rect.left;
+          const percentage = Math.round((relativeX / rect.width) * 100);
           const clamped = Math.max(20, Math.min(80, percentage));
           setLayoutSplitRatio(clamped);
         } else {
-          const availableHeight = Math.max(10, rect.height - 24);
-          const relativeY = touchEvt.touches[0].clientY - (rect.top + 12);
-          const percentage = Math.round((relativeY / availableHeight) * 100);
+          const relativeY = touchEvt.touches[0].clientY - rect.top;
+          const percentage = Math.round((relativeY / rect.height) * 100);
           const clamped = Math.max(20, Math.min(80, percentage));
           setLayoutSplitRatio(clamped);
         }
@@ -877,12 +873,11 @@ export const StagePreview: React.FC = () => {
                 layoutSplitRatio,
                 customLayoutConfig
               );
+          const isPip = activeLayout === "pip" || customLayoutConfig.mode === "pip";
           const bounds: ParticipantBounds =
-            participantBounds[p.id] ||
-            (p.isLocal && participantBounds["local-host"]) ||
-            (p.isScreen && participantBounds["screen-share"]) ||
-            participantBounds[`slot-${idx}`] ||
-            defaultBounds;
+            isPip && participantBounds[p.id]
+              ? participantBounds[p.id]
+              : defaultBounds;
           const isSelected = String(selectedParticipantId) === String(p.id);
           const isThisDragging = activeDragState?.participantId === p.id;
 
@@ -1150,20 +1145,34 @@ export const StagePreview: React.FC = () => {
 
         {/* StreamYard Responsive Stage Split Dividers (Multi-Layout Parity) */}
         {!hasVisualMedia && (() => {
-          // 1. Two-Column Side-by-Side Dividers
-          const isTwoCol =
+          const isVerticalSplit =
             activeLayout === "side-by-side" ||
             activeLayout === "podcast" ||
             activeLayout === "interview" ||
-            (activeLayout === "custom" && customLayoutConfig?.mode === "side-by-side");
-          if (isTwoCol) {
+            activeLayout === "speaker-large" ||
+            activeLayout === "screen-speaker" ||
+            activeLayout === "three-equal" ||
+            activeLayout === "four-grid" ||
+            (activeLayout === "custom" &&
+              (customLayoutConfig?.mode === "side-by-side" ||
+                customLayoutConfig?.mode === "podcast" ||
+                customLayoutConfig?.mode === "hero-side" ||
+                customLayoutConfig?.mode === "three-equal"));
+
+          const isHorizontalSplit =
+            activeLayout === "stacked" ||
+            activeLayout === "presentation" ||
+            (activeLayout === "custom" &&
+              (customLayoutConfig?.mode === "stacked" || customLayoutConfig?.mode === "hero-bottom"));
+
+          if (isVerticalSplit) {
             return (
               <div
                 style={{ left: `${layoutSplitRatio}%` }}
-                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
+                className="absolute top-1 bottom-1 -ml-3 w-6 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
                 onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
                 onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
-                title={`Drag to resize columns (${layoutSplitRatio}% / ${100 - layoutSplitRatio}%)`}
+                title={`Drag to resize stage split (${layoutSplitRatio}% / ${100 - layoutSplitRatio}%)`}
               >
                 <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
                 <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
@@ -1174,89 +1183,14 @@ export const StagePreview: React.FC = () => {
             );
           }
 
-          // 2. Three-Column Trio Divider
-          const isThreeCol =
-            activeLayout === "three-equal" ||
-            (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
-          if (isThreeCol) {
-            const col0W = Math.max(15, Math.min(55, Number(((layoutSplitRatio / 50) * 31).toFixed(1))));
-            const dividerX = 2 + col0W + 1;
-            return (
-              <div
-                style={{ left: `${dividerX}%` }}
-                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
-                onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
-                onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
-                title={`Drag to resize primary column (${Math.round((layoutSplitRatio / 50) * 31)}% width)`}
-              >
-                <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-                <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
-                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
-                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
-                </div>
-              </div>
-            );
-          }
-
-          // 3. Hero + Side Speaker Divider
-          const isHeroSide =
-            activeLayout === "speaker-large" ||
-            activeLayout === "screen-speaker" ||
-            (activeLayout === "custom" && customLayoutConfig?.mode === "hero-side");
-          if (isHeroSide) {
-            const heroSplit = Math.max(40, Math.min(80, layoutSplitRatio));
-            return (
-              <div
-                style={{ left: `${heroSplit}%` }}
-                className="absolute top-1 bottom-1 -ml-2.5 w-5 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
-                onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
-                onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
-                title={`Drag to resize hero speaker (${heroSplit}% / ${100 - heroSplit}%)`}
-              >
-                <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-                <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
-                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
-                  <span className="w-2.5 h-0.5 bg-slate-300 rounded-full" />
-                </div>
-              </div>
-            );
-          }
-
-          // 4. Stacked Vertical Divider
-          const isStacked =
-            activeLayout === "stacked" ||
-            (activeLayout === "custom" && customLayoutConfig?.mode === "stacked");
-          if (isStacked) {
+          if (isHorizontalSplit) {
             return (
               <div
                 style={{ top: `${layoutSplitRatio}%` }}
-                className="absolute left-1 right-1 -mt-2.5 h-5 flex items-center justify-center cursor-row-resize select-none group/divider z-30 pointer-events-auto"
+                className="absolute left-1 right-1 -mt-3 h-6 flex items-center justify-center cursor-row-resize select-none group/divider z-30 pointer-events-auto"
                 onMouseDown={(e) => handleSplitDividerMouseDown(e, "horizontal")}
                 onTouchStart={(e) => handleSplitDividerTouchStart(e, "horizontal")}
-                title={`Drag to resize vertical split (${layoutSplitRatio}% top / ${100 - layoutSplitRatio}% bottom)`}
-              >
-                <div className="h-1 w-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:h-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-                <div className="absolute h-5 w-9 rounded-full bg-black/90 border border-white/25 flex items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
-                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
-                  <span className="h-2.5 w-0.5 bg-slate-300 rounded-full" />
-                </div>
-              </div>
-            );
-          }
-
-          // 5. Presentation / Hero-Bottom Divider
-          const isPresentation =
-            activeLayout === "presentation" ||
-            (activeLayout === "custom" && customLayoutConfig?.mode === "hero-bottom");
-          if (isPresentation) {
-            const presSplit = Math.max(40, Math.min(80, layoutSplitRatio));
-            return (
-              <div
-                style={{ top: `${presSplit}%` }}
-                className="absolute left-1 right-1 -mt-2.5 h-5 flex items-center justify-center cursor-row-resize select-none group/divider z-30 pointer-events-auto"
-                onMouseDown={(e) => handleSplitDividerMouseDown(e, "horizontal")}
-                onTouchStart={(e) => handleSplitDividerTouchStart(e, "horizontal")}
-                title={`Drag to resize presentation area (${presSplit}% height)`}
+                title={`Drag to resize stage split (${layoutSplitRatio}% top / ${100 - layoutSplitRatio}% bottom)`}
               >
                 <div className="h-1 w-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:h-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
                 <div className="absolute h-5 w-9 rounded-full bg-black/90 border border-white/25 flex items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">
@@ -1358,12 +1292,20 @@ export const StagePreview: React.FC = () => {
       {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover/stage:opacity-100 hover:opacity-100 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto">
           <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
-          {[
-            { label: "50:50", ratio: 50 },
-            { label: "65:35", ratio: 65 },
-            { label: "35:65", ratio: 35 },
-            { label: "75:25", ratio: 75 },
-          ].map((preset) => (
+          {(activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal")
+            ? [
+                { label: "1:1:1", ratio: 33 },
+                { label: "50:25", ratio: 50 },
+                { label: "60:20", ratio: 60 },
+                { label: "25:37", ratio: 25 },
+              ]
+            : [
+                { label: "50:50", ratio: 50 },
+                { label: "65:35", ratio: 65 },
+                { label: "35:65", ratio: 35 },
+                { label: "75:25", ratio: 75 },
+              ]
+          ).map((preset) => (
             <button
               key={preset.label}
               onClick={(e) => {

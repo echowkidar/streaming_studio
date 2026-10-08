@@ -397,8 +397,19 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   activeLayout: savedLayout.activeLayout || "speaker-large",
   setLayout: (layout) => {
-    persistStudioLayout({ activeLayout: layout, participantBounds: {} });
-    set({ activeLayout: layout, participantBounds: {}, selectedParticipantId: null });
+    const defaultSplit =
+      layout === "three-equal"
+        ? 33
+        : layout === "speaker-large" || layout === "presentation"
+        ? 65
+        : 50;
+    persistStudioLayout({ activeLayout: layout, layoutSplitRatio: defaultSplit, participantBounds: {} });
+    set({
+      activeLayout: layout,
+      layoutSplitRatio: defaultSplit,
+      participantBounds: {},
+      selectedParticipantId: null,
+    });
   },
   layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
   setLayoutSplitRatio: (ratio) => {
