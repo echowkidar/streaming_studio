@@ -47,9 +47,20 @@ export const LayoutSelector: React.FC = () => {
       ),
     },
     {
+      id: "cropped",
+      name: "Cropped Layout",
+      desc: "Full-height vertical fill (StreamYard)",
+      icon: (active) => (
+        <div className="w-full h-8 rounded border border-current flex divide-x divide-current overflow-hidden">
+          <div className="flex-1 h-full bg-current opacity-40" />
+          <div className="flex-1 h-full bg-current opacity-40" />
+        </div>
+      ),
+    },
+    {
       id: "side-by-side",
-      name: "Side by Side",
-      desc: "Two equal 50/50 splits",
+      name: "Fit Layout (16:9)",
+      desc: "Two 16:9 boxes with background visible",
       icon: (active) => (
         <div className="w-full h-8 rounded border border-current p-0.5 flex gap-1">
           <div className="flex-1 h-full bg-current opacity-30 rounded-xs" />
@@ -215,6 +226,8 @@ export const LayoutSelector: React.FC = () => {
                   const presetToCustomMode: Record<string, CustomCompositionMode> = {
                     "solo": "solo",
                     "side-by-side": "side-by-side",
+                    "fit": "side-by-side",
+                    "cropped": "podcast",
                     "stacked": "stacked",
                     "speaker-large": "hero-side",
                     "presentation": "hero-bottom",

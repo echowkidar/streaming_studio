@@ -13,8 +13,10 @@ export function getLayoutExpectedSlots(
     case "screen-full":
       return 1;
     case "side-by-side":
+    case "fit":
     case "stacked":
     case "podcast":
+    case "cropped":
     case "interview":
     case "pip":
     case "screen-speaker":
@@ -65,13 +67,22 @@ export function getDefaultSlotBounds(
       return { x: 74, y: topOffset, width: 22, height: 20, zIndex: 25, isLockedRatio: true };
     }
 
-    case "side-by-side": {
+    case "side-by-side":
+    case "fit": {
+      // StreamYard Fit Layout: 16:9 widescreen boxes side-by-side with canvas background visible
+      const col0W = Math.max(15, safeSplit - 3);
+      const col1W = Math.max(15, 100 - safeSplit - 3);
+      // In 16:9 canvas, 16:9 video height% equals width%
+      const h0 = Math.min(58, Math.max(26, col0W * 1.02));
+      const h1 = Math.min(58, Math.max(26, col1W * 1.02));
+      const y0 = Math.max(4, (100 - h0) / 2);
+      const y1 = Math.max(4, (100 - h1) / 2);
       if (index === 0) {
         return {
           x: 2,
-          y: 4,
-          width: Math.max(15, safeSplit - 3),
-          height: 92,
+          y: y0,
+          width: col0W,
+          height: h0,
           zIndex: 10,
           isLockedRatio: true,
         };
@@ -79,9 +90,9 @@ export function getDefaultSlotBounds(
       if (index === 1) {
         return {
           x: Math.min(85, safeSplit + 1),
-          y: 4,
-          width: Math.max(15, 100 - safeSplit - 3),
-          height: 92,
+          y: y1,
+          width: col1W,
+          height: h1,
           zIndex: 10,
           isLockedRatio: true,
         };
@@ -145,26 +156,28 @@ export function getDefaultSlotBounds(
       return { x: 80, y: 80, width: 18, height: 16, zIndex: 25, isLockedRatio: true };
     }
 
+    case "cropped":
     case "podcast":
     case "interview": {
-      const col0W = Math.max(15, safeSplit - 4);
-      const col1W = Math.max(15, 100 - safeSplit - 4);
+      // StreamYard "Cropped layout": 100% full height bleed from top to bottom, vertical center-crop
+      const col0W = Math.max(15, safeSplit - 0.25);
+      const col1W = Math.max(15, 100 - safeSplit - 0.25);
       if (index === 0) {
         return {
-          x: 3,
-          y: 6,
+          x: 0,
+          y: 0,
           width: col0W,
-          height: 88,
+          height: 100,
           zIndex: 10,
           isLockedRatio: true,
         };
       }
       if (index === 1) {
         return {
-          x: Math.min(85, safeSplit + 1),
-          y: 6,
+          x: Math.min(85, safeSplit + 0.25),
+          y: 0,
           width: col1W,
-          height: 88,
+          height: 100,
           zIndex: 10,
           isLockedRatio: true,
         };
@@ -173,10 +186,10 @@ export function getDefaultSlotBounds(
       const col = index % 2;
       const row = Math.floor(index / 2);
       const totalRows = Math.ceil(effectiveTotal / 2);
-      const h = Math.max(20, (88 - (totalRows - 1) * 3) / totalRows);
+      const h = Math.max(20, (100 - (totalRows - 1) * 1) / totalRows);
       return {
-        x: col === 0 ? 3 : Math.min(85, safeSplit + 1),
-        y: 6 + row * (h + 3),
+        x: col === 0 ? 0 : Math.min(85, safeSplit + 0.25),
+        y: row * (h + 1),
         width: col === 0 ? col0W : col1W,
         height: h,
         zIndex: 10,

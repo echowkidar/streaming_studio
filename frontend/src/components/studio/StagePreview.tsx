@@ -920,7 +920,7 @@ export const StagePreview: React.FC = () => {
                   isSelected
                     ? "border-indigo-400"
                     : "border-white/10 hover:border-indigo-400/50",
-                  activeLayout === "custom" ? "" : "rounded-2xl"
+                  activeLayout === "custom" || activeLayout === "cropped" || activeLayout === "podcast" ? "" : "rounded-2xl"
                 )}
                 style={{
                   borderRadius:
@@ -1147,6 +1147,8 @@ export const StagePreview: React.FC = () => {
         {!hasVisualMedia && (() => {
           const isVerticalSplit =
             activeLayout === "side-by-side" ||
+            activeLayout === "fit" ||
+            activeLayout === "cropped" ||
             activeLayout === "podcast" ||
             activeLayout === "interview" ||
             activeLayout === "speaker-large" ||
@@ -1155,6 +1157,8 @@ export const StagePreview: React.FC = () => {
             activeLayout === "four-grid" ||
             (activeLayout === "custom" &&
               (customLayoutConfig?.mode === "side-by-side" ||
+                customLayoutConfig?.mode === "fit" ||
+                customLayoutConfig?.mode === "cropped" ||
                 customLayoutConfig?.mode === "podcast" ||
                 customLayoutConfig?.mode === "hero-side" ||
                 customLayoutConfig?.mode === "three-equal"));

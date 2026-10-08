@@ -57,6 +57,8 @@ import { cn, formatDuration } from "@/lib/utils";
 import { useLiveKit } from "@/hooks/useLiveKit";
 import { useAuthStore } from "@/stores/auth.store";
 import { StreamMonitor } from "@/components/studio/StreamMonitor";
+import { StreamYardLayoutDock } from "@/components/studio/StreamYardLayoutDock";
+import { BackstageStrip } from "@/components/studio/BackstageStrip";
 import { Track } from "livekit-client";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
@@ -1198,6 +1200,17 @@ export default function StudioPage({ params }: { params: { id: string } }) {
           <div className="flex-1 min-h-0 relative flex items-center justify-center">
             <StagePreview />
           </div>
+
+          {/* StreamYard Directly Under-Stage Horizontal Layout Toolbar */}
+          <StreamYardLayoutDock
+            onOpenCustomizer={() => setActiveTab(activeTab === "layout" ? null : "layout")}
+          />
+
+          {/* StreamYard Under-Stage Horizontal Participant & Media Strip */}
+          <BackstageStrip
+            onInviteGuest={handleCopyInvite}
+            onShareScreen={toggleScreenShare}
+          />
 
           {/* Bottom Floating Control Bar */}
           <div className="h-14 sm:h-16 mt-2 sm:mt-3 rounded-xl sm:rounded-2xl bg-[#0c0c14]/95 border border-white/10 backdrop-blur-xl flex items-center justify-between px-2 sm:px-6 shrink-0 shadow-2xl overflow-x-auto custom-scrollbar">

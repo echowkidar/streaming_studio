@@ -4,6 +4,8 @@ import { Participant, LowerThirdBanner, ChatMessage, Destination, StageOverlayAs
 export type StudioLayout = 
   | "solo" 
   | "side-by-side" 
+  | "fit"
+  | "cropped"
   | "speaker-large" 
   | "three-equal" 
   | "four-grid" 
@@ -28,6 +30,8 @@ export type CustomCompositionMode =
   | "cinema"
   | "solo"
   | "side-by-side"
+  | "fit"
+  | "cropped"
   | "stacked"
   | "three-equal"
   | "six-grid"
@@ -385,7 +389,7 @@ function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
 
 const savedLayout = loadSavedStudioLayout();
 
-export const useStudioStore = create<StudioState>((set) => ({
+export const useStudioStore = create<StudioState>((set, get) => ({
   broadcastTitle: "Product Launch & Live Q&A Keynote",
   isLive: false,
   isRecording: false,
@@ -403,12 +407,41 @@ export const useStudioStore = create<StudioState>((set) => ({
         : layout === "speaker-large" || layout === "presentation"
         ? 65
         : 50;
-    persistStudioLayout({ activeLayout: layout, layoutSplitRatio: defaultSplit, participantBounds: {} });
+
+    const currentTransforms = { ...get().tileTransforms };
+    let hasTransformChanges = false;
+    if (layout === "cropped" || layout === "podcast") {
+      get().participants.forEach((p) => {
+        if (!p.isScreen) {
+          currentTransforms[p.id] = {
+            ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+            fitMode: "cover",
+          };
+          hasTransformChanges = true;
+        }
+      });
+    } else if (layout === "side-by-side" || layout === "fit") {
+      get().participants.forEach((p) => {
+        currentTransforms[p.id] = {
+          ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+          fitMode: "contain",
+        };
+        hasTransformChanges = true;
+      });
+    }
+
+    persistStudioLayout({
+      activeLayout: layout,
+      layoutSplitRatio: defaultSplit,
+      participantBounds: {},
+      ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
+    });
     set({
       activeLayout: layout,
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
       selectedParticipantId: null,
+      ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
     });
   },
   layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
