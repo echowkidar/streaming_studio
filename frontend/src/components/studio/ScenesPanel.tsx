@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useStudioStore, StudioScene, StudioLayout } from "@/stores/studio.store";
 import { cn } from "@/lib/utils";
 import {
@@ -228,6 +229,19 @@ const LAYOUT_PRESETS: LayoutPresetOption[] = [
       </div>
     ),
   },
+  {
+    id: "custom",
+    title: "Custom Layout",
+    desc: "Design custom composition & gaps",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-indigo-500/40 p-0.5 flex items-center justify-center">
+        <div className="w-full h-full bg-indigo-500/25 rounded-xs flex items-center justify-center gap-1">
+          <Sparkles className="w-3 h-3 text-cyan-300" />
+          <span className="text-[7px] font-mono text-cyan-200 uppercase font-bold tracking-wider">Custom</span>
+        </div>
+      </div>
+    ),
+  },
 ];
 
 interface ScenesPanelProps {
@@ -235,6 +249,11 @@ interface ScenesPanelProps {
 }
 
 export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const {
     scenes,
     activeSceneId,
@@ -1164,9 +1183,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
       </div>
 
       {/* ─── Change Scene Layout Modal ─────────────────────────────────── */}
-      {layoutPickerSceneId && (
+      {isMounted && layoutPickerSceneId && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={() => setLayoutPickerSceneId(null)}
         >
           <div
@@ -1237,13 +1256,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ─── Media / Presentation Attachment Modal ───────────────────────── */}
-      {mediaPickerSceneId && (
+      {isMounted && mediaPickerSceneId && createPortal(
         <div 
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={() => setMediaPickerSceneId(null)}
         >
           <div 
@@ -1267,8 +1287,6 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
             <p className="text-[11px] text-slate-400 my-2.5 leading-relaxed">
               Attach presentation slides (PDF), demo video, or stream media that automatically goes live when switching to this scene.
             </p>
-
-
 
             <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar my-2 pr-1">
               {/* Option to clear media */}
@@ -1443,13 +1461,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               )}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ─── StreamYard-Grade "New Scene" Layout Selection Modal ───────── */}
-      {isAddModalOpen && (
+      {isMounted && isAddModalOpen && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
           onClick={() => setIsAddModalOpen(false)}
         >
           <div
@@ -1641,7 +1660,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </aside>
   );

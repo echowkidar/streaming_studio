@@ -131,7 +131,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setIsDrawingMode,
     isScenesPanelOpen,
     toggleScenesPanel,
+    initStudio,
   } = useStudioStore();
+
+  // Initialize studio-scoped persistent state & isolated scenes
+  useEffect(() => {
+    if (params.id) {
+      initStudio(params.id);
+    }
+  }, [params.id, initStudio]);
 
   const compositeVideoPubRef = React.useRef<any>(null);
   const compositeAudioPubRef = React.useRef<any>(null);

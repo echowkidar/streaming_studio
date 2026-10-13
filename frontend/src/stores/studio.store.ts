@@ -291,6 +291,10 @@ interface StudioState {
   reorderScenes: (fromIdx: number, toIdx: number) => void;
   switchScene: (id: string) => void;
   saveCurrentStageToScene: (id: string) => void;
+
+  // Studio Scoping & Isolation
+  currentStudioId: string | null;
+  initStudio: (studioId: string) => void;
 }
 
 export const DEFAULT_STUDIO_OVERLAYS: StageOverlayAsset[] = [
@@ -516,6 +520,7 @@ function persistMediaLibrary(items: MediaFileItem[]) {
 }
 
 interface SavedStudioLayoutState {
+  broadcastTitle?: string;
   activeLayout?: StudioLayout;
   layoutSplitRatio?: number;
   participantBounds?: Record<string, ParticipantBounds>;
@@ -542,10 +547,22 @@ interface SavedStudioLayoutState {
   activeMedia?: MediaFileItem | null;
 }
 
-function loadSavedStudioLayout(): SavedStudioLayoutState {
+let activeStudioId: string | null = null;
+
+function getStudioStorageKey(studioId?: string | null): string {
+  const id = studioId || activeStudioId;
+  return id ? `livestudio_studio_${id}` : STUDIO_LAYOUT_STORAGE_KEY;
+}
+
+function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayoutState {
   if (typeof window === "undefined") return {};
   try {
-    const raw = localStorage.getItem(STUDIO_LAYOUT_STORAGE_KEY);
+    const key = getStudioStorageKey(studioId);
+    let raw = localStorage.getItem(key);
+    // Backward compatibility: fallback to global key if studio-specific key not yet saved
+    if (!raw && (!studioId || studioId.includes("main"))) {
+      raw = localStorage.getItem(STUDIO_LAYOUT_STORAGE_KEY);
+    }
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -555,9 +572,10 @@ function loadSavedStudioLayout(): SavedStudioLayoutState {
 function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
   if (typeof window === "undefined") return;
   try {
-    const current = loadSavedStudioLayout();
+    const key = getStudioStorageKey(activeStudioId);
+    const current = loadSavedStudioLayout(activeStudioId);
     const next = { ...current, ...updates };
-    localStorage.setItem(STUDIO_LAYOUT_STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(key, JSON.stringify(next));
   } catch {
     // ignore
   }
@@ -576,6 +594,196 @@ const initialActiveSceneId: string | null =
 const initialActiveScene = initialScenes.find((s) => s.id === initialActiveSceneId);
 
 export const useStudioStore = create<StudioState>((set, get) => ({
+  currentStudioId: null,
+  initStudio: (studioId: string) => {
+    activeStudioId = studioId;
+    const saved = loadSavedStudioLayout(studioId);
+    const hasSavedScenes = Boolean(saved.scenes && saved.scenes.length > 0);
+
+    let studioScenes: StudioScene[] = DEFAULT_STUDIO_SCENES;
+    let studioLayout: StudioLayout = "speaker-large";
+    let studioTitle = "Live Production Studio";
+    let studioSplitRatio = 65;
+
+    if (studioId.includes("podcast")) {
+      studioTitle = "Weekly Video Podcast";
+      studioLayout = "cropped";
+      studioSplitRatio = 50;
+      studioScenes = [
+        {
+          id: "podcast-intro",
+          name: "Podcast Intro",
+          layout: "solo",
+          splitRatio: 50,
+          thumbnailColor: "#3b82f6",
+        },
+        {
+          id: "podcast-split",
+          name: "Co-Host Split",
+          layout: "cropped",
+          splitRatio: 50,
+          thumbnailColor: "#10b981",
+        },
+        {
+          id: "podcast-sponsor",
+          name: "Sponsor Graphic",
+          layout: "presentation",
+          splitRatio: 65,
+          activeMedia: {
+            id: "media-sponsor-pdf",
+            name: "Sponsor_Pitch_2026.pdf",
+            type: "pdf",
+            url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+          },
+          thumbnailColor: "#f59e0b",
+        },
+        {
+          id: "podcast-panel",
+          name: "Guest Panel",
+          layout: "three-equal",
+          splitRatio: 33,
+          thumbnailColor: "#8b5cf6",
+        },
+      ];
+    } else if (studioId.includes("qna") || studioId.includes("ama")) {
+      studioTitle = "Community AMA & Live Q&A";
+      studioLayout = "presentation";
+      studioSplitRatio = 65;
+      studioScenes = [
+        {
+          id: "qna-welcome",
+          name: "AMA Welcome",
+          layout: "solo",
+          splitRatio: 50,
+          thumbnailColor: "#6366f1",
+        },
+        {
+          id: "qna-screen",
+          name: "Q&A Screen Share",
+          layout: "presentation",
+          splitRatio: 65,
+          thumbnailColor: "#06b6d4",
+        },
+        {
+          id: "qna-discussion",
+          name: "Audience Discussion",
+          layout: "side-by-side",
+          splitRatio: 50,
+          thumbnailColor: "#ec4899",
+        },
+      ];
+    } else if (studioId.includes("main")) {
+      studioTitle = "Main Keynote & Townhall Studio";
+      studioLayout = "speaker-large";
+      studioSplitRatio = 65;
+      studioScenes = DEFAULT_STUDIO_SCENES;
+    } else {
+      studioTitle = "Custom Studio Stage";
+      studioLayout = "side-by-side";
+      studioSplitRatio = 50;
+      studioScenes = [
+        {
+          id: `custom-scene-host-${studioId}`,
+          name: "Host Solo",
+          layout: "solo",
+          splitRatio: 50,
+          thumbnailColor: "#6366f1",
+        },
+        {
+          id: `custom-scene-split-${studioId}`,
+          name: "Two Participants",
+          layout: "side-by-side",
+          splitRatio: 50,
+          thumbnailColor: "#10b981",
+        },
+        {
+          id: `custom-scene-screen-${studioId}`,
+          name: "Screen Share",
+          layout: "presentation",
+          splitRatio: 65,
+          thumbnailColor: "#06b6d4",
+        },
+      ];
+    }
+
+    const nextScenes = hasSavedScenes ? saved.scenes! : studioScenes;
+    const nextActiveSceneId =
+      saved.activeSceneId && nextScenes.some((s) => s.id === saved.activeSceneId)
+        ? saved.activeSceneId
+        : nextScenes[0]?.id || null;
+
+    const nextActiveScene = nextScenes.find((s) => s.id === nextActiveSceneId);
+    const nextLayout = saved.activeLayout || nextActiveScene?.layout || studioLayout;
+    const nextSplit = saved.layoutSplitRatio || nextActiveScene?.splitRatio || studioSplitRatio;
+
+    set({
+      currentStudioId: studioId,
+      broadcastTitle: saved.broadcastTitle || studioTitle,
+      activeLayout: nextLayout,
+      layoutSplitRatio: nextSplit,
+      customLayoutConfig: saved.customLayoutConfig || {
+        mode: "solo",
+        columns: 2,
+        gap: 8,
+        borderRadius: 16,
+        heroParticipantId: null,
+        pipPosition: "bottom-right",
+        pipSize: "medium",
+        highlightColor: "#6366f1",
+        showSpeakerBorder: true,
+      },
+      participantBounds: saved.participantBounds || {},
+      isFreeformMode: saved.isFreeformMode ?? false,
+      tileTransforms: saved.tileTransforms || {},
+      activeBackgroundUrl: saved.activeBackgroundUrl ?? null,
+      activeBackgroundType: saved.activeBackgroundType || "image",
+      activeThemeColor: saved.activeThemeColor || "#6366f1",
+      tickerText: saved.tickerText || "LIVE UPDATES • Welcome to our live broadcast!",
+      showTicker: saved.showTicker ?? false,
+      tickerConfig: saved.tickerConfig || {
+        text: "LIVE UPDATES • Welcome to our live broadcast!",
+        textColor: "#ffffff",
+        bgColor: "#0f172a",
+        badgeBgColor: "#ef4444",
+        badgeText: "BREAKING",
+        fontSize: "medium",
+        speed: "normal",
+      },
+      logoConfig: saved.logoConfig || {
+        text: "LIVESTUDIO",
+        textColor: "#ffffff",
+        bgColor: "rgba(0, 0, 0, 0.4)",
+        bgOpacity: 40,
+        isTransparentBg: false,
+        fontSize: "medium",
+        position: "top-right",
+      },
+      showLogo: saved.showLogo ?? true,
+      logoPosition: saved.logoPosition || "top-right",
+      activeBanner: saved.activeBanner ?? null,
+      chromaKeyConfig: saved.chromaKeyConfig || {
+        enabled: false,
+        keyColor: "#00b140",
+        tolerance: 0.35,
+        smoothness: 0.1,
+        spill: 0.2,
+        backdropType: "stage",
+      },
+      activeStageOverlay: saved.activeStageOverlay ?? null,
+      activeOverlayUrl: saved.activeOverlayUrl ?? null,
+      commentConfig: saved.commentConfig || {
+        position: "bottom",
+        theme: "default",
+        showAvatar: true,
+        fontSize: "medium",
+      },
+      scenes: nextScenes,
+      activeSceneId: nextActiveSceneId,
+      activeMedia: saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null,
+      isScenesPanelOpen: saved.isScenesPanelOpen ?? true,
+    });
+  },
+
   broadcastTitle: "Product Launch & Live Q&A Keynote",
   isLive: false,
   isRecording: false,
@@ -1275,7 +1483,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   stopRecord: () => set({ isRecording: false, isRecordPaused: false }),
   pauseRecord: () => set({ isRecordPaused: true }),
   resumeRecord: () => set({ isRecordPaused: false }),
-  setTitle: (title) => set({ broadcastTitle: title }),
+  setTitle: (title) => {
+    set({ broadcastTitle: title });
+    persistStudioLayout({ broadcastTitle: title });
+  },
 
   // Telestrator & On-Screen Drawing Tool
   isDrawingMode: false,
