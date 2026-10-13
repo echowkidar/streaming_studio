@@ -918,8 +918,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           <h2 className="text-xs font-bold text-white tracking-wider">Scenes</h2>
           <div className="group/help relative">
             <HelpCircle className="w-3 h-3 text-slate-400 cursor-pointer hover:text-white" />
-            <div className="absolute left-0 top-full mt-1.5 w-44 bg-[#141525] border border-white/15 p-2 rounded-lg text-[10px] text-slate-300 shadow-2xl opacity-0 group-hover/help:opacity-100 pointer-events-none transition-opacity z-50">
-              Scenes allow you to prepare stage layouts, speakers, and media in advance and switch during your stream with 1 click.
+            <div className="absolute left-0 top-full mt-1.5 w-48 bg-[#141525] border border-white/15 p-2 rounded-lg text-[10px] text-slate-300 shadow-2xl opacity-0 group-hover/help:opacity-100 pointer-events-none transition-opacity z-50">
+              Scenes allow you to prepare stage layouts, speakers, and media in advance. All additions, deletions, reorders, and layout adjustments auto-save instantly.
             </div>
           </div>
           <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
@@ -927,15 +927,25 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           </span>
         </div>
 
-        {/* Collapse Button */}
-        <button
-          type="button"
-          onClick={toggleScenesPanel}
-          className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-          title="Collapse Scenes Panel"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <div
+            className="flex items-center gap-1 text-[9px] text-emerald-400/90 font-medium bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded select-none"
+            title="All scene changes are automatically saved to this studio"
+          >
+            <Check className="w-2.5 h-2.5 text-emerald-400" />
+            <span>Auto-Saved</span>
+          </div>
+
+          {/* Collapse Button */}
+          <button
+            type="button"
+            onClick={toggleScenesPanel}
+            className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            title="Collapse Scenes Panel"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* ─── "+ New scene" Button ──────────────────────────── */}

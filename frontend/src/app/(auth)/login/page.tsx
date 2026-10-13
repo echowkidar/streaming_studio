@@ -1,15 +1,19 @@
 "use client";
 
 import { Mail, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { useAuthStore } from "@/stores/auth.store";
 import { apiRequest } from "@/lib/api";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawRedirect = searchParams?.get("redirect");
+  const targetUrl = rawRedirect && rawRedirect.startsWith("/") ? rawRedirect : "/studios";
+
   const { user, token, setUser, setToken } = useAuthStore();
 
   const [email, setEmail] = useState("");
@@ -20,9 +24,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (user && token) {
-      router.replace("/");
+      router.replace(targetUrl);
     }
-  }, [user, token, router]);
+  }, [user, token, router, targetUrl]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,7 +51,7 @@ export default function LoginPage() {
           role: res.data.user.role,
           createdAt: new Date().toISOString(),
         });
-        router.push("/");
+        router.replace(targetUrl);
       } else {
         setError(res.error || "Invalid email or password. Please try again.");
       }
@@ -167,5 +171,19 @@ export default function LoginPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="glass-strong rounded-2xl p-8 border-t border-white/20 text-center text-slate-400 text-xs">
+          Loading login session...
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

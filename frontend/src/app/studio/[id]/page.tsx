@@ -64,15 +64,26 @@ import { Track } from "livekit-client";
 
 export default function StudioPage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
+  const [mounted, setMounted] = useState(false);
   const hostName = user?.name || "Host";
 
-  const handleBack = () => {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-    } else {
-      router.push("/");
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Strict Host Auth Guard: Redirect unauthenticated visitors to login immediately
+  useEffect(() => {
+    if (mounted && !user && !token) {
+      router.replace(`/login?redirect=${encodeURIComponent(`/studio/${params.id}`)}`);
     }
+  }, [mounted, user, token, router, params.id]);
+
+  const handleBack = () => {
+    try {
+      disconnect();
+    } catch {}
+    router.replace(user ? "/studios" : "/login");
   };
 
   const cleanStudioId = params.id.replace(/^studio-/, "");
@@ -102,7 +113,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     participantName: hostName,
     identity: hostIdentity,
     role: "HOST",
-    autoConnect: true,
+    autoConnect: mounted && Boolean(user && token),
   });
 
   const {
@@ -187,24 +198,6 @@ export default function StudioPage({ params }: { params: { id: string } }) {
   const [isRegeneratingInvite, setIsRegeneratingInvite] = useState(false);
   const [resetSuccessMessage, setResetSuccessMessage] = useState(false);
 
-  // Check auth session safely without breaking browser history
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const authRaw = localStorage.getItem("livestudio_auth");
-      if (!authRaw) {
-        router.push("/login");
-        return;
-      }
-      try {
-        const parsed = JSON.parse(authRaw);
-        if (!parsed?.state?.user && !parsed?.state?.token) {
-          router.push("/login");
-        }
-      } catch {
-        router.push("/login");
-      }
-    }
-  }, [router]);
 
   // Live timer effect
   useEffect(() => {
@@ -771,6 +764,23 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       </div>
     </>
   );
+
+  // Guard: Never render host studio or controls until session is securely verified
+  if (!mounted || (!user && !token)) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#07070b]">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center shadow-lg shadow-indigo-500/20 animate-pulse">
+            <Video className="w-6 h-6 text-indigo-400" />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <span>Verifying studio credentials...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#07070b] overflow-hidden text-slate-200 select-none">
