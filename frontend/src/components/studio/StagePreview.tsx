@@ -35,7 +35,7 @@ import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
-import { getDefaultSlotBounds, getLayoutExpectedSlots } from "@/lib/layoutBounds";
+import { getDefaultSlotBounds, getLayoutExpectedSlots, calculateStageLayout } from "@/lib/layoutBounds";
 import { StageTelestrator } from "./StageTelestrator";
 
 export const StagePreview: React.FC = () => {
@@ -107,6 +107,11 @@ export const StagePreview: React.FC = () => {
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
+  const [mediaLoadError, setMediaLoadError] = useState(false);
+
+  React.useEffect(() => {
+    setMediaLoadError(false);
+  }, [activeMedia?.id, activeMedia?.url]);
 
   const handleToggleMediaCrop = () => {
     if (mediaFitMode === "contain") {
@@ -781,7 +786,22 @@ export const StagePreview: React.FC = () => {
           onTouchEnd={handleMediaPanTouchEnd}
           onWheel={handleMediaWheel}
         >
-          {activeMedia.type === "video" ? (
+          {mediaLoadError ? (
+            <div className="flex flex-col items-center justify-center p-6 text-center text-slate-400 gap-2.5 bg-black/90 w-full h-full">
+              <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
+                <Video className="w-6 h-6" />
+              </div>
+              <p className="text-xs font-semibold text-rose-300">Media source unavailable or expired</p>
+              <p className="text-[10px] text-slate-500 max-w-[220px] truncate">{activeMedia.name}</p>
+              <button
+                type="button"
+                onClick={() => setActiveMedia(null)}
+                className="mt-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-semibold transition-all shadow-md pointer-events-auto"
+              >
+                Remove from Stage
+              </button>
+            </div>
+          ) : activeMedia.type === "video" ? (
             <video
               id="livestudio-active-media-video"
               src={activeMedia.url}
@@ -791,6 +811,7 @@ export const StagePreview: React.FC = () => {
               loop={activeMedia.loop ?? true}
               muted={activeMedia.isMuted ?? false}
               crossOrigin="anonymous"
+              onError={() => setMediaLoadError(true)}
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
@@ -808,6 +829,7 @@ export const StagePreview: React.FC = () => {
               alt={activeMedia.name}
               crossOrigin="anonymous"
               draggable={false}
+              onError={() => setMediaLoadError(true)}
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
@@ -1091,10 +1113,21 @@ export const StagePreview: React.FC = () => {
       );
     }
 
+    // Calculate layout using StreamYard-grade layout engine
+    const stageLayoutResult = calculateStageLayout(
+      activeLayout,
+      orderedParticipants.length,
+      hasVisualMedia,
+      layoutSplitRatio,
+      customLayoutConfig
+    );
+
     const defaultMediaBounds: ParticipantBounds =
-      onStageParticipants.length === 0
-        ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
-        : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
+      stageLayoutResult.mediaBounds || (
+        onStageParticipants.length === 0
+          ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+          : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
+      );
     const mediaBounds: ParticipantBounds = participantBounds["active-media"] || defaultMediaBounds;
     const isMediaSelected = String(selectedParticipantId) === "active-media";
     const isMediaDragging = activeDragState?.participantId === "active-media";
@@ -1365,27 +1398,18 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
         {orderedParticipants.map((p, idx) => {
-          const defaultBounds = hasVisualMedia
-            ? {
-                x: 72,
-                y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, orderedParticipants.length))),
-                width: 26,
-                height: Math.min(92, Math.max(22, 88 / Math.max(1, orderedParticipants.length))),
-                zIndex: 10,
-                isLockedRatio: true,
-              }
-            : getDefaultSlotBounds(
-                activeLayout,
-                idx,
-                orderedParticipants.length,
-                layoutSplitRatio,
-                customLayoutConfig
-              );
+          const calculatedBounds = stageLayoutResult.participantBounds[idx] || getDefaultSlotBounds(
+            activeLayout,
+            idx,
+            orderedParticipants.length,
+            layoutSplitRatio,
+            customLayoutConfig
+          );
           const isPip = activeLayout === "pip" || customLayoutConfig.mode === "pip";
           const bounds: ParticipantBounds =
             isPip && participantBounds[p.id]
               ? participantBounds[p.id]
-              : defaultBounds;
+              : calculatedBounds;
           const isSelected = String(selectedParticipantId) === String(p.id);
           const isThisDragging = activeDragState?.participantId === p.id;
 
@@ -1578,8 +1602,8 @@ export const StagePreview: React.FC = () => {
           );
         })}
 
-        {/* Empty Guest Placeholder Slots (Only rendered in non-full-bleed layouts when capacity exceeds participants) */}
-        {!hasVisualMedia && !isFullBleedLayout && orderedParticipants.length < expectedSlots && (
+        {/* Empty Guest Placeholder Slots (Only rendered when 2+ participants are already arranged on stage) */}
+        {!hasVisualMedia && !isFullBleedLayout && orderedParticipants.length > 1 && orderedParticipants.length < expectedSlots && (
           <>
             {Array.from({ length: expectedSlots - orderedParticipants.length }).map((_, i) => {
               const slotIdx = orderedParticipants.length + i;
@@ -2058,7 +2082,10 @@ export const StagePreview: React.FC = () => {
 
       {/* Lower-Third Banner */}
       {activeBanner && activeBanner.isShowing && (
-        <div className="absolute bottom-10 left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className={cn(
+          "absolute left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300",
+          showTicker ? "bottom-16" : "bottom-10"
+        )}>
           <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
             <div className="w-2.5" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
             <div className="px-5 py-2.5">

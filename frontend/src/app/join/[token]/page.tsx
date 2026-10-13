@@ -37,7 +37,7 @@ import { useStudioStore } from "@/stores/studio.store";
 import { VideoTrackView } from "@/components/studio/VideoTrackView";
 import { AudioMeter } from "@/components/studio/AudioMeter";
 import { cn } from "@/lib/utils";
-import { getDefaultSlotBounds } from "@/lib/layoutBounds";
+import { getDefaultSlotBounds, calculateStageLayout } from "@/lib/layoutBounds";
 
 function GuestJoinContent({ params }: { params: { token: string } }) {
   const rawSplit = useStudioStore((s) => s.layoutSplitRatio);
@@ -45,6 +45,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const participantBounds = useStudioStore((s) => s.participantBounds) || {};
   const activeLayout = useStudioStore((s) => s.activeLayout) || "side-by-side";
   const activeMedia = useStudioStore((s) => s.activeMedia);
+  const customLayoutConfig = useStudioStore((s) => s.customLayoutConfig);
   const tileTransforms = useStudioStore((s) => s.tileTransforms) || {};
   const [displayName, setDisplayName] = useState("");
   const [micOn, setMicOn] = useState(true);
@@ -1174,100 +1175,105 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                       mobileViewMode === "fill" ? "hidden sm:block" : "block"
                     )}
                   >
-                    {/* Synchronized Stage Active Media (Video, Slides, PDF, Image) */}
-                    {activeMedia && (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf") && (() => {
-                      const defaultMediaBounds = onStageParticipants.length === 0
-                        ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
-                        : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true };
-                      const mBounds = participantBounds["active-media"] || defaultMediaBounds;
-                      const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || "contain";
-                      const mediaTf = tileTransforms["active-media"];
-                      const panX = mediaTf?.panX || 0;
-                      const panY = mediaTf?.panY || 0;
-                      const objX = Math.max(0, Math.min(100, 50 + panX));
-                      const objY = Math.max(0, Math.min(100, 50 + panY));
-                      const effObjX = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objX;
-                      const effObjY = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objY;
-                      const zoom = Math.max(1, mediaTf?.zoom || 1);
-
-                      return (
-                        <div
-                          key="guest-active-media"
-                          style={{
-                            position: "absolute",
-                            left: `${mBounds.x}%`,
-                            top: `${mBounds.y}%`,
-                            width: `${mBounds.width}%`,
-                            height: `${mBounds.height}%`,
-                            zIndex: mBounds.zIndex || 10,
-                            transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
-                          }}
-                          className="rounded-2xl overflow-hidden border border-indigo-500/40 bg-black/95 shadow-2xl flex items-center justify-center relative"
-                        >
-                          {activeMedia.type === "video" && (
-                            <video
-                              src={activeMedia.url}
-                              autoPlay
-                              playsInline
-                              controls
-                              loop={activeMedia.loop ?? true}
-                              muted={activeMedia.isMuted ?? false}
-                              style={{
-                                objectFit: mediaFit,
-                                objectPosition: `${effObjX}% ${effObjY}%`,
-                                transform: zoom > 1 ? `scale(${zoom})` : undefined,
-                                transformOrigin: `${effObjX}% ${effObjY}%`,
-                              }}
-                              className="w-full h-full"
-                            />
-                          )}
-                          {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
-                            <img
-                              src={activeMedia.url}
-                              alt={activeMedia.name}
-                              style={{
-                                objectFit: mediaFit,
-                                objectPosition: `${effObjX}% ${effObjY}%`,
-                                transform: zoom > 1 ? `scale(${zoom})` : undefined,
-                                transformOrigin: `${effObjX}% ${effObjY}%`,
-                              }}
-                              className="w-full h-full"
-                            />
-                          )}
-                          <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            <span className="truncate max-w-[150px]">{activeMedia.name}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {onStageParticipants.map((p, idx) => {
+                    {(() => {
                       const hasVisualMedia = Boolean(
                         activeMedia &&
                           (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
                       );
-                      const defaultBounds = hasVisualMedia
-                        ? {
-                            x: 72,
-                            y: Math.min(76, 4 + idx * Math.min(30, 88 / Math.max(1, onStageParticipants.length))),
-                            width: 26,
-                            height: Math.min(92, Math.max(22, 88 / Math.max(1, onStageParticipants.length))),
-                            zIndex: 10,
-                            isLockedRatio: true,
-                          }
-                        : getDefaultSlotBounds(
-                            activeLayout,
-                            idx,
-                            onStageParticipants.length,
-                            layoutSplitRatio
-                          );
-                      const bounds =
-                        participantBounds[p.id] ||
-                        (p.isLocal && participantBounds["local-host"]) ||
-                        (p.isScreen && participantBounds["screen-share"]) ||
-                        participantBounds[`slot-${idx}`] ||
-                        defaultBounds;
+                      const stageLayoutResult = calculateStageLayout(
+                        activeLayout,
+                        onStageParticipants.length,
+                        hasVisualMedia,
+                        layoutSplitRatio,
+                        customLayoutConfig
+                      );
+
+                      return (
+                        <>
+                          {/* Synchronized Stage Active Media (Video, Slides, PDF, Image) */}
+                          {hasVisualMedia && activeMedia && (() => {
+                            const defaultMediaBounds = stageLayoutResult.mediaBounds || (
+                              onStageParticipants.length === 0
+                                ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+                                : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
+                            );
+                            const mBounds = participantBounds["active-media"] || defaultMediaBounds;
+                            const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || "contain";
+                            const mediaTf = tileTransforms["active-media"];
+                            const panX = mediaTf?.panX || 0;
+                            const panY = mediaTf?.panY || 0;
+                            const objX = Math.max(0, Math.min(100, 50 + panX));
+                            const objY = Math.max(0, Math.min(100, 50 + panY));
+                            const effObjX = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objX;
+                            const effObjY = mediaFit === "contain" && (!mediaTf?.zoom || mediaTf.zoom === 1) ? 50 : objY;
+                            const zoom = Math.max(1, mediaTf?.zoom || 1);
+
+                            return (
+                              <div
+                                key="guest-active-media"
+                                style={{
+                                  position: "absolute",
+                                  left: `${mBounds.x}%`,
+                                  top: `${mBounds.y}%`,
+                                  width: `${mBounds.width}%`,
+                                  height: `${mBounds.height}%`,
+                                  zIndex: mBounds.zIndex || 10,
+                                  transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+                                }}
+                                className="rounded-2xl overflow-hidden border border-indigo-500/40 bg-black/95 shadow-2xl flex items-center justify-center relative"
+                              >
+                                {activeMedia.type === "video" && (
+                                  <video
+                                    src={activeMedia.url}
+                                    autoPlay
+                                    playsInline
+                                    controls
+                                    loop={activeMedia.loop ?? true}
+                                    muted={activeMedia.isMuted ?? false}
+                                    style={{
+                                      objectFit: mediaFit,
+                                      objectPosition: `${effObjX}% ${effObjY}%`,
+                                      transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                      transformOrigin: `${effObjX}% ${effObjY}%`,
+                                    }}
+                                    className="w-full h-full"
+                                  />
+                                )}
+                                {(activeMedia.type === "image" || activeMedia.type === "pdf") && (
+                                  <img
+                                    src={activeMedia.url}
+                                    alt={activeMedia.name}
+                                    style={{
+                                      objectFit: mediaFit,
+                                      objectPosition: `${effObjX}% ${effObjY}%`,
+                                      transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                      transformOrigin: `${effObjX}% ${effObjY}%`,
+                                    }}
+                                    className="w-full h-full"
+                                  />
+                                )}
+                                <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="truncate max-w-[150px]">{activeMedia.name}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {onStageParticipants.map((p, idx) => {
+                            const calculatedBounds = stageLayoutResult.participantBounds[idx] || getDefaultSlotBounds(
+                              activeLayout,
+                              idx,
+                              onStageParticipants.length,
+                              layoutSplitRatio,
+                              customLayoutConfig
+                            );
+                            const bounds =
+                              participantBounds[p.id] ||
+                              (p.isLocal && participantBounds["local-host"]) ||
+                              (p.isScreen && participantBounds["screen-share"]) ||
+                              participantBounds[`slot-${idx}`] ||
+                              calculatedBounds;
                       return (
                         <div
                           key={p.id}
@@ -1296,64 +1302,67 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                         </div>
                       );
                     })}
-                  </div>
-                </>
-              )}
+                  </>
+                );
+              })()}
             </div>
+          </>
+        )}
+      </div>
 
-            {/* Backstage / Green Room Bar: Displays all backstage guests so they can see and talk to each other */}
-            {onStageParticipants.length > 0 && backstageParticipants.length > 0 && (
-              <div
-                className={cn(
-                  "w-full max-w-6xl mt-2 px-3 py-1.5 rounded-xl bg-[#0c0c16]/95 border border-white/10 items-center gap-2 sm:gap-3 overflow-x-auto custom-scrollbar shrink-0 shadow-lg",
-                  !isGuestOnStage && guestMobileView !== "stage" ? "hidden sm:flex" : "flex"
-                )}
-              >
-                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-amber-400 font-bold shrink-0 pr-2 sm:pr-2.5 border-r border-white/10 uppercase tracking-wide">
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="hidden xs:inline">Backstage</span>
-                  <span>({backstageParticipants.length})</span>
+      {/* Backstage / Green Room Bar: Displays all backstage guests so they can see and talk to each other */}
+      {onStageParticipants.length > 0 && backstageParticipants.length > 0 && (
+        <div
+          className={cn(
+            "w-full max-w-6xl mt-2 px-3 py-1.5 rounded-xl bg-[#0c0c16]/95 border border-white/10 items-center gap-2 sm:gap-3 overflow-x-auto custom-scrollbar shrink-0 shadow-lg",
+            !isGuestOnStage && guestMobileView !== "stage" ? "hidden sm:flex" : "flex"
+          )}
+        >
+          <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-amber-400 font-bold shrink-0 pr-2 sm:pr-2.5 border-r border-white/10 uppercase tracking-wide">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="hidden xs:inline">Backstage</span>
+            <span>({backstageParticipants.length})</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {backstageParticipants.map((p) => {
+              const isMe = Boolean(p.isLocal);
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    if (isMe) {
+                      setGuestMobileView((curr) => (curr === "split" ? "self" : "split"));
+                    }
+                  }}
+                  className={cn(
+                    "w-36 sm:w-48 aspect-video rounded-xl overflow-hidden border bg-black shrink-0 relative shadow-md transition-all",
+                    isMe ? "border-amber-500/60 ring-2 ring-amber-500/30 cursor-pointer" : "border-white/15"
+                  )}
+                  title={isMe ? "Tap to switch to Large / Split view" : undefined}
+                >
+                  <VideoTrackView
+                    id={p.id}
+                    track={p.videoTrack}
+                    audioTrack={p.audioTrack}
+                    name={isMe ? `${p.name || "You"} (You)` : p.name || "Guest"}
+                    isSpeaking={p.isSpeaking}
+                    micOn={p.micOn}
+                    camOn={p.camOn}
+                    isLocal={p.isLocal}
+                    role={p.role}
+                  />
+                  {isMe && (
+                    <div className="absolute top-1.5 right-1.5 z-20 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[9px] font-bold flex items-center gap-0.5 shadow">
+                      <Maximize2 className="w-2.5 h-2.5" />
+                      <span>Enlarge</span>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  {backstageParticipants.map((p) => {
-                    const isMe = Boolean(p.isLocal);
-                    return (
-                      <div
-                        key={p.id}
-                        onClick={() => {
-                          if (isMe) {
-                            setGuestMobileView((curr) => (curr === "split" ? "self" : "split"));
-                          }
-                        }}
-                        className={cn(
-                          "w-36 sm:w-48 aspect-video rounded-xl overflow-hidden border bg-black shrink-0 relative shadow-md transition-all",
-                          isMe ? "border-amber-500/60 ring-2 ring-amber-500/30 cursor-pointer" : "border-white/15"
-                        )}
-                        title={isMe ? "Tap to switch to Large / Split view" : undefined}
-                      >
-                        <VideoTrackView
-                          id={p.id}
-                          track={p.videoTrack}
-                          audioTrack={p.audioTrack}
-                          name={isMe ? `${p.name || "You"} (You)` : p.name || "Guest"}
-                          isSpeaking={p.isSpeaking}
-                          micOn={p.micOn}
-                          camOn={p.camOn}
-                          isLocal={p.isLocal}
-                          role={p.role}
-                        />
-                        {isMe && (
-                          <div className="absolute top-1.5 right-1.5 z-20 px-1.5 py-0.5 rounded bg-amber-500 text-black text-[9px] font-bold flex items-center gap-0.5 shadow">
-                            <Maximize2 className="w-2.5 h-2.5" />
-                            <span>Enlarge</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+              );
+            })}
+          </div>
+        </div>
+      )}
 
             {/* Slide-out Private Chat Drawer */}
             {isChatOpen && (

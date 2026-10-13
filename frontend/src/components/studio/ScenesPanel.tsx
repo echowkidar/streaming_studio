@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useStudioStore, StudioScene } from "@/stores/studio.store";
+import { useStudioStore, StudioScene, StudioLayout } from "@/stores/studio.store";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -26,7 +26,142 @@ import {
   FileText,
   Video,
   Music,
+  Layers,
 } from "lucide-react";
+
+interface LayoutPresetOption {
+  id: StudioLayout;
+  title: string;
+  desc: string;
+  renderPreview: () => React.ReactNode;
+}
+
+const LAYOUT_PRESETS: LayoutPresetOption[] = [
+  {
+    id: "solo",
+    title: "Solo Speaker",
+    desc: "1 main person filling canvas",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex items-center justify-center">
+        <div className="w-full h-full bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-3 h-3 text-indigo-300" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "side-by-side",
+    title: "2-Person Fit (16:9)",
+    desc: "Widescreen boxes with background",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex items-center justify-center gap-1">
+        <div className="w-[45%] h-[80%] bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-2.5 h-2.5 text-indigo-300" />
+        </div>
+        <div className="w-[45%] h-[80%] bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-2.5 h-2.5 text-indigo-300" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "cropped",
+    title: "2-Person Full-Bleed",
+    desc: "Edge-to-edge full height split",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 flex divide-x divide-white/20 overflow-hidden">
+        <div className="flex-1 h-full bg-indigo-500/40 flex items-center justify-center">
+          <User className="w-2.5 h-2.5 text-indigo-300" />
+        </div>
+        <div className="flex-1 h-full bg-indigo-500/40 flex items-center justify-center">
+          <User className="w-2.5 h-2.5 text-indigo-300" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "speaker-large",
+    title: "Spotlight / News",
+    desc: "Hero left (68%) + right guest stack",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex gap-1">
+        <div className="flex-[3] h-full bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-3 h-3 text-indigo-300" />
+        </div>
+        <div className="flex-1 h-full flex flex-col gap-0.5">
+          <div className="w-full flex-1 bg-indigo-500/30 rounded-xs" />
+          <div className="w-full flex-1 bg-indigo-500/30 rounded-xs" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "presentation",
+    title: "Presentation Deck",
+    desc: "Slide focus + bottom speaker row",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex flex-col gap-0.5">
+        <div className="w-full flex-[2] bg-cyan-500/40 rounded-xs flex items-center justify-center">
+          <MonitorUp className="w-3 h-3 text-cyan-300" />
+        </div>
+        <div className="w-full flex-1 flex gap-0.5">
+          <div className="flex-1 bg-indigo-500/30 rounded-xs" />
+          <div className="flex-1 bg-indigo-500/30 rounded-xs" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "pip",
+    title: "Picture in Picture",
+    desc: "Full canvas with corner floating box",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 relative">
+        <div className="w-full h-full bg-cyan-500/30 rounded-xs" />
+        <div className="absolute bottom-1 right-1 w-4 h-3 bg-indigo-500/80 rounded-xs flex items-center justify-center">
+          <User className="w-2 h-2 text-white" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "cinema",
+    title: "Cinema Fullscreen",
+    desc: "100% video or slide presentation",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex items-center justify-center">
+        <div className="w-full h-full bg-indigo-600/50 rounded-xs flex items-center justify-center">
+          <Play className="w-3 h-3 fill-white text-white ml-0.5" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "four-grid",
+    title: "2x2 Quad Grid",
+    desc: "Four equal participant tiles",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 grid grid-cols-2 grid-rows-2 gap-0.5">
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+      </div>
+    ),
+  },
+  {
+    id: "three-equal",
+    title: "3-Column Trio",
+    desc: "Three equal vertical columns",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex gap-0.5">
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+      </div>
+    ),
+  },
+];
 
 interface ScenesPanelProps {
   className?: string;
@@ -61,6 +196,36 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [isProcessingUpload, setIsProcessingUpload] = useState(false);
+
+  // StreamYard New Scene Creation Modal State
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newSceneName, setNewSceneName] = useState("");
+  const [newSceneLayout, setNewSceneLayout] = useState<StudioLayout>("side-by-side");
+  const [newSceneMode, setNewSceneMode] = useState<"blank" | "snapshot">("blank");
+  const [newSceneMedia, setNewSceneMedia] = useState<any | null>(null);
+
+  const handleOpenAddSceneModal = () => {
+    setNewSceneName(`Scene ${scenes.length + 1}`);
+    setNewSceneLayout("side-by-side");
+    setNewSceneMode("blank");
+    setNewSceneMedia(null);
+    setIsAddModalOpen(true);
+  };
+
+  const handleCreateScene = () => {
+    const finalName = newSceneName.trim() || `Scene ${scenes.length + 1}`;
+    if (newSceneMode === "snapshot") {
+      addScene({ name: finalName });
+    } else {
+      addScene({
+        name: finalName,
+        layout: newSceneLayout,
+        activeMedia: newSceneMedia,
+        splitRatio: newSceneLayout === "speaker-large" || newSceneLayout === "presentation" ? 68 : 50,
+      });
+    }
+    setIsAddModalOpen(false);
+  };
 
   const handleAttachMedia = (sceneId: string, mediaItem: any | null) => {
     const targetScene = scenes.find((s) => s.id === sceneId);
@@ -504,7 +669,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
       <div className="p-2.5 pb-2 shrink-0">
         <button
           type="button"
-          onClick={() => addScene()}
+          onClick={handleOpenAddSceneModal}
           className="w-full py-2 px-3 rounded-lg border border-white/15 hover:border-indigo-500/50 bg-white/5 hover:bg-indigo-600/20 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm group active:scale-95"
           title="Save current stage layout or create a new scene"
         >
@@ -917,6 +1082,204 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 </>
               )}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── StreamYard-Grade "New Scene" Layout Selection Modal ───────── */}
+      {isAddModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setIsAddModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg bg-[#0e0f1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white animate-in zoom-in-95 duration-150 max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 border-b border-white/10 bg-[#121322] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-wide">Add a New Scene</h3>
+                  <p className="text-[11px] text-slate-400">Choose a layout template or duplicate your current stage</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+              {/* Scene Name Input */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Scene Name
+                </label>
+                <input
+                  type="text"
+                  value={newSceneName}
+                  onChange={(e) => setNewSceneName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCreateScene();
+                  }}
+                  placeholder="e.g. Host Intro, Guest Interview, Slide Demo..."
+                  className="w-full bg-[#161726] border border-white/15 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none transition-colors"
+                />
+              </div>
+
+              {/* Mode Toggle: Preset vs Snapshot */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Initial Stage Setup
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewSceneMode("blank")}
+                    className={cn(
+                      "p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all text-xs",
+                      newSceneMode === "blank"
+                        ? "bg-indigo-600/20 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
+                        : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
+                    )}
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-indigo-500/20 flex items-center justify-center shrink-0">
+                      <Clapperboard className="w-3.5 h-3.5 text-indigo-400" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-white">Choose Layout</div>
+                      <div className="text-[10px] text-slate-400">Pick from layout templates</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewSceneMode("snapshot")}
+                    className={cn(
+                      "p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all text-xs",
+                      newSceneMode === "snapshot"
+                        ? "bg-indigo-600/20 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
+                        : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
+                    )}
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-indigo-500/20 flex items-center justify-center shrink-0">
+                      <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-white">Copy Current Stage</div>
+                      <div className="text-[10px] text-slate-400">Snapshot on-stage state</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Layout Picker Grid (when newSceneMode === "blank") */}
+              {newSceneMode === "blank" ? (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                    Select Layout Preset
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {LAYOUT_PRESETS.map((preset) => {
+                      const isSelected = newSceneLayout === preset.id;
+                      return (
+                        <div
+                          key={preset.id}
+                          onClick={() => setNewSceneLayout(preset.id)}
+                          className={cn(
+                            "relative p-2 rounded-xl border cursor-pointer transition-all flex flex-col items-center gap-1.5 text-center group",
+                            isSelected
+                              ? "bg-indigo-950/70 border-indigo-500 ring-2 ring-indigo-500/40 shadow-lg shadow-indigo-500/10"
+                              : "bg-[#141525] border-white/10 hover:border-white/25 hover:bg-[#1a1c30]"
+                          )}
+                        >
+                          {isSelected && (
+                            <div className="absolute top-1 right-1 w-3.5 h-3.5 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
+                              <Check className="w-2.5 h-2.5" />
+                            </div>
+                          )}
+                          <div className="w-full">
+                            {preset.renderPreview()}
+                          </div>
+                          <div>
+                            <div className={cn("text-[11px] font-semibold tracking-tight", isSelected ? "text-indigo-200" : "text-white")}>
+                              {preset.title}
+                            </div>
+                            <div className="text-[9px] text-slate-400 leading-tight line-clamp-1">
+                              {preset.desc}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Optional Media Attachment */}
+                  {mediaLibrary.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-white/10">
+                      <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                        <span>Pre-attach Media / Slides (Optional)</span>
+                        {newSceneMedia && (
+                          <button
+                            type="button"
+                            onClick={() => setNewSceneMedia(null)}
+                            className="text-[10px] text-rose-400 hover:underline"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </label>
+                      <select
+                        value={newSceneMedia?.id || ""}
+                        onChange={(e) => {
+                          const found = mediaLibrary.find((m) => m.id === e.target.value);
+                          setNewSceneMedia(found || null);
+                        }}
+                        className="w-full bg-[#161726] border border-white/15 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                      >
+                        <option value="">Camera Only (No Media Attached)</option>
+                        {mediaLibrary.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.type.toUpperCase()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/30 text-xs text-cyan-200/90 leading-relaxed">
+                  📸 <strong>Snapshot Mode:</strong> This scene will immediately capture the current stage layout, on-stage participants, media source, and active background. You can switch back to this state at any time during your stream with one click.
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-white/10 bg-[#121322] flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="px-3.5 py-1.5 rounded-xl border border-white/15 hover:bg-white/10 text-slate-300 text-xs font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateScene}
+                className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all shadow-lg flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create Scene</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

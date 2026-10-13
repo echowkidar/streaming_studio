@@ -606,10 +606,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       });
     }
 
+    const activeSceneId = get().activeSceneId;
+    const updatedScenes = activeSceneId
+      ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, layout, splitRatio: defaultSplit } : s))
+      : get().scenes;
+
     persistStudioLayout({
       activeLayout: layout,
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
+      scenes: updatedScenes,
       ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
     });
     set({
@@ -617,14 +623,19 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
       selectedParticipantId: null,
+      scenes: updatedScenes,
       ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
     });
   },
   layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
   setLayoutSplitRatio: (ratio) => {
     const clamped = Math.max(20, Math.min(80, ratio));
-    persistStudioLayout({ layoutSplitRatio: clamped });
-    set({ layoutSplitRatio: clamped });
+    const activeSceneId = get().activeSceneId;
+    const updatedScenes = activeSceneId
+      ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, splitRatio: clamped } : s))
+      : get().scenes;
+    persistStudioLayout({ layoutSplitRatio: clamped, scenes: updatedScenes });
+    set({ layoutSplitRatio: clamped, scenes: updatedScenes });
   },
 
   // Freeform Window Bounds & Selection Tool (StreamYard parity)
@@ -1294,6 +1305,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const nextScenes = [...state.scenes, newScene];
     persistStudioLayout({ scenes: nextScenes, activeSceneId: newScene.id });
     set({ scenes: nextScenes, activeSceneId: newScene.id });
+    get().switchScene(newScene.id);
     return newScene;
   },
   updateScene: (id, updates) => {
