@@ -29,6 +29,28 @@ import {
   Layers,
 } from "lucide-react";
 
+export const LAYOUT_LABELS: Record<string, string> = {
+  "solo": "Solo",
+  "side-by-side": "Fit 16:9",
+  "fit": "Fit 16:9",
+  "cropped": "Cropped",
+  "podcast": "Cropped",
+  "speaker-large": "Speaker + Grid",
+  "three-equal": "3 People",
+  "four-grid": "2x2 Grid",
+  "six-grid": "6-Tile Grid",
+  "five-grid": "5-Tile Grid",
+  "nine-grid": "9-Tile Grid",
+  "presentation": "Presentation",
+  "screen-speaker": "Screen + Speaker",
+  "pip": "PiP",
+  "cinema": "Fullscreen",
+  "screen-full": "Fullscreen",
+  "stacked": "Stacked",
+  "interview": "Interview",
+  "custom": "Custom",
+};
+
 interface LayoutPresetOption {
   id: StudioLayout;
   title: string;
@@ -137,6 +159,18 @@ const LAYOUT_PRESETS: LayoutPresetOption[] = [
     ),
   },
   {
+    id: "three-equal",
+    title: "3-Column Trio",
+    desc: "Three equal vertical columns",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex gap-0.5">
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+      </div>
+    ),
+  },
+  {
     id: "four-grid",
     title: "2x2 Quad Grid",
     desc: "Four equal participant tiles",
@@ -150,14 +184,47 @@ const LAYOUT_PRESETS: LayoutPresetOption[] = [
     ),
   },
   {
-    id: "three-equal",
-    title: "3-Column Trio",
-    desc: "Three equal vertical columns",
+    id: "six-grid",
+    title: "6-Tile Grid",
+    desc: "Six equal participant tiles",
     renderPreview: () => (
-      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex gap-0.5">
-        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
-        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
-        <div className="flex-1 h-full bg-indigo-500/30 rounded-xs" />
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 grid grid-cols-3 grid-rows-2 gap-0.5">
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+        <div className="bg-indigo-500/30 rounded-xs" />
+      </div>
+    ),
+  },
+  {
+    id: "screen-speaker",
+    title: "Screen + Speaker",
+    desc: "Host on left (35%) + screen on right (65%)",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex gap-1">
+        <div className="flex-1 h-full bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-2.5 h-2.5 text-indigo-300" />
+        </div>
+        <div className="flex-[2] h-full bg-cyan-500/40 rounded-xs flex items-center justify-center">
+          <MonitorUp className="w-3 h-3 text-cyan-300" />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "stacked",
+    title: "Stacked Vertical",
+    desc: "Top & bottom horizontal split",
+    renderPreview: () => (
+      <div className="w-full h-8 rounded bg-black/60 border border-white/20 p-0.5 flex flex-col gap-0.5">
+        <div className="w-full flex-1 bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-2 h-2 text-indigo-300" />
+        </div>
+        <div className="w-full flex-1 bg-indigo-500/40 rounded-xs flex items-center justify-center">
+          <User className="w-2 h-2 text-indigo-300" />
+        </div>
       </div>
     ),
   },
@@ -193,7 +260,22 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
+  const [layoutPickerSceneId, setLayoutPickerSceneId] = useState<string | null>(null);
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleSelectSceneLayout = (sceneId: string, layout: StudioLayout) => {
+    const defaultSplit =
+      layout === "three-equal"
+        ? 33
+        : layout === "speaker-large" || layout === "presentation"
+        ? 65
+        : 50;
+    updateScene(sceneId, { layout, splitRatio: defaultSplit });
+    if (activeSceneId === sceneId) {
+      setLayout(layout);
+    }
+    setLayoutPickerSceneId(null);
+  };
 
   const [isProcessingUpload, setIsProcessingUpload] = useState(false);
 
@@ -459,22 +541,257 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
   // Render visual thumbnail representation based on layout
   const renderThumbnailContent = (scene: StudioScene) => {
-    const isCropped = scene.layout === "cropped" || scene.layout === "podcast";
-    const isSideBySide = scene.layout === "side-by-side" || scene.layout === "fit";
-    const isSolo = scene.layout === "solo";
-    const isCinema = scene.layout === "cinema";
-    const isGrid = scene.layout === "four-grid" || scene.layout === "six-grid";
-    const isSpeaker = scene.layout === "speaker-large";
-    const isPresentation = scene.layout === "presentation";
+    const layout = scene.layout;
+    const hasMedia = Boolean(scene.activeMedia);
 
-    return (
-      <div className="absolute inset-0 p-1 flex items-center justify-center">
-        {scene.activeMedia ? (
-          isPresentation ? (
-            <div className="w-full h-full flex gap-1 p-0.5">
-              {/* Left Presentation Slide/Media View (68%) */}
-              <div className="flex-[2] relative rounded overflow-hidden bg-black/80 border border-cyan-500/40 shadow-sm flex items-center justify-center">
-                {scene.activeMedia.type === "video" ? (
+    // Helpers for rendering individual boxes in thumbnail
+    const renderMediaTile = (customClass = "") => (
+      <div
+        className={cn(
+          "relative w-full h-full overflow-hidden bg-black/85 rounded border border-cyan-500/60 shadow-xs flex items-center justify-center",
+          customClass
+        )}
+      >
+        {scene.activeMedia?.type === "video" ? (
+          <video
+            src={scene.activeMedia.url}
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+          />
+        ) : scene.activeMedia?.thumbnail || scene.activeMedia?.url ? (
+          <img
+            src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+            alt=""
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <MonitorUp className="w-3 h-3 text-cyan-300" />
+        )}
+        <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/90 text-[6px] text-cyan-300 font-mono flex items-center gap-0.5 shadow-sm pointer-events-none">
+          <Clapperboard className="w-1.5 h-1.5" />
+        </div>
+      </div>
+    );
+
+    const renderCameraTile = (label?: string, customClass = "") => (
+      <div
+        className={cn(
+          "w-full h-full bg-black/80 border border-white/25 rounded shadow-xs flex flex-col items-center justify-center gap-0.5",
+          customClass
+        )}
+      >
+        <User className="w-2.5 h-2.5 text-indigo-300" />
+        {label && <span className="text-[6px] text-indigo-200/90 leading-none">{label}</span>}
+      </div>
+    );
+
+    // 1. Solo Speaker
+    if (layout === "solo") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-[88%] h-[88%]">
+            {hasMedia ? renderMediaTile() : renderCameraTile()}
+          </div>
+        </div>
+      );
+    }
+
+    // 2. 2-Person Fit (16:9 widescreen boxes)
+    if (layout === "side-by-side" || layout === "fit") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center gap-1">
+          <div className="w-[46%] h-[80%]">
+            {hasMedia ? renderMediaTile() : renderCameraTile()}
+          </div>
+          <div className="w-[46%] h-[80%]">
+            {renderCameraTile()}
+          </div>
+        </div>
+      );
+    }
+
+    // 3. 2-Person Cropped / Full-Bleed
+    if (layout === "cropped" || layout === "podcast") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full flex divide-x divide-white/25 border border-white/25 rounded overflow-hidden shadow-xs">
+            <div className="flex-1 h-full">
+              {hasMedia
+                ? renderMediaTile("rounded-none border-0")
+                : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
+            </div>
+            <div className="flex-1 h-full">
+              {renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 4. 3-Column Trio / 3 People
+    if (layout === "three-equal") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full flex gap-0.5">
+            <div className="flex-1 h-full">
+              {hasMedia ? renderMediaTile() : renderCameraTile()}
+            </div>
+            <div className="flex-1 h-full">
+              {renderCameraTile()}
+            </div>
+            <div className="flex-1 h-full">
+              {renderCameraTile()}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 5. 2x2 Quad Grid
+    if (layout === "four-grid") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-0.5">
+            <div className="w-full h-full">
+              {hasMedia ? renderMediaTile() : renderCameraTile()}
+            </div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // 6. 6-Tile Grid (3x2)
+    if (layout === "six-grid") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full grid grid-cols-3 grid-rows-2 gap-0.5">
+            <div className="w-full h-full">
+              {hasMedia ? renderMediaTile() : renderCameraTile()}
+            </div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+            <div className="w-full h-full">{renderCameraTile()}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // 7. 5-Grid or 9-Grid
+    if (layout === "five-grid" || layout === "nine-grid") {
+      const count = layout === "nine-grid" ? 9 : 5;
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full grid grid-cols-3 gap-0.5">
+            {Array.from({ length: count }).map((_, i) => (
+              <div key={i} className="w-full h-full">
+                {i === 0 && hasMedia ? renderMediaTile() : renderCameraTile()}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // 8. Speaker + Grid / Spotlight (Hero Left + Right Column)
+    if (layout === "speaker-large") {
+      const split = Math.max(40, Math.min(80, scene.splitRatio || 65));
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full flex gap-1">
+            <div style={{ flex: split }} className="h-full">
+              {hasMedia ? renderMediaTile() : renderCameraTile("Host")}
+            </div>
+            <div style={{ flex: 100 - split }} className="h-full flex flex-col gap-0.5">
+              <div className="w-full flex-1">{renderCameraTile()}</div>
+              <div className="w-full flex-1">{renderCameraTile()}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 9. Presentation Deck (Slide focus + speaker strip)
+    if (layout === "presentation") {
+      const split = Math.max(40, Math.min(80, scene.splitRatio || 68));
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full flex gap-1">
+            <div style={{ flex: split }} className="h-full">
+              {hasMedia ? (
+                renderMediaTile()
+              ) : (
+                <div className="w-full h-full bg-black/85 rounded border border-cyan-500/60 flex items-center justify-center shadow-xs">
+                  <MonitorUp className="w-3.5 h-3.5 text-cyan-300" />
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 100 - split }} className="h-full flex flex-col gap-0.5">
+              <div className="w-full flex-1">{renderCameraTile("Host")}</div>
+              <div className="w-full flex-1">{renderCameraTile()}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 10. Screen + Speaker (Host on Left, Screen on Right)
+    if (layout === "screen-speaker") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full flex gap-1">
+            <div className="flex-1 h-full">
+              {renderCameraTile("Host")}
+            </div>
+            <div className="flex-[2] h-full">
+              {hasMedia ? (
+                renderMediaTile()
+              ) : (
+                <div className="w-full h-full bg-black/85 rounded border border-cyan-500/60 flex items-center justify-center shadow-xs">
+                  <MonitorUp className="w-3.5 h-3.5 text-cyan-300" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 11. Picture in Picture (PiP)
+    if (layout === "pip") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="relative w-full h-full rounded overflow-hidden">
+            <div className="w-full h-full">
+              {hasMedia ? (
+                renderMediaTile()
+              ) : (
+                <div className="w-full h-full bg-black/80 border border-white/20 rounded flex items-center justify-center">
+                  <User className="w-4 h-4 text-indigo-300/70" />
+                </div>
+              )}
+            </div>
+            <div className="absolute bottom-1 right-1 w-[32%] h-[34%] bg-[#0e0f1a] border border-cyan-400/90 rounded shadow-md flex items-center justify-center z-10">
+              <User className="w-2 h-2 text-cyan-300" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 12. Cinema Fullscreen
+    if (layout === "cinema" || layout === "screen-full") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
+          <div className="w-full h-full relative rounded overflow-hidden bg-black/90 border border-indigo-500/50 shadow-xs flex items-center justify-center">
+            {hasMedia ? (
+              <>
+                {scene.activeMedia?.type === "video" ? (
                   <video
                     src={scene.activeMedia.url}
                     className="w-full h-full object-cover"
@@ -483,132 +800,69 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   />
                 ) : (
                   <img
-                    src={scene.activeMedia.thumbnail || scene.activeMedia.url}
+                    src={scene.activeMedia?.thumbnail || scene.activeMedia?.url}
                     alt=""
                     className="w-full h-full object-cover"
                   />
                 )}
-                <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/85 text-[7px] text-cyan-300 font-mono flex items-center gap-0.5 shadow">
-                  <MonitorUp className="w-2 h-2" />
-                  <span className="truncate max-w-[50px]">Deck</span>
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                  <div className="w-5 h-5 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow-lg">
+                    <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
+                  </div>
                 </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-1 text-indigo-300">
+                <Play className="w-4 h-4 fill-indigo-400/30 text-indigo-400" />
+                <span className="text-[6px] tracking-widest uppercase font-mono text-indigo-200/80">Fullscreen</span>
               </div>
-              {/* Right Host Slot (32%) */}
-              <div className="flex-1 rounded bg-indigo-950/70 border border-indigo-500/30 flex flex-col items-center justify-center gap-0.5">
-                <User className="w-3 h-3 text-indigo-300" />
-                <span className="text-[6px] text-indigo-200">Host</span>
-              </div>
-            </div>
-          ) : isCinema ? (
-            <div className="w-full h-full relative rounded overflow-hidden bg-black/90 border border-indigo-500/40 flex items-center justify-center">
-              {scene.activeMedia.type === "video" ? (
-                <video
-                  src={scene.activeMedia.url}
-                  className="w-full h-full object-cover"
-                  muted
-                  playsInline
-                />
-              ) : (
-                <img
-                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              )}
-              <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
-                <div className="w-5 h-5 rounded-full bg-indigo-600/90 text-white flex items-center justify-center shadow-lg">
-                  <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
-                </div>
-              </div>
-            </div>
-          ) : isSpeaker ? (
-            <div className="w-full h-full flex gap-1 p-0.5">
-              <div className="flex-[2] relative rounded overflow-hidden bg-black/80 border border-indigo-500/40 flex items-center justify-center">
-                <img
-                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex-1 flex flex-col gap-0.5">
-                <div className="flex-1 bg-indigo-900/40 rounded flex items-center justify-center">
-                  <User className="w-2.5 h-2.5 text-indigo-300" />
-                </div>
-                <div className="flex-1 bg-indigo-900/30 rounded" />
-              </div>
-            </div>
-          ) : (
-            <div className="w-full h-full relative rounded overflow-hidden bg-cyan-950/60 border border-cyan-500/40 flex items-center justify-center">
-              {scene.activeMedia.type === "video" ? (
-                <video
-                  src={scene.activeMedia.url}
-                  className="w-full h-full object-cover"
-                  muted
-                  playsInline
-                />
-              ) : (
-                <img
-                  src={scene.activeMedia.thumbnail || scene.activeMedia.url}
-                  alt=""
-                  className="w-full h-full object-cover"
-                />
-              )}
-              <div className="absolute bottom-0.5 left-0.5 px-1 py-0.5 rounded bg-black/85 text-[7px] text-cyan-300 font-mono flex items-center gap-0.5 shadow">
-                <Clapperboard className="w-2 h-2" />
-                <span className="truncate max-w-[65px]">{scene.activeMedia.name}</span>
-              </div>
-            </div>
-          )
-        ) : isSolo || isCinema ? (
-          <div className="w-full h-full bg-indigo-950/40 border border-indigo-500/30 rounded flex items-center justify-center">
-            <User className="w-4 h-4 text-indigo-300 opacity-80" />
+            )}
           </div>
-        ) : isCropped ? (
-          <div className="w-full h-full flex divide-x divide-white/20 border border-indigo-500/40 rounded overflow-hidden">
-            <div className="flex-1 bg-indigo-900/40 flex items-center justify-center">
-              <User className="w-3 h-3 text-indigo-300" />
-            </div>
-            <div className="flex-1 bg-indigo-900/40 flex items-center justify-center">
-              <User className="w-3 h-3 text-indigo-300" />
-            </div>
-          </div>
-        ) : isSideBySide ? (
-          <div className="w-full h-full flex items-center justify-center gap-1">
-            <div className="w-[45%] h-[75%] bg-indigo-900/40 border border-indigo-500/40 rounded flex items-center justify-center">
-              <User className="w-2.5 h-2.5 text-indigo-300" />
-            </div>
-            <div className="w-[45%] h-[75%] bg-indigo-900/40 border border-indigo-500/40 rounded flex items-center justify-center">
-              <User className="w-2.5 h-2.5 text-indigo-300" />
-            </div>
-          </div>
-        ) : isSpeaker ? (
-          <div className="w-full h-full flex gap-1">
-            <div className="flex-[2] bg-indigo-900/40 border border-indigo-500/40 rounded flex items-center justify-center">
-              <User className="w-3.5 h-3.5 text-indigo-300" />
-            </div>
-            <div className="flex-1 flex flex-col gap-0.5">
-              <div className="flex-1 bg-indigo-900/30 rounded" />
-              <div className="flex-1 bg-indigo-900/30 rounded" />
-            </div>
-          </div>
-        ) : isPresentation ? (
+        </div>
+      );
+    }
+
+    // 13. Stacked Vertical (Top & Bottom)
+    if (layout === "stacked") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center">
           <div className="w-full h-full flex flex-col gap-0.5">
-            <div className="flex-[2] bg-cyan-950/40 border border-cyan-500/40 rounded flex items-center justify-center">
-              <MonitorUp className="w-3 h-3 text-cyan-300" />
+            <div className="w-full flex-1">
+              {hasMedia ? renderMediaTile() : renderCameraTile()}
             </div>
-            <div className="flex-1 flex gap-0.5">
-              <div className="flex-1 bg-indigo-900/30 rounded" />
-              <div className="flex-1 bg-indigo-900/30 rounded" />
+            <div className="w-full flex-1">
+              {renderCameraTile()}
             </div>
           </div>
-        ) : (
-          <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-0.5">
-            <div className="bg-indigo-900/30 rounded" />
-            <div className="bg-indigo-900/30 rounded" />
-            <div className="bg-indigo-900/30 rounded" />
-            <div className="bg-indigo-900/30 rounded" />
+        </div>
+      );
+    }
+
+    // 14. Interview Split
+    if (layout === "interview") {
+      return (
+        <div className="absolute inset-0 p-1 flex items-center justify-center gap-1">
+          <div className="flex-1 h-[82%]">
+            {hasMedia ? renderMediaTile() : renderCameraTile("Host")}
           </div>
-        )}
+          <div className="flex-1 h-[82%]">
+            {renderCameraTile("Guest")}
+          </div>
+        </div>
+      );
+    }
+
+    // 15. Custom or Fallback
+    return (
+      <div className="absolute inset-0 p-1 flex items-center justify-center">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-0.5">
+          <div className="w-full h-full">
+            {hasMedia ? renderMediaTile() : renderCameraTile()}
+          </div>
+          <div className="w-full h-full">{renderCameraTile()}</div>
+          <div className="w-full h-full">{renderCameraTile()}</div>
+          <div className="w-full h-full">{renderCameraTile()}</div>
+        </div>
       </div>
     );
   };
@@ -721,6 +975,11 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 {/* Visual Layout Representation */}
                 {renderThumbnailContent(scene)}
 
+                {/* Layout Badge (Top Left) */}
+                <div className="absolute top-1 left-1 z-20 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
+                  <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
+                </div>
+
                 {/* Hover/Active Badges */}
                 <div className="absolute top-1 right-1 z-20 flex items-center gap-1 pointer-events-auto">
                   {/* Clapperboard if media attached */}
@@ -768,6 +1027,18 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                     >
                       <Camera className="w-3.5 h-3.5 text-cyan-400" />
                       <span>Update with stage</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLayoutPickerSceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Change Layout</span>
                     </button>
 
                     <button
@@ -863,12 +1134,24 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       onClick={() => handleSaveRename(scene.id)}
                       className="p-1 text-emerald-400 hover:text-emerald-300"
                     >
-                      <Check className="w-3 h-3" />
+                      <Check className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ) : (
                   <>
-                    <span className="truncate pr-1">{scene.name}</span>
+                    <div className="flex items-center gap-1.5 min-w-0 pr-1">
+                      <span className="truncate">{scene.name}</span>
+                      <span
+                        className={cn(
+                          "text-[8.5px] font-normal px-1 py-0.2 rounded shrink-0",
+                          isActive
+                            ? "bg-white/20 text-white"
+                            : "bg-white/5 text-slate-400"
+                        )}
+                      >
+                        {LAYOUT_LABELS[scene.layout] || scene.layout}
+                      </span>
+                    </div>
                     {isActive && (
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse shrink-0" />
                     )}
@@ -879,6 +1162,83 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           );
         })}
       </div>
+
+      {/* ─── Change Scene Layout Modal ─────────────────────────────────── */}
+      {layoutPickerSceneId && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setLayoutPickerSceneId(null)}
+        >
+          <div
+            className="w-full max-w-lg bg-[#0e0f1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white animate-in zoom-in-95 duration-150 max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-white/10 bg-[#121322] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white tracking-wide">
+                    Change Scene Layout
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {scenes.find((s) => s.id === layoutPickerSceneId)?.name || "Select layout"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLayoutPickerSceneId(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+              <div className="grid grid-cols-3 gap-2">
+                {LAYOUT_PRESETS.map((preset) => {
+                  const targetScene = scenes.find((s) => s.id === layoutPickerSceneId);
+                  const isSelected = targetScene?.layout === preset.id;
+                  return (
+                    <div
+                      key={preset.id}
+                      onClick={() => handleSelectSceneLayout(layoutPickerSceneId, preset.id)}
+                      className={cn(
+                        "relative p-2 rounded-xl border cursor-pointer transition-all flex flex-col items-center gap-1.5 text-center group",
+                        isSelected
+                          ? "bg-indigo-950/70 border-indigo-500 ring-2 ring-indigo-500/40 shadow-lg shadow-indigo-500/10"
+                          : "bg-[#141525] border-white/10 hover:border-white/25 hover:bg-[#1a1c30]"
+                      )}
+                    >
+                      {isSelected && (
+                        <div className="absolute top-1 right-1 w-3.5 h-3.5 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow">
+                          <Check className="w-2.5 h-2.5" />
+                        </div>
+                      )}
+                      <div className="w-full">{preset.renderPreview()}</div>
+                      <div>
+                        <div
+                          className={cn(
+                            "text-[11px] font-semibold tracking-tight",
+                            isSelected ? "text-indigo-200" : "text-white"
+                          )}
+                        >
+                          {preset.title}
+                        </div>
+                        <div className="text-[9px] text-slate-400 leading-tight line-clamp-1">
+                          {preset.desc}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── Media / Presentation Attachment Modal ───────────────────────── */}
       {mediaPickerSceneId && (

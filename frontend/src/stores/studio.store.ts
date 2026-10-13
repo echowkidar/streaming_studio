@@ -565,6 +565,16 @@ function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
 
 const savedLayout = loadSavedStudioLayout();
 
+const initialScenes: StudioScene[] =
+  savedLayout.scenes && savedLayout.scenes.length > 0 ? savedLayout.scenes : DEFAULT_STUDIO_SCENES;
+
+const initialActiveSceneId: string | null =
+  savedLayout.activeSceneId && initialScenes.some((s) => s.id === savedLayout.activeSceneId)
+    ? savedLayout.activeSceneId
+    : initialScenes[0]?.id || null;
+
+const initialActiveScene = initialScenes.find((s) => s.id === initialActiveSceneId);
+
 export const useStudioStore = create<StudioState>((set, get) => ({
   broadcastTitle: "Product Launch & Live Q&A Keynote",
   isLive: false,
@@ -575,7 +585,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   viewerCount: 1420,
   connectionQuality: "EXCELLENT",
 
-  activeLayout: savedLayout.activeLayout || "speaker-large",
+  activeLayout: savedLayout.activeLayout || initialActiveScene?.layout || "speaker-large",
   setLayout: (layout) => {
     const defaultSplit =
       layout === "three-equal"
@@ -606,7 +616,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       });
     }
 
-    const activeSceneId = get().activeSceneId;
+    let activeSceneId = get().activeSceneId;
+    if (!activeSceneId || !get().scenes.some((s) => s.id === activeSceneId)) {
+      activeSceneId = get().scenes[0]?.id || null;
+    }
+
     const updatedScenes = activeSceneId
       ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, layout, splitRatio: defaultSplit } : s))
       : get().scenes;
@@ -616,6 +630,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
       scenes: updatedScenes,
+      activeSceneId: activeSceneId || undefined,
       ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
     });
     set({
@@ -624,18 +639,22 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       participantBounds: {},
       selectedParticipantId: null,
       scenes: updatedScenes,
+      activeSceneId,
       ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
     });
   },
   layoutSplitRatio: savedLayout.layoutSplitRatio !== undefined ? savedLayout.layoutSplitRatio : 50,
   setLayoutSplitRatio: (ratio) => {
     const clamped = Math.max(20, Math.min(80, ratio));
-    const activeSceneId = get().activeSceneId;
+    let activeSceneId = get().activeSceneId;
+    if (!activeSceneId || !get().scenes.some((s) => s.id === activeSceneId)) {
+      activeSceneId = get().scenes[0]?.id || null;
+    }
     const updatedScenes = activeSceneId
       ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, splitRatio: clamped } : s))
       : get().scenes;
-    persistStudioLayout({ layoutSplitRatio: clamped, scenes: updatedScenes });
-    set({ layoutSplitRatio: clamped, scenes: updatedScenes });
+    persistStudioLayout({ layoutSplitRatio: clamped, scenes: updatedScenes, activeSceneId: activeSceneId || undefined });
+    set({ layoutSplitRatio: clamped, scenes: updatedScenes, activeSceneId });
   },
 
   // Freeform Window Bounds & Selection Tool (StreamYard parity)
@@ -1271,8 +1290,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setIsDrawingVisible: (visible) => set({ isDrawingVisible: visible }),
 
   // StreamYard Scenes System
-  scenes: savedLayout.scenes && savedLayout.scenes.length > 0 ? savedLayout.scenes : DEFAULT_STUDIO_SCENES,
-  activeSceneId: savedLayout.activeSceneId || "scene-host",
+  scenes: initialScenes,
+  activeSceneId: initialActiveSceneId,
   isScenesPanelOpen: savedLayout.isScenesPanelOpen !== undefined ? savedLayout.isScenesPanelOpen : true,
   setScenesPanelOpen: (open) => {
     persistStudioLayout({ isScenesPanelOpen: open });
