@@ -26,6 +26,7 @@ interface CachedTileLayout {
   isScreen: boolean;
   role: string;
   fitMode?: string;
+  isTransparentCard?: boolean;
 }
 
 class StageBroadcaster {
@@ -623,6 +624,9 @@ class StageBroadcaster {
           tile.querySelector("[data-participant-fit]")?.getAttribute("data-participant-fit") ||
           (tile.querySelector("video") as HTMLVideoElement | null)?.style.objectFit ||
           "cover";
+        const isTransparentCard =
+          tile.getAttribute("data-transparent-card") === "true" ||
+          (isMedia && Boolean(store.tileTransforms["active-media"]?.isTransparentBg));
 
         nextLayouts.push({
           element: tile,
@@ -640,6 +644,7 @@ class StageBroadcaster {
           isScreen,
           role,
           fitMode,
+          isTransparentCard,
         });
       });
 
@@ -806,7 +811,7 @@ class StageBroadcaster {
             currentStore.customLayoutConfig?.mode === "cinema" ||
             currentStore.customLayoutConfig?.mode === "podcast"));
 
-      if (!isFullBleed) {
+      if (!isFullBleed && !tile.isTransparentCard) {
         const radius =
           currentStore.activeLayout === "custom" &&
           currentStore.customLayoutConfig?.borderRadius !== undefined
@@ -818,9 +823,11 @@ class StageBroadcaster {
         }
       }
 
-      // Card background
-      ctx.fillStyle = "#0a0a14";
-      ctx.fillRect(x, y, w, h);
+      // Card background: only draw solid dark background if card is NOT transparent
+      if (!tile.isTransparentCard) {
+        ctx.fillStyle = "#0a0a14";
+        ctx.fillRect(x, y, w, h);
+      }
 
       if (isMedia) {
         // ── Media Tile (Video or Image/Slides) ──
@@ -1025,7 +1032,8 @@ class StageBroadcaster {
           ctx.stroke();
 
           ctx.fillStyle = "#ffffff";
-          ctx.font = `bold ${Math.round(radius * 1.05)}px Inter, system-ui, sans-serif`;
+          const fontSize = tile.initials.length > 1 ? Math.round(radius * 0.78) : Math.round(radius * 1.05);
+          ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(tile.initials, centerX, centerY + 1);
@@ -1045,8 +1053,8 @@ class StageBroadcaster {
         ctx.font = "bold 11px Inter, system-ui, sans-serif";
         const pillW = Math.min(180, displayName.length * 7 + 36);
         const pillH = 24;
-        const pillX = x + 10;
-        const pillY = y + h - pillH - 10;
+        const pillX = x + 12;
+        const pillY = y + h - pillH - 12;
 
         ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
         this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);

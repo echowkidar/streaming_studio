@@ -258,7 +258,9 @@ export function getDefaultSlotBounds(
       }
       const bottomTotal = Math.max(1, effectiveTotal - 1);
       const botW = Math.max(15, Math.min(30, (96 - (bottomTotal - 1) * 2) / bottomTotal));
-      const botX = 2 + (index - 1) * (botW + 2);
+      const totalBotW = bottomTotal * botW + (bottomTotal - 1) * 2;
+      const startX = Math.max(2, (100 - totalBotW) / 2);
+      const botX = startX + (index - 1) * (botW + 2);
       const botH = Math.max(15, 100 - presSplit - 5);
       return {
         x: Math.min(100 - botW - 2, botX),
@@ -328,6 +330,41 @@ export function getDefaultSlotBounds(
     }
 
     case "six-grid": {
+      if (effectiveTotal <= 1) {
+        return { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
+      }
+      if (effectiveTotal === 2) {
+        return getDefaultSlotBounds("side-by-side", index, 2, splitRatio, customConfig);
+      }
+      if (effectiveTotal === 3) {
+        return getDefaultSlotBounds("three-equal", index, 3, splitRatio, customConfig);
+      }
+      if (effectiveTotal === 4) {
+        return getDefaultSlotBounds("four-grid", index, 4, splitRatio, customConfig);
+      }
+      if (effectiveTotal === 5) {
+        // StreamYard classic 5-seat: 3 on top, 2 centered on bottom
+        if (index < 3) {
+          return {
+            x: 2 + index * 32.5,
+            y: 3,
+            width: 31,
+            height: 46,
+            zIndex: 10,
+            isLockedRatio: true,
+          };
+        }
+        const botIndex = index - 3;
+        const startX = (100 - (2 * 31 + 2)) / 2; // 18%
+        return {
+          x: startX + botIndex * 33,
+          y: 51,
+          width: 31,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
       const col = index % 3;
       const row = Math.floor(index / 3);
       return {
@@ -644,11 +681,11 @@ export function calculateStageLayout(
       const botH = Math.max(15, 100 - presSplit - 5);
       const bottomTotal = Math.max(1, totalParticipants);
       const botW = Math.max(15, Math.min(32, (96 - (bottomTotal - 1) * 2) / bottomTotal));
+      const totalRowW = bottomTotal * botW + (bottomTotal - 1) * 2;
+      const startX = Math.max(2, (100 - totalRowW) / 2);
 
       for (let i = 0; i < totalParticipants; i++) {
-        const xPos = totalParticipants === 1
-          ? (100 - botW) / 2
-          : Math.min(100 - botW - 2, 2 + i * (botW + 2));
+        const xPos = startX + i * (botW + 2);
         participantBounds.push({
           x: xPos,
           y: Math.min(85, presSplit + 2),
@@ -738,7 +775,71 @@ export function calculateStageLayout(
     }
 
     case "four-grid": {
-      // 2x2 Grid sharing: Media takes tile 0, participants take remaining tiles
+      if (totalParticipants === 0) {
+        const mediaBounds: ParticipantBounds = {
+          x: 12,
+          y: 12,
+          width: 76,
+          height: 76,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        return { mediaBounds, participantBounds };
+      }
+
+      if (totalParticipants === 1) {
+        // StreamYard 2-item side-by-side: Media on left, participant on right
+        const col0W = Math.max(15, safeSplit - 3);
+        const col1W = Math.max(15, 100 - safeSplit - 3);
+        const mediaBounds: ParticipantBounds = {
+          x: 2,
+          y: 4,
+          width: col0W,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        participantBounds.push({
+          x: Math.min(85, safeSplit + 1),
+          y: 4,
+          width: col1W,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        return { mediaBounds, participantBounds };
+      }
+
+      if (totalParticipants === 2) {
+        // 3 items total (1 media + 2 participants): 2 on top, 1 centered on bottom (StreamYard Triad)
+        const mediaBounds: ParticipantBounds = {
+          x: 2,
+          y: 3,
+          width: 47,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        participantBounds.push({
+          x: 51,
+          y: 3,
+          width: 47,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        participantBounds.push({
+          x: 26.5,
+          y: 51,
+          width: 47,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        return { mediaBounds, participantBounds };
+      }
+
+      // 4+ items: 2x2 Grid sharing (Media takes tile 0, participants take remaining tiles)
       const col0W = Math.max(15, safeSplit - 3);
       const col1W = Math.max(15, 100 - safeSplit - 3);
 
@@ -768,6 +869,75 @@ export function calculateStageLayout(
     }
 
     case "three-equal": {
+      if (totalParticipants === 0) {
+        const mediaBounds: ParticipantBounds = {
+          x: 12,
+          y: 12,
+          width: 76,
+          height: 76,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        return { mediaBounds, participantBounds };
+      }
+
+      if (totalParticipants === 1) {
+        // StreamYard: 2 items on stage (1 media + 1 participant) -> 2 equal tall columns (50% / 50%)
+        const col0W = Math.max(20, safeSplit - 3);
+        const col1W = Math.max(20, 100 - safeSplit - 3);
+        const mediaBounds: ParticipantBounds = {
+          x: 2,
+          y: 4,
+          width: col0W,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        participantBounds.push({
+          x: Math.min(85, safeSplit + 1),
+          y: 4,
+          width: col1W,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        return { mediaBounds, participantBounds };
+      }
+
+      if (totalParticipants === 2) {
+        // 3 items total (1 media + 2 participants) -> 3 equal tall columns
+        const col0W = Math.max(15, Math.min(65, safeSplit - 3));
+        const remainingW = 96 - col0W - 4;
+        const otherW = Number((remainingW / 2).toFixed(1));
+
+        const mediaBounds: ParticipantBounds = {
+          x: 2,
+          y: 4,
+          width: col0W,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        participantBounds.push({
+          x: 2 + col0W + 2,
+          y: 4,
+          width: otherW,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        participantBounds.push({
+          x: 2 + col0W + 2 + otherW + 2,
+          y: 4,
+          width: otherW,
+          height: 92,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        return { mediaBounds, participantBounds };
+      }
+
+      // 4+ items: Media takes left column, participants stack in right columns
       const col0W = Math.max(15, Math.min(65, safeSplit - 3));
       const remainingW = 96 - col0W - 4;
       const otherW = Number((remainingW / 2).toFixed(1));
@@ -781,32 +951,116 @@ export function calculateStageLayout(
         isLockedRatio: true,
       };
 
-      if (totalParticipants > 0) {
+      for (let i = 0; i < totalParticipants; i++) {
+        const colIdx = i % 2;
+        const rowIdx = Math.floor(i / 2);
+        const rows = Math.ceil(totalParticipants / 2);
+        const rowH = Math.max(20, (92 - (rows - 1) * 2) / rows);
         participantBounds.push({
-          x: 2 + col0W + 2,
-          y: 4,
+          x: 2 + col0W + 2 + colIdx * (otherW + 2),
+          y: 4 + rowIdx * (rowH + 2),
           width: otherW,
-          height: 92,
+          height: rowH,
           zIndex: 10,
           isLockedRatio: true,
         });
       }
-      if (totalParticipants > 1) {
+      return { mediaBounds, participantBounds };
+    }
+
+    case "six-grid": {
+      if (totalParticipants === 0) {
+        const mediaBounds: ParticipantBounds = {
+          x: 12,
+          y: 12,
+          width: 76,
+          height: 76,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        return { mediaBounds, participantBounds };
+      }
+
+      if (totalParticipants === 1) {
+        // 2 items total (1 media + 1 participant) -> 2 equal columns side-by-side
+        return calculateStageLayout("three-equal", 1, true, safeSplit, customConfig);
+      }
+
+      if (totalParticipants === 2) {
+        // 3 items total (1 media + 2 participants) -> 2 top, 1 centered bottom
+        return calculateStageLayout("four-grid", 2, true, safeSplit, customConfig);
+      }
+
+      if (totalParticipants === 3) {
+        // 4 items total (1 media + 3 participants) -> 2x2 grid
+        return calculateStageLayout("four-grid", 3, true, safeSplit, customConfig);
+      }
+
+      if (totalParticipants === 4) {
+        // 5 items total (1 media + 4 participants) -> 3 top, 2 centered bottom
+        const mediaBounds: ParticipantBounds = {
+          x: 2,
+          y: 3,
+          width: 31,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
         participantBounds.push({
-          x: 2 + col0W + 2 + otherW + 2,
-          y: 4,
-          width: otherW,
-          height: 92,
+          x: 34.5,
+          y: 3,
+          width: 31,
+          height: 46,
           zIndex: 10,
           isLockedRatio: true,
         });
-      }
-      for (let i = 2; i < totalParticipants; i++) {
         participantBounds.push({
-          x: 2 + col0W + 2 + otherW + 2,
-          y: 4 + (i - 2) * 25,
-          width: otherW,
-          height: 25,
+          x: 67,
+          y: 3,
+          width: 31,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        const startX = (100 - (2 * 31 + 2)) / 2; // 18%
+        participantBounds.push({
+          x: startX,
+          y: 51,
+          width: 31,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        participantBounds.push({
+          x: startX + 33,
+          y: 51,
+          width: 31,
+          height: 46,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+        return { mediaBounds, participantBounds };
+      }
+
+      // 6+ items (1 media + 5+ participants): 3x2 grid
+      const mediaBounds: ParticipantBounds = {
+        x: 2,
+        y: 3,
+        width: 31,
+        height: 46,
+        zIndex: 10,
+        isLockedRatio: true,
+      };
+
+      for (let i = 0; i < totalParticipants; i++) {
+        const slot = i + 1;
+        const col = slot % 3;
+        const row = Math.floor(slot / 3);
+        participantBounds.push({
+          x: 2 + col * 32.5,
+          y: row === 0 ? 3 : 51,
+          width: 31,
+          height: 46,
           zIndex: 10,
           isLockedRatio: true,
         });

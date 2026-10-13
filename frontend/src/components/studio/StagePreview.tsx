@@ -10,6 +10,7 @@ import {
   Move,
   Maximize2,
   Crop,
+  Layers,
   Lock,
   Unlock,
   RotateCcw,
@@ -740,7 +741,18 @@ export const StagePreview: React.FC = () => {
         data-stage-tile="true"
         data-participant-tile="true"
         data-participant-name={p.name || "Guest"}
-        data-participant-initials={p.name ? p.name.trim()[0].toUpperCase() : "G"}
+        data-participant-initials={
+          p.name
+            ? p.name
+                .trim()
+                .split(" ")
+                .map((n) => (n ? n[0] : ""))
+                .filter(Boolean)
+                .join("")
+                .toUpperCase()
+                .slice(0, 2) || "G"
+            : "G"
+        }
         data-participant-cam={p.camOn ? "on" : "off"}
         data-participant-mic={p.micOn ? "on" : "off"}
         data-participant-speaking={p.isSpeaking ? "true" : "false"}
@@ -769,13 +781,20 @@ export const StagePreview: React.FC = () => {
   // Helper to render active stage media (video/slides/image)
   const renderMediaTile = () => {
     if (!activeMedia) return null;
+    const isTransparentCard = Boolean(mediaTransform.isTransparentBg);
     return (
       <div
         data-stage-tile="true"
         data-stage-media="true"
         data-media-name={activeMedia.name}
         data-participant-fit={mediaFitMode}
-        className="relative w-full h-full rounded-2xl overflow-hidden bg-black/95 border border-indigo-500/30 shadow-2xl flex items-center justify-center group select-none"
+        data-transparent-card={isTransparentCard ? "true" : "false"}
+        className={cn(
+          "relative w-full h-full rounded-2xl overflow-hidden flex items-center justify-center group select-none transition-all",
+          isTransparentCard
+            ? "bg-transparent border-0 shadow-none"
+            : "bg-black/95 border border-indigo-500/30 shadow-2xl"
+        )}
       >
         {/* Inner Media Viewport with Pan & Zoom Transform */}
         <div
@@ -962,6 +981,31 @@ export const StagePreview: React.FC = () => {
           >
             <Crop className="w-3 h-3" />
             <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Crop"}</span>
+          </button>
+
+          {/* Transparent Card Background Toggle */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setTileTransform("active-media", {
+                isTransparentBg: !mediaTransform.isTransparentBg,
+              });
+            }}
+            className={cn(
+              "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
+              mediaTransform.isTransparentBg
+                ? "bg-indigo-600 text-white font-bold border-indigo-400"
+                : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
+            )}
+            title={
+              mediaTransform.isTransparentBg
+                ? "Card Background: Transparent (Click to switch to Dark Card)"
+                : "Card Background: Dark Card (Click to make Card Transparent / Show Wallpaper)"
+            }
+          >
+            <Layers className="w-3 h-3" />
+            <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
           </button>
 
           {/* Zoom & Document Alignment Controls when in Crop / Fill mode */}
@@ -1159,10 +1203,12 @@ export const StagePreview: React.FC = () => {
               setSelectedParticipantId("active-media");
             }}
             className={cn(
-              "rounded-2xl overflow-visible select-none border transition-shadow",
+              "rounded-2xl overflow-visible select-none transition-shadow",
               isMediaSelected
                 ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer"
-                : "border-white/10 hover:border-indigo-400/50 cursor-pointer"
+                : mediaTransform.isTransparentBg
+                ? "border-0 hover:ring-1 hover:ring-white/20 cursor-pointer"
+                : "border border-white/10 hover:border-indigo-400/50 cursor-pointer"
             )}
           >
             {/* Inner Media Content */}
@@ -1206,6 +1252,30 @@ export const StagePreview: React.FC = () => {
                 >
                   <Crop className="w-3 h-3 text-amber-400" />
                   <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
+                </button>
+
+                {/* Transparent Card Background Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTileTransform("active-media", {
+                      isTransparentBg: !mediaTransform.isTransparentBg,
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
+                    mediaTransform.isTransparentBg
+                      ? "bg-indigo-500/30 text-indigo-300 border-indigo-400 font-bold"
+                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
+                  )}
+                  title={
+                    mediaTransform.isTransparentBg
+                      ? "Card Background: Transparent (Click to switch to Dark Card)"
+                      : "Card Background: Dark Card (Click to make Card Transparent / Show Wallpaper)"
+                  }
+                >
+                  <Layers className="w-3 h-3 text-indigo-400" />
+                  <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
                 </button>
 
                 {/* Additional Crop & Zoom Controls */}

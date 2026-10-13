@@ -73,6 +73,7 @@ export interface StudioScene {
   splitRatio?: number;
   onStageParticipantIds?: (string | number)[];
   activeMedia?: MediaFileItem | null;
+  isTransparentMedia?: boolean;
   backgroundUrl?: string | null;
   backgroundType?: "image" | "video";
   overlayUrl?: string | null;
@@ -99,6 +100,7 @@ export interface TileTransform {
   rotation: number; // 0, 90, 180, 270
   flipH: boolean;
   flipV: boolean;
+  isTransparentBg?: boolean;
 }
 
 export interface ParticipantBounds {
@@ -1661,6 +1663,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     // 3. Active Media (StreamYard parity: always set to scene.activeMedia or null to clear previous scene's media)
     get().setActiveMedia(scene.activeMedia || null);
+    if (scene.isTransparentMedia !== undefined) {
+      get().setTileTransform("active-media", { isTransparentBg: Boolean(scene.isTransparentMedia) });
+    }
 
     // 4. Background
     if (scene.backgroundUrl !== undefined) {
@@ -1690,6 +1695,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       splitRatio: state.layoutSplitRatio,
       onStageParticipantIds: onStageIds,
       activeMedia: state.activeMedia || null,
+      isTransparentMedia: state.tileTransforms["active-media"]?.isTransparentBg ?? false,
       backgroundUrl: state.activeBackgroundUrl || null,
       backgroundType: state.activeBackgroundType,
       stageOverlay: state.activeStageOverlay || null,
