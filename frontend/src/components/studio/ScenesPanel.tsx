@@ -1358,7 +1358,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
             </div>
 
             <p className="text-[11px] text-slate-400 my-2.5 leading-relaxed">
-              Attach presentation slides (PDF), demo video, or stream media that automatically goes live when switching to this scene.
+              Select a video, slides (PDF), or media from your computer. Video plays directly from your PC with 0s wait time and streams live when switching to this scene.
             </p>
 
             <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar my-2 pr-1">
@@ -1529,7 +1529,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               ) : (
                 <>
                   <Upload className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Upload Presentation / Video from PC</span>
+                  <span>Select Video / Presentation from PC (Instant Local Play)</span>
                 </>
               )}
             </button>
