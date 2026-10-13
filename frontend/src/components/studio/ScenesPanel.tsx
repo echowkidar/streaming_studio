@@ -981,7 +981,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               onDrop={(e) => handleDrop(e, index)}
               onClick={() => switchScene(scene.id)}
               className={cn(
-                "group relative rounded-xl border transition-all duration-150 cursor-pointer overflow-hidden bg-[#11121d] shadow-md",
+                "group relative rounded-xl border transition-all duration-150 cursor-pointer bg-[#11121d] shadow-md",
+                activeMenuId === scene.id ? "overflow-visible z-30" : "overflow-hidden",
                 isActive
                   ? "border-indigo-500 ring-1 ring-indigo-500/50 shadow-indigo-500/20"
                   : "border-white/10 hover:border-white/25",
@@ -997,9 +998,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 <GripVertical className="w-3 h-3" />
               </div>
 
-              {/* 16:9 Thumbnail Preview */}
+              {/* 16:9 Thumbnail Preview (overflow-hidden strictly for inner canvas/badges) */}
               <div
-                className="relative w-full aspect-video bg-[#07070e] overflow-hidden"
+                className="relative w-full aspect-video bg-[#07070e] rounded-t-xl overflow-hidden"
                 style={{
                   backgroundImage: scene.backgroundUrl ? `url(${scene.backgroundUrl})` : undefined,
                   backgroundSize: "cover",
@@ -1010,46 +1011,94 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 {renderThumbnailContent(scene)}
 
                 {/* Layout Badge (Top Left) */}
-                <div className="absolute top-1 left-1 z-20 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
+                <div className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
                   <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
-                </div>
-
-                {/* Hover/Active Badges */}
-                <div className="absolute top-1 right-1 z-20 flex items-center gap-1 pointer-events-auto">
-                  {/* Clapperboard if media attached */}
-                  {scene.activeMedia && (
-                    <span className="p-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300">
-                      <Clapperboard className="w-2.5 h-2.5" />
-                    </span>
-                  )}
-
-                  {/* 3-dots Context Menu Button */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveMenuId(activeMenuId === scene.id ? null : scene.id);
-                    }}
-                    className="p-1 rounded bg-black/70 hover:bg-black text-slate-300 hover:text-white transition-colors"
-                    title="Scene options"
-                  >
-                    <MoreVertical className="w-3 h-3" />
-                  </button>
                 </div>
 
                 {/* Media Label Badge on thumbnail */}
                 {scene.activeMedia && (
-                  <div className="absolute bottom-1 left-1 z-20 flex items-center gap-1 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 border border-cyan-500/40 shadow-md pointer-events-none">
+                  <div className="absolute bottom-1 left-1 z-10 flex items-center gap-1 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 border border-cyan-500/40 shadow-md pointer-events-none">
                     {scene.activeMedia.type === "pdf" ? <FileText className="w-2.5 h-2.5 text-cyan-300" /> : <Clapperboard className="w-2.5 h-2.5 text-indigo-300" />}
                     <span className="truncate max-w-[80px]">{scene.activeMedia.name}</span>
                   </div>
                 )}
+              </div>
 
-                {/* Context Menu Dropdown */}
-                {activeMenuId === scene.id && (
+              {/* Action Buttons (Top Right) */}
+              <div className="absolute top-1 right-1 z-20 flex items-center gap-1 pointer-events-auto">
+                {/* Clapperboard if media attached */}
+                {scene.activeMedia && (
+                  <span className="p-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300">
+                    <Clapperboard className="w-2.5 h-2.5" />
+                  </span>
+                )}
+
+                {/* Quick Duplicate Button on hover */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    duplicateScene(scene.id);
+                  }}
+                  className="p-1 rounded bg-black/75 hover:bg-black text-slate-300 hover:text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Duplicate scene"
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+
+                {/* Quick Delete Button on hover (if > 1 scene) */}
+                {scenes.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteScene(scene.id);
+                    }}
+                    className="p-1 rounded bg-black/75 hover:bg-black text-slate-300 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Delete scene"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
+
+                {/* 3-dots Context Menu Button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenuId(activeMenuId === scene.id ? null : scene.id);
+                  }}
+                  className={cn(
+                    "p-1 rounded transition-colors",
+                    activeMenuId === scene.id
+                      ? "bg-indigo-600 text-white"
+                      : "bg-black/75 hover:bg-black text-slate-300 hover:text-white"
+                  )}
+                  title="Scene options"
+                >
+                  <MoreVertical className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Context Menu Dropdown (Rendered outside thumbnail overflow-hidden container) */}
+              {activeMenuId === scene.id && (
+                <>
+                  {/* Backdrop to dismiss menu on outside click */}
+                  <div
+                    className="fixed inset-0 z-40 cursor-default"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveMenuId(null);
+                    }}
+                  />
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute top-6 right-1 z-50 w-44 bg-[#141525] border border-white/20 rounded-xl shadow-2xl p-1 text-xs animate-in fade-in zoom-in-95"
+                    className={cn(
+                      "absolute right-1 z-50 w-48 bg-[#151628] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95",
+                      index >= scenes.length - 2 && scenes.length > 2
+                        ? "bottom-8"
+                        : "top-7"
+                    )}
                   >
                     <button
                       type="button"
@@ -1092,6 +1141,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                         type="button"
                         onClick={() => {
                           handleAttachMedia(scene.id, null);
+                          setActiveMenuId(null);
                         }}
                         className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2"
                       >
@@ -1100,14 +1150,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleStartRename(scene)}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Rename scene</span>
-                    </button>
+                    <div className="my-1 border-t border-white/10" />
 
                     <button
                       type="button"
@@ -1115,28 +1158,43 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                         duplicateScene(scene.id);
                         setActiveMenuId(null);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 font-medium"
                     >
                       <Copy className="w-3.5 h-3.5 text-amber-400" />
                       <span>Duplicate scene</span>
                     </button>
 
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleStartRename(scene);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Rename scene</span>
+                    </button>
+
                     {scenes.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          deleteScene(scene.id);
-                          setActiveMenuId(null);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete scene</span>
-                      </button>
+                      <>
+                        <div className="my-1 border-t border-white/10" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            deleteScene(scene.id);
+                            setActiveMenuId(null);
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2 font-medium"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Delete scene</span>
+                        </button>
+                      </>
                     )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
 
               {/* Bottom Scene Title Pill Bar */}
               <div
