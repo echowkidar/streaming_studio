@@ -1,10 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
+import { config } from '../config';
 
 const router = Router({ mergeParams: true });
 
 const StudioSchema = z.object({
+  id: z.string().optional(),
   name: z.string().min(1, 'Studio name is required'),
   description: z.string().optional(),
   defaultLayout: z.string().default('solo'),
@@ -20,6 +23,27 @@ async function resolveWorkspaceId(req: Request): Promise<string> {
     const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
     if (ws) return ws.id;
   }
+
+  // If user is authenticated with Bearer token, get their personal/assigned workspace
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, config.JWT_SECRET) as any;
+      if (decoded?.userId) {
+        const member = await prisma.workspaceMember.findFirst({
+          where: { userId: decoded.userId },
+        });
+        if (member) return member.workspaceId;
+
+        const owned = await prisma.workspace.findFirst({
+          where: { ownerId: decoded.userId },
+        });
+        if (owned) return owned.id;
+      }
+    } catch {}
+  }
+
   const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
   if (defaultWs) return defaultWs.id;
 
@@ -46,8 +70,16 @@ router.post('/', async (req: Request, res: Response, next: NextFunction): Promis
     const data = StudioSchema.parse(req.body);
     const workspaceId = data.workspaceId || (await resolveWorkspaceId(req));
 
-    const studio = await prisma.studio.create({
-      data: {
+    const studio = await prisma.studio.upsert({
+      where: { id: data.id || 'not-found' },
+      update: {
+        name: data.name,
+        description: data.description,
+        defaultLayout: data.defaultLayout,
+        settings: data.settings as any,
+      },
+      create: {
+        ...(data.id ? { id: data.id } : {}),
         workspaceId,
         name: data.name,
         description: data.description,
@@ -114,13 +146,23 @@ router.get('/:studioId', async (req: Request, res: Response, next: NextFunction)
 router.put('/:studioId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = UpdateStudioSchema.parse(req.body);
-    const updated = await prisma.studio.update({
+    const workspaceId = await resolveWorkspaceId(req);
+
+    const updated = await prisma.studio.upsert({
       where: { id: req.params.studioId },
-      data: {
-        name: data.name,
-        description: data.description,
-        defaultLayout: data.defaultLayout,
-        settings: data.settings ? (data.settings as any) : undefined,
+      update: {
+        ...(data.name ? { name: data.name } : {}),
+        ...(data.description !== undefined ? { description: data.description } : {}),
+        ...(data.defaultLayout ? { defaultLayout: data.defaultLayout } : {}),
+        ...(data.settings ? { settings: data.settings as any } : {}),
+      },
+      create: {
+        id: req.params.studioId,
+        workspaceId,
+        name: data.name || req.params.studioId,
+        description: data.description || '',
+        defaultLayout: data.defaultLayout || 'solo',
+        settings: (data.settings as any) || {},
       },
     });
 

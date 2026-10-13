@@ -241,6 +241,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
       formData.append("studioId", effectiveStudioId);
+      formData.append("isPersistent", "true");
       if (videoDuration > 0) formData.append("duration", videoDuration.toString());
       if (videoWidth > 0) formData.append("width", videoWidth.toString());
       if (videoHeight > 10) formData.append("height", videoHeight.toString());

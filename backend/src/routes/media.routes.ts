@@ -26,6 +26,10 @@ export async function deleteSessionMedia(sessionId: string): Promise<number> {
   try {
     const assets = await prisma.mediaAsset.findMany({
       where: {
+        tags: { has: 'temporary' },
+        NOT: {
+          tags: { has: 'persistent' },
+        },
         OR: [
           { tags: { has: `studio-${sessionId}` } },
           { tags: { has: `studio-${cleanId}` } },
@@ -70,6 +74,9 @@ setInterval(async () => {
     const expiredAssets = await prisma.mediaAsset.findMany({
       where: {
         tags: { has: 'temporary' },
+        NOT: {
+          tags: { has: 'persistent' },
+        },
         createdAt: { lt: tenMinutesAgo },
       },
     });
@@ -356,6 +363,16 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
 
     const storageKey = `local://${localFileName}`;
 
+    const isPersistent =
+      req.body.isPersistent === 'true' ||
+      req.body.isPersistent === true ||
+      req.body.isPermanent === 'true' ||
+      req.body.permanent === 'true';
+
+    const tags = isPersistent
+      ? ['persistent', 'studio-asset', `studio-${studioId}`, `studio-${cleanStudioId}`]
+      : ['temporary', `studio-${studioId}`, `studio-${cleanStudioId}`, `session-${studioId}`, `session-${cleanStudioId}`];
+
     const mediaAsset = await prisma.mediaAsset.create({
       data: {
         workspaceId,
@@ -364,10 +381,11 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
         mimeType,
         fileSize: BigInt(req.file.size),
         storagePath: storageKey,
-        tags: ['temporary', `studio-${studioId}`, `studio-${cleanStudioId}`, `session-${studioId}`, `session-${cleanStudioId}`],
+        tags,
         metadata: {
           studioId,
-          isTemporary: true,
+          isTemporary: !isPersistent,
+          isPersistent,
           uploadedAt: Date.now(),
           duration: req.body.duration ? Number(req.body.duration) : undefined,
           width: req.body.width ? Number(req.body.width) : undefined,
@@ -400,7 +418,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
     // Filter: Include non-temporary (permanent) assets AND temporary assets matching this studio
     const filtered = assets.filter((asset) => {
       const tags = asset.tags || [];
-      if (!tags.includes('temporary')) return true;
+      if (!tags.includes('temporary') || tags.includes('persistent')) return true;
       if (!studioId) return true;
       return (
         tags.includes(`studio-${studioId}`) ||

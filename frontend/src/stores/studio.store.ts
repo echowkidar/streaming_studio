@@ -569,13 +569,33 @@ function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayoutState
   }
 }
 
+let persistCloudTimeout: any = null;
+
 function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
   if (typeof window === "undefined") return;
   try {
-    const key = getStudioStorageKey(activeStudioId);
-    const current = loadSavedStudioLayout(activeStudioId);
+    const targetStudioId = activeStudioId;
+    const key = getStudioStorageKey(targetStudioId);
+    const current = loadSavedStudioLayout(targetStudioId);
     const next = { ...current, ...updates };
     localStorage.setItem(key, JSON.stringify(next));
+
+    // Debounced sync to Backend Database for Cross-Device & Cross-Browser Persistence
+    if (targetStudioId) {
+      if (persistCloudTimeout) clearTimeout(persistCloudTimeout);
+      persistCloudTimeout = setTimeout(() => {
+        import("@/lib/api").then(({ apiRequest }) => {
+          apiRequest(`/api/studios/${targetStudioId}`, {
+            method: "PUT",
+            data: {
+              settings: next,
+              defaultLayout: next.activeLayout || "solo",
+              name: next.broadcastTitle,
+            },
+          }).catch(() => {});
+        });
+      }, 1200);
+    }
   } catch {
     // ignore
   }
@@ -782,6 +802,46 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       activeMedia: saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null,
       isScenesPanelOpen: saved.isScenesPanelOpen ?? true,
     });
+
+    // Background Cloud Sync: Fetch studio settings from backend database to sync across devices
+    if (typeof window !== "undefined") {
+      import("@/lib/api").then(({ apiRequest }) => {
+        apiRequest<any>(`/api/studios/${studioId}`)
+          .then((res) => {
+            if (res.success && res.data?.settings && typeof res.data.settings === "object") {
+              const cloud = res.data.settings as SavedStudioLayoutState;
+              if (cloud.scenes && cloud.scenes.length > 0) {
+                try {
+                  const key = getStudioStorageKey(studioId);
+                  localStorage.setItem(key, JSON.stringify(cloud));
+                } catch {}
+
+                const cloudActiveScene =
+                  cloud.scenes.find((s) => s.id === cloud.activeSceneId) || cloud.scenes[0];
+
+                set((state) => {
+                  if (state.currentStudioId !== studioId) return state;
+                  return {
+                    scenes: cloud.scenes || state.scenes,
+                    activeSceneId: cloud.activeSceneId || state.activeSceneId,
+                    activeLayout: cloud.activeLayout || cloudActiveScene?.layout || state.activeLayout,
+                    layoutSplitRatio: cloud.layoutSplitRatio || cloudActiveScene?.splitRatio || state.layoutSplitRatio,
+                    broadcastTitle: cloud.broadcastTitle || res.data.name || state.broadcastTitle,
+                    tickerText: cloud.tickerText || state.tickerText,
+                    showTicker: cloud.showTicker !== undefined ? cloud.showTicker : state.showTicker,
+                    logoConfig: cloud.logoConfig || state.logoConfig,
+                    showLogo: cloud.showLogo !== undefined ? cloud.showLogo : state.showLogo,
+                    activeBanner: cloud.activeBanner !== undefined ? cloud.activeBanner : state.activeBanner,
+                    activeStageOverlay: cloud.activeStageOverlay !== undefined ? cloud.activeStageOverlay : state.activeStageOverlay,
+                    activeMedia: cloud.activeMedia !== undefined ? cloud.activeMedia : state.activeMedia,
+                  };
+                });
+              }
+            }
+          })
+          .catch(() => {});
+      });
+    }
   },
 
   broadcastTitle: "Product Launch & Live Q&A Keynote",

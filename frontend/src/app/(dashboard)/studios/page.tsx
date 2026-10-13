@@ -75,23 +75,71 @@ export default function StudiosPage() {
   const [newStudioDesc, setNewStudioDesc] = useState("");
   const [newStudioLayout, setNewStudioLayout] = useState<string>("side-by-side");
 
-  // Load persisted studios from localStorage on mount
+  // Load persisted studios from Backend Cloud Database & localStorage
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setStudios(parsed);
-          return;
+    // 1. Instant fast render from localStorage cache (0ms latency)
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setStudios(parsed);
+          }
         }
-      }
-    } catch {}
-    // First run fallback: persist default presets
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(defaultStudios));
-    } catch {}
+      } catch {}
+    }
+
+    // 2. Fetch all user studios from PostgreSQL Database API for Cross-Device Sync
+    apiRequest<any[]>("/api/studios")
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          const mapped: StudioCardItem[] = res.data.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            description: s.description || "Reusable broadcast studio stage.",
+            layout:
+              s.defaultLayout === "cropped"
+                ? "Podcast Split Screen"
+                : s.defaultLayout === "presentation"
+                ? "Presentation + Screen"
+                : s.defaultLayout === "solo"
+                ? "Solo Host"
+                : "Two Equal Participants",
+            defaultLayout: s.defaultLayout || "side-by-side",
+            activeBroadcasts: s._count?.broadcasts || 0,
+            membersCount: 1,
+            updatedAt: "Cloud synced",
+            isDefault: Boolean(s.id.includes("main")),
+          }));
+          setStudios(mapped);
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(mapped));
+            } catch {}
+          }
+        } else if (res.success && Array.isArray(res.data) && res.data.length === 0) {
+          // If first time account with 0 studios in database, seed the default templates to database
+          defaultStudios.forEach((ds) => {
+            apiRequest("/api/studios", {
+              method: "POST",
+              data: {
+                id: ds.id,
+                name: ds.name,
+                description: ds.description,
+                defaultLayout: ds.defaultLayout,
+              },
+            }).catch(() => {});
+          });
+          setStudios(defaultStudios);
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(storageKey, JSON.stringify(defaultStudios));
+            } catch {}
+          }
+        }
+      })
+      .catch(() => {});
   }, [storageKey]);
 
   const saveStudios = (updatedList: StudioCardItem[]) => {
@@ -131,50 +179,53 @@ export default function StudiosPage() {
       isDefault: false,
     };
 
-    // Pre-initialize isolated storage for this studio
+    const initialStudioState = {
+      broadcastTitle: newStudio.name,
+      activeLayout: newStudioLayout,
+      layoutSplitRatio: 50,
+      scenes: [
+        {
+          id: `scene-host-${newId}`,
+          name: "Host Intro",
+          layout: "solo",
+          splitRatio: 50,
+          thumbnailColor: "#6366f1",
+        },
+        {
+          id: `scene-main-${newId}`,
+          name: "Stage Main",
+          layout: newStudioLayout,
+          splitRatio: 50,
+          thumbnailColor: "#10b981",
+        },
+        {
+          id: `scene-screen-${newId}`,
+          name: "Slides & Share",
+          layout: "presentation",
+          splitRatio: 65,
+          thumbnailColor: "#06b6d4",
+        },
+      ],
+      activeSceneId: `scene-main-${newId}`,
+    };
+
+    // Pre-initialize isolated local storage cache for this studio
     if (typeof window !== "undefined") {
       try {
         const studioStorageKey = `livestudio_studio_${newId}`;
-        const initialStudioState = {
-          broadcastTitle: newStudio.name,
-          activeLayout: newStudioLayout,
-          layoutSplitRatio: 50,
-          scenes: [
-            {
-              id: `scene-host-${newId}`,
-              name: "Host Intro",
-              layout: "solo",
-              splitRatio: 50,
-              thumbnailColor: "#6366f1",
-            },
-            {
-              id: `scene-main-${newId}`,
-              name: "Stage Main",
-              layout: newStudioLayout,
-              splitRatio: 50,
-              thumbnailColor: "#10b981",
-            },
-            {
-              id: `scene-screen-${newId}`,
-              name: "Slides & Share",
-              layout: "presentation",
-              splitRatio: 65,
-              thumbnailColor: "#06b6d4",
-            },
-          ],
-          activeSceneId: `scene-main-${newId}`,
-        };
         localStorage.setItem(studioStorageKey, JSON.stringify(initialStudioState));
       } catch {}
     }
 
-    // Try backend sync non-blockingly
+    // Persist to Cloud Database (PostgreSQL) so it syncs across all devices and logins
     apiRequest("/api/studios", {
       method: "POST",
       data: {
+        id: newStudio.id,
         name: newStudio.name,
         description: newStudio.description,
         defaultLayout: newStudioLayout,
+        settings: initialStudioState,
       },
     }).catch(() => {});
 
@@ -194,6 +245,7 @@ export default function StudiosPage() {
           localStorage.removeItem(`livestudio_studio_${id}`);
         } catch {}
       }
+      apiRequest(`/api/studios/${id}`, { method: "DELETE" }).catch(() => {});
     }
   };
 

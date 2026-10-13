@@ -496,6 +496,11 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
       formData.append("file", file);
       formData.append("name", file.name);
       formData.append("assetType", item.type.toUpperCase());
+      const currentStudioId = useStudioStore.getState().currentStudioId || "";
+      if (currentStudioId) {
+        formData.append("studioId", currentStudioId);
+      }
+      formData.append("isPersistent", "true");
       const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
 
       const res = await fetch("/api/media/upload", {
