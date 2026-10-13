@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   Video,
   Volume2,
@@ -116,9 +116,8 @@ export const StagePreview: React.FC = () => {
 
   const handleToggleMediaCrop = () => {
     if (mediaFitMode === "contain") {
-      // Switching to Crop (Fill) mode:
-      // Default directly to TOP (panY: -50) so document header/letterhead is preserved and immediately visible!
-      setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: -50 });
+      // Switching to Crop (Fill) mode: default to center
+      setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: 0 });
     } else {
       // Switching to Fit mode:
       setTileTransform("active-media", { fitMode: "contain", panX: 0, panY: 0, zoom: 1 });
@@ -139,16 +138,22 @@ export const StagePreview: React.FC = () => {
     });
   };
 
-  const handleMediaCropPreset = (preset: "top" | "center" | "bottom") => {
+  const handleMediaCropPreset = (preset: "top" | "center" | "bottom" | "left" | "right") => {
     if (preset === "top") {
       // Align to Top / Header (0%)
       setTileTransform("active-media", { fitMode: "cover", panY: -50, panX: 0 });
-    } else if (preset === "center") {
-      // Center (50%)
-      setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
     } else if (preset === "bottom") {
       // Align to Bottom / Signatures (100%)
       setTileTransform("active-media", { fitMode: "cover", panY: 50, panX: 0 });
+    } else if (preset === "left") {
+      // Align to Left (0%)
+      setTileTransform("active-media", { fitMode: "cover", panX: -50, panY: 0 });
+    } else if (preset === "right") {
+      // Align to Right (100%)
+      setTileTransform("active-media", { fitMode: "cover", panX: 50, panY: 0 });
+    } else if (preset === "center") {
+      // Center (50%)
+      setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
     }
   };
 
@@ -309,6 +314,35 @@ export const StagePreview: React.FC = () => {
     "bottom-left": "bottom-14 left-6",
     "bottom-right": "bottom-14 right-6",
   };
+
+  const outerStageWrapperRef = useRef<HTMLDivElement>(null);
+  const [stageBox, setStageBox] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const el = outerStageWrapperRef.current;
+    if (!el) return;
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const targetRatio = 16 / 9;
+        let w = rect.width;
+        let h = w / targetRatio;
+        if (h > rect.height) {
+          h = rect.height;
+          w = h * targetRatio;
+        }
+        setStageBox({ width: Math.floor(w), height: Math.floor(h) });
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(el);
+    window.addEventListener("resize", updateSize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
 
   const stageContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingOverlayRef = useRef(false);
@@ -866,7 +900,7 @@ export const StagePreview: React.FC = () => {
           {isDraggingMediaPan && (
             <div className="absolute inset-0 pointer-events-none border-2 border-cyan-400/80 bg-cyan-950/20 flex items-center justify-center z-30">
               <span className="px-2.5 py-1 rounded-md bg-black/90 text-[11px] text-cyan-300 font-mono shadow-xl border border-cyan-500/40">
-                ✋ Pos: {Math.round(objectPosY)}% ({objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})
+                ✋ Pos: X {Math.round(objectPosX)}% • Y {Math.round(objectPosY)}%
               </span>
             </div>
           )}
@@ -874,9 +908,9 @@ export const StagePreview: React.FC = () => {
           {/* Help hint when hovering in crop mode */}
           {(mediaFitMode === "cover" || mediaZoom > 1) && !isDraggingMediaPan && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
-              <span>✋ Drag or scroll wheel to move</span>
+              <span>✋ Drag to move</span>
               <span className="text-white/40">•</span>
-              <span>Use Top / Btm buttons</span>
+              <span>Use Left / Center / Right / Top buttons</span>
             </div>
           )}
         </div>
@@ -1041,8 +1075,51 @@ export const StagePreview: React.FC = () => {
                 <ZoomIn className="w-3 h-3" />
               </button>
 
-              {/* Document Alignment Presets (Top for letterhead, Bottom for signatures) */}
+              {/* Document & Graphic Alignment Presets (Horizontal & Vertical) */}
               <div className="flex items-center gap-0.5 bg-white/5 rounded-lg border border-white/10 px-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("left");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    mediaPanX <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Show Left Side"
+                >
+                  Left
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("center");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    Math.abs(mediaPanX) < 20 && Math.abs(mediaPanY) < 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Center Alignment"
+                >
+                  Mid
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMediaCropPreset("right");
+                  }}
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                    mediaPanX >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                  )}
+                  title="Show Right Side"
+                >
+                  Right
+                </button>
+                <span className="w-px h-2.5 bg-white/20 mx-0.5" />
                 <button
                   type="button"
                   onClick={(e) => {
@@ -1056,20 +1133,6 @@ export const StagePreview: React.FC = () => {
                   title="Show Top / Letterhead"
                 >
                   Top
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("center");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    Math.abs(mediaPanY) < 20 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Center Alignment"
-                >
-                  Mid
                 </button>
                 <button
                   type="button"
@@ -1306,6 +1369,40 @@ export const StagePreview: React.FC = () => {
                     <div className="flex items-center gap-0.5 bg-white/5 rounded border border-white/10 px-0.5">
                       <button
                         type="button"
+                        onClick={() => handleMediaCropPreset("left")}
+                        className={cn(
+                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          mediaPanX <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Show Left Side"
+                      >
+                        Left
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMediaCropPreset("center")}
+                        className={cn(
+                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          Math.abs(mediaPanX) < 20 && Math.abs(mediaPanY) < 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Center Alignment"
+                      >
+                        Mid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMediaCropPreset("right")}
+                        className={cn(
+                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                          mediaPanX >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
+                        )}
+                        title="Show Right Side"
+                      >
+                        Right
+                      </button>
+                      <span className="w-px h-2.5 bg-white/20 mx-0.5" />
+                      <button
+                        type="button"
                         onClick={() => handleMediaCropPreset("top")}
                         className={cn(
                           "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
@@ -1314,17 +1411,6 @@ export const StagePreview: React.FC = () => {
                         title="Show Top / Letterhead"
                       >
                         Top
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("center")}
-                        className={cn(
-                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          Math.abs(mediaPanY) < 20 && mediaPanX === 0 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Center Alignment"
-                      >
-                        Mid
                       </button>
                       <button
                         type="button"
@@ -1835,18 +1921,24 @@ export const StagePreview: React.FC = () => {
   );
 
   return (
-    <div
-      ref={stageContainerRef}
-      id="livestudio-stage-container"
-      onClick={() => setSelectedParticipantId(null)}
-      className="relative w-full aspect-video max-h-full max-w-full rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
-      style={{
-        backgroundImage: !isFullBleedLayout && activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-      }}
-    >
+    <div ref={outerStageWrapperRef} className="w-full h-full flex items-center justify-center overflow-hidden p-1 sm:p-2">
+      <div
+        ref={stageContainerRef}
+        id="livestudio-stage-container"
+        onClick={() => setSelectedParticipantId(null)}
+        className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
+        style={{
+          width: stageBox ? `${stageBox.width}px` : "100%",
+          height: stageBox ? `${stageBox.height}px` : undefined,
+          aspectRatio: "16 / 9",
+          maxWidth: "100%",
+          maxHeight: "100%",
+          backgroundImage: !isFullBleedLayout && activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      >
       {/* Real-time Video Background Layer (Seamless continuous loop) */}
       {!isFullBleedLayout && isVideoBg && activeBackgroundUrl && (
         <video
@@ -2357,6 +2449,7 @@ export const StagePreview: React.FC = () => {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 };

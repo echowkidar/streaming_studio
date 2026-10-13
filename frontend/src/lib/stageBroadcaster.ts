@@ -843,8 +843,17 @@ class StageBroadcaster {
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
           const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
           const tRatio = w / h;
-          const objectPosX = Math.max(0, Math.min(100, 50 + panX));
-          const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+          let objectPosX = Math.max(0, Math.min(100, 50 + panX));
+          let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+          if (mediaVideo.style.objectPosition) {
+            const parts = mediaVideo.style.objectPosition.split(" ");
+            if (parts.length >= 2) {
+              const px = parseFloat(parts[0]);
+              const py = parseFloat(parts[1]);
+              if (!isNaN(px)) objectPosX = px;
+              if (!isNaN(py)) objectPosY = py;
+            }
+          }
 
           if (isCover) {
             let sw = mediaVideo.videoWidth;
@@ -891,8 +900,17 @@ class StageBroadcaster {
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
           const tRatio = w / h;
-          const objectPosX = Math.max(0, Math.min(100, 50 + panX));
-          const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+          let objectPosX = Math.max(0, Math.min(100, 50 + panX));
+          let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+          if (mediaImg.style.objectPosition) {
+            const parts = mediaImg.style.objectPosition.split(" ");
+            if (parts.length >= 2) {
+              const px = parseFloat(parts[0]);
+              const py = parseFloat(parts[1]);
+              if (!isNaN(px)) objectPosX = px;
+              if (!isNaN(py)) objectPosY = py;
+            }
+          }
 
           if (isCover) {
             let sw = mediaImg.naturalWidth;
