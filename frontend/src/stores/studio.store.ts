@@ -74,11 +74,11 @@ export interface SceneTextCard {
   enabled: boolean;
   heading: string;
   subheading?: string;
-  textColor: string;
-  bgColor: string;
-  bgOpacity: number;
-  position: "center" | "top" | "bottom-right" | "top-left";
-  fontSize: "small" | "medium" | "large" | "xlarge";
+  textColor?: string;
+  bgColor?: string;
+  bgOpacity?: number;
+  position?: "center" | "top" | "bottom-right" | "top-left";
+  fontSize?: "small" | "medium" | "large" | "xlarge";
 }
 
 export interface FairUseConfig {
@@ -122,6 +122,8 @@ export interface StudioScene {
   /** Scene Transition effect when switching into this scene */
   transitionType?: "cut" | "fade" | "wipe" | "stinger";
   stingerVideoUrl?: string | null;
+  /** StreamYard Paid Plan: Extra / Secondary Camera Device ID bound to this scene */
+  extraCameraDeviceId?: string | null;
   /** Rich Text / Title Card inside Scene */
   textCard?: SceneTextCard | null;
   isTransparentMedia?: boolean;
@@ -311,6 +313,10 @@ interface StudioState {
   // Scene Transition State
   isSceneTransitioning: boolean;
   activeTransitionType: "cut" | "fade" | "wipe" | "stinger";
+
+  // StreamYard Extra Camera Scene Binding
+  activeExtraCameraDeviceId: string | null;
+  setActiveExtraCameraDeviceId: (id: string | null) => void;
 
   // Unified Media Library
   mediaLibrary: MediaFileItem[];
@@ -1083,6 +1089,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       persistStudioLayout({ fairUseConfig: next });
       return { fairUseConfig: next };
     }),
+
+  activeExtraCameraDeviceId: null,
+  setActiveExtraCameraDeviceId: (id) => set({ activeExtraCameraDeviceId: id }),
 
   activeLayout: savedLayout.activeLayout || initialActiveScene?.layout || "speaker-large",
   setLayout: (layout) => {
@@ -2128,6 +2137,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       activeStageOverlay: nextStageOverlay,
       activeBanner: nextBanner,
       activeTextCard: nextTextCard,
+      activeExtraCameraDeviceId: scene.extraCameraDeviceId || null,
       customLayoutConfig: {
         ...state.customLayoutConfig,
         heroParticipantId: scene.heroParticipantId ?? null,
@@ -2159,6 +2169,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       expectedGuestSlots: existingScene?.expectedGuestSlots,
       autoAddGuestsToStage: existingScene?.autoAddGuestsToStage,
       activeMedia: state.activeMedia || null,
+      extraCameraDeviceId: state.activeExtraCameraDeviceId ?? existingScene?.extraCameraDeviceId ?? null,
       textCard: state.activeTextCard || null,
       isTransparentMedia: state.tileTransforms["active-media"]?.isTransparentBg ?? false,
       backgroundUrl: state.activeBackgroundUrl || null,

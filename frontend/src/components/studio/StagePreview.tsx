@@ -88,6 +88,7 @@ export const StagePreview: React.FC = () => {
     scenes,
     activeSceneId,
     fairUseConfig,
+    setFairUseConfig,
     activeTextCard,
     nextSlide,
     prevSlide,
@@ -1646,6 +1647,36 @@ export const StagePreview: React.FC = () => {
                       </>
                     )}
                   </button>
+                )}
+
+                {/* YouTube Fair-Use & Anti-Reused Content Protection Controls */}
+                <button
+                  type="button"
+                  onClick={() => setFairUseConfig({ enabled: !fairUseConfig.enabled })}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                    fairUseConfig?.enabled
+                      ? "bg-amber-500/25 text-amber-300 border-amber-500/50"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle YouTube Fair-Use & Anti-Reused Content Safe Mode"
+                >
+                  <ShieldAlert className="w-3 h-3 text-amber-400" />
+                  <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
+                </button>
+
+                {fairUseConfig?.enabled && (
+                  <select
+                    value={fairUseConfig?.autoPauseIntervalSec ?? 0}
+                    onChange={(e) => setFairUseConfig({ autoPauseIntervalSec: Number(e.target.value) })}
+                    className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
+                    title="Auto-Pause Interval (Anti-Content ID match)"
+                  >
+                    <option value={0}>Pause: Off</option>
+                    <option value={10}>Pause: 10s</option>
+                    <option value={15}>Pause: 15s</option>
+                    <option value={20}>Pause: 20s</option>
+                  </select>
                 )}
 
                 {/* Reset to Default */}

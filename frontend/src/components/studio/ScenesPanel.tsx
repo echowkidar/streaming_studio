@@ -1268,6 +1268,119 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       </div>
                     )}
 
+                    {/* Scene Text / Title Card Toggle & Quick Edit (StreamYard Paid Plan) */}
+                    <div className="px-2.5 py-1.5 text-slate-300 bg-white/[0.03] rounded-lg my-0.5">
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <FileText className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Title Card:</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentCard = scene.textCard;
+                            if (currentCard && currentCard.enabled) {
+                              updateScene(scene.id, { textCard: { ...currentCard, enabled: false } });
+                            } else {
+                              updateScene(scene.id, {
+                                textCard: {
+                                  enabled: true,
+                                  heading: currentCard?.heading || "Welcome to the Broadcast",
+                                  subheading: currentCard?.subheading || "StreamYard Pro Live Production",
+                                  position: "center",
+                                  bgColor: "rgba(15, 23, 42, 0.90)",
+                                  textColor: "#ffffff",
+                                  bgOpacity: 85,
+                                  fontSize: "large",
+                                },
+                              });
+                            }
+                          }}
+                          className={cn(
+                            "px-1.5 py-0.2 rounded text-[9px] font-bold uppercase",
+                            scene.textCard?.enabled
+                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                              : "bg-white/10 text-slate-400"
+                          )}
+                        >
+                          {scene.textCard?.enabled ? "ON" : "OFF"}
+                        </button>
+                      </div>
+                      {scene.textCard?.enabled && (
+                        <div className="space-y-1 mt-1.5">
+                          <input
+                            type="text"
+                            placeholder="Heading Title..."
+                            value={scene.textCard.heading || ""}
+                            onChange={(e) => {
+                              const base = scene.textCard || {
+                                enabled: true,
+                                heading: "",
+                                subheading: "",
+                              };
+                              updateScene(scene.id, {
+                                textCard: {
+                                  ...base,
+                                  enabled: true,
+                                  heading: e.target.value,
+                                },
+                              });
+                            }}
+                            className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-amber-400"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Subheading / Speaker name..."
+                            value={scene.textCard.subheading || ""}
+                            onChange={(e) => {
+                              const base = scene.textCard || {
+                                enabled: true,
+                                heading: "Welcome to Broadcast",
+                                subheading: "",
+                              };
+                              updateScene(scene.id, {
+                                textCard: {
+                                  ...base,
+                                  enabled: true,
+                                  subheading: e.target.value,
+                                },
+                              });
+                            }}
+                            className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Extra Camera Scene Binding (StreamYard Paid Plan) */}
+                    <div className="px-2.5 py-1.5 text-slate-300 bg-white/[0.03] rounded-lg my-0.5">
+                      <div className="text-[10px] text-slate-400 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Camera className="w-3 h-3 text-cyan-400" />
+                          <span>Extra / Overhead Camera:</span>
+                        </span>
+                        {scene.extraCameraDeviceId && (
+                          <button
+                            type="button"
+                            onClick={() => updateScene(scene.id, { extraCameraDeviceId: null })}
+                            className="text-[9px] text-rose-400 hover:underline"
+                          >
+                            Unbind
+                          </button>
+                        )}
+                      </div>
+                      <select
+                        value={scene.extraCameraDeviceId || ""}
+                        onChange={(e) => updateScene(scene.id, { extraCameraDeviceId: e.target.value || null })}
+                        className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="">Default Host Camera</option>
+                        <option value="extra-cam-topdown">Top-Down Document Camera</option>
+                        <option value="extra-cam-demo">Secondary Product Demo Cam</option>
+                        <option value="extra-cam-wide">Wide Studio Angle Cam</option>
+                      </select>
+                    </div>
+
                     <div className="my-1 border-t border-white/10" />
 
                     <button
