@@ -43,6 +43,7 @@ import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds, getLayoutExpectedSlots, calculateStageLayout } from "@/lib/layoutBounds";
+import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { StageTelestrator } from "./StageTelestrator";
 
 export const StagePreview: React.FC = () => {
@@ -280,6 +281,49 @@ export const StagePreview: React.FC = () => {
       }
     }
   }, [activeMedia?.isMuted, activeMedia?.volume]);
+
+  // Enforce Fair-Use Speed & 8-12s Random Jerk/Pause even during local Studio Preview
+  useEffect(() => {
+    if (!activeMedia || activeMedia.type !== "video" || !fairUseConfig?.enabled) return;
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      videoEl.playbackRate = fairUseConfig.playbackRate || 1.04;
+    }
+    if (!fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
+
+    let timer: NodeJS.Timeout;
+    const runCycle = () => {
+      const delayMs =
+        fairUseConfig.autoPauseIntervalSec === 8
+          ? Math.floor(8000 + Math.random() * 4000) // Random 8s to 12s
+          : fairUseConfig.autoPauseIntervalSec * 1000;
+
+      timer = setTimeout(() => {
+        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+        // Agar broadcaster chal raha hai to broadcaster khud handle karega, warna preview handle karega
+        if (v && !v.paused && !stageBroadcaster.isStreaming()) {
+          const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+          v.pause();
+          setTimeout(() => {
+            if (mode === "jerk-skip" && v.duration && v.currentTime + 0.35 < v.duration) {
+              v.currentTime += 0.25;
+            }
+            v.play().catch(() => {});
+          }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
+        }
+        runCycle();
+      }, delayMs);
+    };
+    runCycle();
+    return () => clearTimeout(timer);
+  }, [
+    activeMedia?.id,
+    activeMedia?.type,
+    fairUseConfig?.enabled,
+    fairUseConfig?.autoPauseIntervalSec,
+    fairUseConfig?.antiMatchMode,
+    fairUseConfig?.playbackRate,
+  ]);
 
   const params = useParams();
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null);
@@ -934,7 +978,10 @@ export const StagePreview: React.FC = () => {
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                transform: mediaZoom > 1 ? `scale(${mediaZoom})` : undefined,
+                transform: [
+                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
+                ].filter(Boolean).join(" ") || undefined,
                 transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
@@ -953,7 +1000,10 @@ export const StagePreview: React.FC = () => {
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                transform: mediaZoom > 1 ? `scale(${mediaZoom})` : undefined,
+                transform: [
+                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
+                ].filter(Boolean).join(" ") || undefined,
                 transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
@@ -991,6 +1041,22 @@ export const StagePreview: React.FC = () => {
               backgroundImage: `radial-gradient(rgba(255,255,255,0.18) 1px, transparent 0), radial-gradient(rgba(0,0,0,0.18) 1px, transparent 0)`,
               backgroundSize: "3px 3px",
               backgroundPosition: "0 0, 1.5px 1.5px",
+            }}
+          />
+        )}
+
+        {/* Old-Movie Bareek Vertical Scratches & Traveling Lines Overlay */}
+        {fairUseConfig?.enabled && (fairUseConfig?.vintageLinesOverlay ?? true) && (
+          <div
+            className="absolute inset-0 pointer-events-none z-15 overflow-hidden select-none opacity-45"
+            style={{
+              backgroundImage: `
+                repeating-linear-gradient(90deg, transparent 0%, transparent 13.5%, rgba(255,250,235,0.22) 13.55%, transparent 13.65%),
+                repeating-linear-gradient(90.4deg, transparent 0%, transparent 29.1%, rgba(0,0,0,0.28) 29.15%, transparent 29.25%),
+                repeating-linear-gradient(89.6deg, transparent 0%, transparent 47.3%, rgba(255,255,255,0.18) 47.34%, transparent 47.42%)
+              `,
+              backgroundSize: "190% 100%",
+              animation: "pulse 0.18s steps(3, end) infinite",
             }}
           />
         )}
@@ -1417,39 +1483,85 @@ export const StagePreview: React.FC = () => {
                 </button>
 
                 {fairUseConfig?.enabled && (
-                  <select
-                    value={fairUseConfig?.autoPauseIntervalSec ?? 0}
-                    onChange={(e) => setFairUseConfig({ autoPauseIntervalSec: Number(e.target.value) })}
-                    className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
-                    title="Auto-Pause Interval (Anti-Content ID match)"
-                  >
-                    <option value={0}>Pause: Off</option>
-                    <option value={10}>Pause: 10s</option>
-                    <option value={15}>Pause: 15s</option>
-                    <option value={20}>Pause: 20s</option>
-                  </select>
-                )}
+                  <>
+                    {/* 8-12s Random Jerk / Frame-Skip / Pause Selector */}
+                    <select
+                      value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
+                      onChange={(e) => {
+                        const [sec, mode] = e.target.value.split(":");
+                        setFairUseConfig({
+                          autoPauseIntervalSec: Number(sec),
+                          antiMatchMode: (mode as any) || "jerk-skip",
+                        });
+                      }}
+                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
+                      title="Anti-Content ID Jerk / Frame-Skip / Pause Mode"
+                    >
+                      <option value="0:jerk-skip">Jerk/Pause: Off</option>
+                      <option value="8:jerk-skip">8-12s Frame-Skip Jerk (Best)</option>
+                      <option value="8:micro-pause">8-12s Micro-Pause (0.4s)</option>
+                      <option value="10:pause">10s Full Pause (1.8s)</option>
+                      <option value="15:pause">15s Full Pause (1.8s)</option>
+                    </select>
 
-                {/* Dynamic Film Grain / Micro-Noise Toggle (shown only when Fair-Use is ON) */}
-                {fairUseConfig?.enabled && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFairUseConfig({
-                        filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
-                      })
-                    }
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                      (fairUseConfig?.filmGrainOverlay ?? true)
-                        ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                        : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                    )}
-                    title="Toggle Dynamic Film-Grain Adjustment Layer (Anti-Fingerprint Hash Mutator)"
-                  >
-                    <Sparkles className="w-3 h-3 text-amber-400" />
-                    <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
-                  </button>
+                    {/* Purani Movies Wali Bareek Lines (Vintage Scratches) Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        (fairUseConfig?.vintageLinesOverlay ?? true)
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Toggle Old-Movie Fine Vertical Lines & Scratches Overlay"
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      <span>Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}</span>
+                    </button>
+
+                    {/* Dynamic Film Grain / Micro-Noise Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        (fairUseConfig?.filmGrainOverlay ?? true)
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Toggle Dynamic Film-Grain Adjustment Layer"
+                    >
+                      <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
+                    </button>
+
+                    {/* Mirror Video Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          mirrorMediaVideo: !fairUseConfig?.mirrorMediaVideo,
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        fairUseConfig?.mirrorMediaVideo
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Mirror / Flip Media Horizontally for Copyright Protection"
+                    >
+                      <span>Flip {fairUseConfig?.mirrorMediaVideo ? "ON" : "OFF"}</span>
+                    </button>
+                  </>
                 )}
 
                 {/* Reset to Default */}

@@ -57,6 +57,7 @@ class StageBroadcaster {
 
   // Fair-Use Auto-Pause & Idle Commentary Tracking
   private lastAutoPauseTimestamp = 0;
+  private nextRandomIntervalMs = 9500; // Random 8000ms to 12000ms
   private isAutoPausedByFairUse = false;
   private lastHostActiveTimestamp = 0;
   private boundEndedElements = new WeakSet<HTMLMediaElement>();
@@ -303,25 +304,53 @@ class StageBroadcaster {
     if (!fairUseConfig || !fairUseConfig.enabled) return;
 
     // 2. Playback Speed Shift (Anti-Audio Fingerprint)
-    const targetRate = fairUseConfig.playbackRate || 1.0;
+    const targetRate = fairUseConfig.playbackRate || 1.04;
     if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.01) {
       mediaVideo.playbackRate = targetRate;
     }
 
-    // 3. Auto-Pause Interval (Breaks 10s+ continuous Content-ID claim window)
+    // 3. 8-12s Random Jerk / Frame-Skip / Pause (Anti-Content ID Continuous Match)
     if (fairUseConfig.autoPauseIntervalSec > 0) {
-      const intervalMs = fairUseConfig.autoPauseIntervalSec * 1000;
-      if (!mediaVideo.paused && now - this.lastAutoPauseTimestamp >= intervalMs) {
-        this.isAutoPausedByFairUse = true;
+      // Agar 8 select hai to har baar 8s se 12s ke beech random time lega
+      const targetIntervalMs =
+        fairUseConfig.autoPauseIntervalSec === 8
+          ? this.nextRandomIntervalMs
+          : fairUseConfig.autoPauseIntervalSec * 1000;
+
+      if (!mediaVideo.paused && now - this.lastAutoPauseTimestamp >= targetIntervalMs) {
         this.lastAutoPauseTimestamp = now;
-        mediaVideo.pause();
-        setTimeout(() => {
-          if (this.isAutoPausedByFairUse && mediaVideo.paused) {
-            this.isAutoPausedByFairUse = false;
-            this.lastAutoPauseTimestamp = performance.now();
-            mediaVideo.play().catch(() => {});
-          }
-        }, 2200);
+        // Agle cycle ke liye naya 8s–12s (8000ms–12000ms) random time set karein
+        this.nextRandomIntervalMs = Math.floor(8000 + Math.random() * 4000);
+
+        const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+
+        if (mode === "jerk-skip") {
+          // Micro-Jerk + Frame Skip: 180ms pause + 0.26s frame jump (Content-ID sequence break without long freeze)
+          this.isAutoPausedByFairUse = true;
+          mediaVideo.pause();
+          setTimeout(() => {
+            if (this.isAutoPausedByFairUse) {
+              this.isAutoPausedByFairUse = false;
+              if (mediaVideo.duration && mediaVideo.currentTime + 0.35 < mediaVideo.duration) {
+                mediaVideo.currentTime += 0.24 + Math.random() * 0.12;
+              }
+              this.lastAutoPauseTimestamp = performance.now();
+              mediaVideo.play().catch(() => {});
+            }
+          }, 180);
+        } else {
+          // Micro-Pause (380ms) ya Full Pause (1800ms)
+          const pauseMs = mode === "micro-pause" ? 380 : 1800;
+          this.isAutoPausedByFairUse = true;
+          mediaVideo.pause();
+          setTimeout(() => {
+            if (this.isAutoPausedByFairUse && mediaVideo.paused) {
+              this.isAutoPausedByFairUse = false;
+              this.lastAutoPauseTimestamp = performance.now();
+              mediaVideo.play().catch(() => {});
+            }
+          }, pauseMs);
+        }
       }
     }
 
@@ -966,8 +995,10 @@ class StageBroadcaster {
 
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
           ctx.save();
-          if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.visualTransformFilter) {
-            ctx.filter = "contrast(1.05) saturate(1.06)";
+          if (currentStore.fairUseConfig?.enabled) {
+            if (currentStore.fairUseConfig?.visualTransformFilter) {
+              ctx.filter = "contrast(1.05) saturate(1.06)";
+            }
             if (currentStore.fairUseConfig.mirrorMediaVideo) {
               const cx = x + w / 2;
               ctx.translate(cx, 0);
@@ -1037,6 +1068,18 @@ class StageBroadcaster {
           // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
           if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
             this.drawFilmGrainOverlay(ctx, x, y, w, h);
+          }
+
+          // Vintage Old-Movie Scratches & Traveling Lines Overlay (Breaks video visual hash & edge maps)
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+            this.drawVintageFilmLinesOverlay(
+              ctx,
+              x,
+              y,
+              w,
+              h,
+              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+            );
           }
 
           // Fair-Use Commentary Badge on Media
@@ -1115,6 +1158,18 @@ class StageBroadcaster {
           // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
           if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
             this.drawFilmGrainOverlay(ctx, x, y, w, h);
+          }
+
+          // Vintage Old-Movie Scratches & Traveling Lines Overlay (Breaks video visual hash & edge maps)
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+            this.drawVintageFilmLinesOverlay(
+              ctx,
+              x,
+              y,
+              w,
+              h,
+              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+            );
           }
         }
 
@@ -1758,6 +1813,58 @@ class StageBroadcaster {
         ctx.drawImage(this.grainCanvas, px, py);
       }
     }
+    ctx.restore();
+  }
+
+  /**
+   * Draws Old-Movie Projector Fine Vertical Scratches, Flickering Hairlines & Micro-Scanlines
+   * Visually looks like a classic retro cinema filter, while completely breaking video block/edge hashing.
+   */
+  private drawVintageFilmLinesOverlay(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    intensity: "light" | "medium" | "strong" = "medium"
+  ) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+
+    const lineCount = intensity === "light" ? 3 : intensity === "strong" ? 8 : 5;
+    const baseAlpha = intensity === "light" ? 0.14 : intensity === "strong" ? 0.32 : 0.22;
+
+    // 1. Random Vertical & Slightly Tilted Bareek Scratches (Old Cinema Reel Effect)
+    for (let i = 0; i < lineCount; i++) {
+      const lx = x + Math.random() * w;
+      const tilt = (Math.random() - 0.5) * 6; // Halki si tirchhi ya seedhi bareek line
+      const isDarkLine = Math.random() > 0.65;
+      const alpha = baseAlpha * (0.5 + Math.random() * 0.7);
+
+      ctx.strokeStyle = isDarkLine
+        ? `rgba(15, 15, 20, ${alpha})`
+        : `rgba(255, 250, 235, ${alpha})`;
+      ctx.lineWidth = Math.random() < 0.75 ? 0.65 : 1.15; // Ekdum bareek hairline
+
+      ctx.beginPath();
+      // Kuch lines poori height par aayengi, kuch beech me toot-ti hui (projector scratch style)
+      const startY = Math.random() < 0.6 ? y : y + Math.random() * (h * 0.4);
+      const endY = Math.random() < 0.6 ? y + h : startY + h * (0.35 + Math.random() * 0.5);
+      ctx.moveTo(lx, startY);
+      ctx.lineTo(lx + tilt, Math.min(y + h, endY));
+      ctx.stroke();
+    }
+
+    // 2. Subtle Traveling Horizontal Scanlines / Reel Dust specks (2 specks per frame)
+    for (let s = 0; s < 2; s++) {
+      const sx = x + Math.random() * w;
+      const sy = y + Math.random() * h;
+      ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.8})`;
+      ctx.fillRect(sx, sy, 1.5, 1.5);
+    }
+
     ctx.restore();
   }
 

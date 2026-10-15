@@ -95,13 +95,18 @@ export interface FairUseConfig {
   mirrorMediaVideo: boolean;
   /** Adjusts video playback speed (e.g., 1.04) to bypass audio fingerprinting */
   playbackRate: number;
-  /** Auto-pauses video every X seconds (0 = disabled, e.g., 10 = pause every 10s for 2.5s) */
+  /** Auto-pauses video every X seconds (0 = disabled, 8 = Random 8-12s interval, 10 = 10s, 15 = 15s) */
   autoPauseIntervalSec: number;
+  /** "jerk-skip" = skips 0.28s frames + 180ms jerk, "micro-pause" = 350ms pause, "pause" = 2.2s pause */
+  antiMatchMode?: "jerk-skip" | "micro-pause" | "pause";
   /** Displays Fair-Use Commentary watermark badge over media */
   showFairUseBadge: boolean;
   badgeText: string;
   /** Dynamic procedural film-grain / micro-noise layer mutating pixel hashes */
   filmGrainOverlay: boolean;
+  /** Purani movies jaisi random bareek vertical scratches & traveling lines */
+  vintageLinesOverlay?: boolean;
+  vintageLinesIntensity?: "light" | "medium" | "strong";
   /** Switches back to host scene if host mic & cam are off for too long during media playback */
   idleMediaGuardSec: number;
 }
@@ -1176,10 +1181,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     visualTransformFilter: true,
     mirrorMediaVideo: false,
     playbackRate: 1.04,
-    autoPauseIntervalSec: 0,
+    autoPauseIntervalSec: 8, // Default 8-12s Random Active!
+    antiMatchMode: "jerk-skip", // Default Frame-Skip + Micro-Jerk!
     showFairUseBadge: true,
     badgeText: "LIVE COMMENTARY & REVIEW • FAIR USE",
     filmGrainOverlay: true,
+    vintageLinesOverlay: true, // Default Old-Movie Bareek Lines ON!
+    vintageLinesIntensity: "medium",
     idleMediaGuardSec: 60,
     ...(savedLayout.fairUseConfig || {}),
   },
