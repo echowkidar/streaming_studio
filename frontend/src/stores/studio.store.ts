@@ -100,6 +100,8 @@ export interface FairUseConfig {
   /** Displays Fair-Use Commentary watermark badge over media */
   showFairUseBadge: boolean;
   badgeText: string;
+  /** Dynamic procedural film-grain / micro-noise layer mutating pixel hashes */
+  filmGrainOverlay: boolean;
   /** Switches back to host scene if host mic & cam are off for too long during media playback */
   idleMediaGuardSec: number;
 }
@@ -1080,6 +1082,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     autoPauseIntervalSec: 0,
     showFairUseBadge: true,
     badgeText: "LIVE COMMENTARY & REVIEW • FAIR USE",
+    filmGrainOverlay: true,
     idleMediaGuardSec: 60,
     ...(savedLayout.fairUseConfig || {}),
   },

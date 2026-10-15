@@ -74,6 +74,7 @@ class StageBroadcaster {
   private bgImage: HTMLImageElement | null = null;
   private cachedOverlayUrl: string | null = null;
   private overlayImage: HTMLImageElement | null = null;
+  private grainCanvas: HTMLCanvasElement | null = null;
 
   // Background Web Worker Clock (prevents tab throttling to 1 FPS when switching to YouTube Studio tab)
   private workerTimer: Worker | null = null;
@@ -1033,6 +1034,11 @@ class StageBroadcaster {
           }
           ctx.restore();
 
+          // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+            this.drawFilmGrainOverlay(ctx, x, y, w, h);
+          }
+
           // Fair-Use Commentary Badge on Media
           if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
             const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
@@ -1104,6 +1110,11 @@ class StageBroadcaster {
                 ctx.drawImage(mediaImg, dx, dy, dw, dh);
               } catch {}
             }
+          }
+
+          // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+            this.drawFilmGrainOverlay(ctx, x, y, w, h);
           }
         }
 
@@ -1690,6 +1701,64 @@ class StageBroadcaster {
     ctx.lineTo(x, y + radius);
     ctx.quadraticCurveTo(x, y, x + radius, y);
     ctx.closePath();
+  }
+
+  /**
+   * Initializes a lightweight procedural monochrome micro-noise texture
+   */
+  private initFilmGrainPattern() {
+    if (typeof document === "undefined") return;
+    try {
+      this.grainCanvas = document.createElement("canvas");
+      this.grainCanvas.width = 160;
+      this.grainCanvas.height = 160;
+      const gctx = this.grainCanvas.getContext("2d");
+      if (!gctx) return;
+      const idata = gctx.createImageData(160, 160);
+      const d = idata.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const v = (Math.random() * 255) | 0;
+        d[i] = v;
+        d[i + 1] = v;
+        d[i + 2] = v;
+        d[i + 3] = (Math.random() * 45 + 15) | 0; // Subtle random particle alpha
+      }
+      gctx.putImageData(idata, 0, 0);
+    } catch {}
+  }
+
+  /**
+   * Draws dynamic moving microscopic film grain over media rectangle to mutate video perceptual hashes
+   */
+  private drawFilmGrainOverlay(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ) {
+    if (!this.grainCanvas) {
+      this.initFilmGrainPattern();
+    }
+    if (!this.grainCanvas) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.globalAlpha = 0.035; // 3.5% cinematic subtle grain (visually crisp to humans, unique hashes to bots)
+    ctx.globalCompositeOperation = "overlay";
+
+    // Random UV jitter per frame to animate grain particles continuously at 60 FPS
+    const jitterX = (Math.random() * 160) | 0;
+    const jitterY = (Math.random() * 160) | 0;
+
+    for (let px = x - jitterX; px < x + w; px += 160) {
+      for (let py = y - jitterY; py < y + h; py += 160) {
+        ctx.drawImage(this.grainCanvas, px, py);
+      }
+    }
+    ctx.restore();
   }
 
   /**

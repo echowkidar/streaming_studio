@@ -959,6 +959,18 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
+        {/* Dynamic Film Grain Adjustment Layer (Anti-Fingerprint Hash Mutator) */}
+        {fairUseConfig?.enabled && (fairUseConfig?.filmGrainOverlay ?? true) && (
+          <div
+            className="absolute inset-0 pointer-events-none z-15 mix-blend-overlay opacity-35 select-none"
+            style={{
+              backgroundImage: `radial-gradient(rgba(255,255,255,0.18) 1px, transparent 0), radial-gradient(rgba(0,0,0,0.18) 1px, transparent 0)`,
+              backgroundSize: "3px 3px",
+              backgroundPosition: "0 0, 1.5px 1.5px",
+            }}
+          />
+        )}
+
         {/* YouTube Fair Use / Reaction Badge */}
         {fairUseConfig?.enabled && (
           <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none">
@@ -1677,6 +1689,28 @@ export const StagePreview: React.FC = () => {
                     <option value={15}>Pause: 15s</option>
                     <option value={20}>Pause: 20s</option>
                   </select>
+                )}
+
+                {/* Dynamic Film Grain / Micro-Noise Toggle (shown only when Fair-Use is ON) */}
+                {fairUseConfig?.enabled && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFairUseConfig({
+                        filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                      })
+                    }
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                      (fairUseConfig?.filmGrainOverlay ?? true)
+                        ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                        : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                    )}
+                    title="Toggle Dynamic Film-Grain Adjustment Layer (Anti-Fingerprint Hash Mutator)"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
+                  </button>
                 )}
 
                 {/* Reset to Default */}
