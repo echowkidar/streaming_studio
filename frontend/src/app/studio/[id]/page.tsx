@@ -210,6 +210,18 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     return () => clearInterval(interval);
   }, [isLive]);
 
+  // Listen for custom tab opening requests (e.g. from Change Media buttons on stage)
+  useEffect(() => {
+    const handleOpenTab = (e: any) => {
+      const tab = e.detail;
+      if (tab === "media" || tab === "chat" || tab === "brand" || tab === "layout") {
+        setActiveTab(tab);
+      }
+    };
+    window.addEventListener("livestudio-open-tab", handleOpenTab);
+    return () => window.removeEventListener("livestudio-open-tab", handleOpenTab);
+  }, []);
+
   // Client-Side Stage Recording State (Zero VPS upload)
   const [recordingNotification, setRecordingNotification] = useState<string | null>(null);
   const [liveRecordDuration, setLiveRecordDuration] = useState(0);

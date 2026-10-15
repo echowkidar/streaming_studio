@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useStudioStore, StudioScene, StudioLayout } from "@/stores/studio.store";
+import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout } from "@/stores/studio.store";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -516,15 +516,36 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         const json = await res.json();
         if (json?.success && json.data?.url) {
           const serverUrl = json.data.url;
-          const updatedItem = { ...item, url: serverUrl, id: json.data.id || item.id };
+          const serverId = json.data.id || item.id;
+          const updatedItem = { ...item, url: serverUrl, id: serverId };
+
+          // 1. Update media library in store
           addMediaLibraryItem(updatedItem);
-          const currentScene = useStudioStore.getState().scenes.find((s) => s.id === sceneId);
-          if (currentScene?.activeMedia?.id === item.id) {
-            updateScene(sceneId, { activeMedia: updatedItem });
-          }
-          if (useStudioStore.getState().activeMedia?.id === item.id) {
-            setActiveMedia(updatedItem);
-          }
+
+          // 2. Update all scenes in store containing this media or targeted scene
+          const currentStore = useStudioStore.getState();
+          const nextScenes = currentStore.scenes.map((s) =>
+            s.id === sceneId || s.activeMedia?.id === item.id || s.activeMedia?.name === item.name
+              ? { ...s, activeMedia: updatedItem }
+              : s
+          );
+
+          // 3. Update activeMedia if matching or if active scene
+          const shouldUpdateActive =
+            currentStore.activeMedia?.id === item.id ||
+            currentStore.activeMedia?.name === item.name ||
+            currentStore.activeSceneId === sceneId;
+
+          // 4. Persist immediately to localStorage and cloud!
+          persistStudioLayout({
+            scenes: nextScenes,
+            ...(shouldUpdateActive ? { activeMedia: updatedItem } : {}),
+          });
+
+          useStudioStore.setState({
+            scenes: nextScenes,
+            ...(shouldUpdateActive ? { activeMedia: updatedItem } : {}),
+          });
         }
       }
     } catch {
@@ -1029,12 +1050,25 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   )}
                 </div>
 
-                {/* Media Label Badge on thumbnail */}
+                {/* Media Label Badge on thumbnail with 1-click Change Media */}
                 {scene.activeMedia && (
-                  <div className="absolute bottom-1 left-1 z-10 flex items-center gap-1 bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 border border-cyan-500/40 shadow-md pointer-events-none">
-                    {scene.activeMedia.type === "pdf" ? <FileText className="w-2.5 h-2.5 text-cyan-300" /> : <Clapperboard className="w-2.5 h-2.5 text-indigo-300" />}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMediaPickerSceneId(scene.id);
+                    }}
+                    className="absolute bottom-1 left-1 z-20 flex items-center gap-1 bg-black/85 hover:bg-black backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 hover:text-cyan-200 border border-cyan-500/40 hover:border-cyan-400 shadow-md cursor-pointer pointer-events-auto transition-all group/badge"
+                    title="Click to Change Media / Deck"
+                  >
+                    {scene.activeMedia.type === "pdf" ? (
+                      <FileText className="w-2.5 h-2.5 text-cyan-300" />
+                    ) : (
+                      <Clapperboard className="w-2.5 h-2.5 text-indigo-300" />
+                    )}
                     <span className="truncate max-w-[80px]">{scene.activeMedia.name}</span>
-                  </div>
+                    <Edit2 className="w-2 h-2 opacity-60 group-hover/badge:opacity-100 text-cyan-400 ml-0.5" />
+                  </button>
                 )}
               </div>
 
@@ -1108,48 +1142,33 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   <div
                     onClick={(e) => e.stopPropagation()}
                     className={cn(
-                      "absolute right-1 z-50 w-48 bg-[#151628] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95",
+                      "absolute right-1 z-50 w-52 bg-[#151628] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95 max-h-[min(460px,70vh)] overflow-y-auto scrollbar-thin",
                       index >= scenes.length - 2 && scenes.length > 2
-                        ? "bottom-8"
-                        : "top-7"
+                        ? "bottom-2"
+                        : "top-2"
                     )}
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        saveCurrentStageToScene(scene.id);
-                        setActiveMenuId(null);
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <Camera className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Update with stage</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLayoutPickerSceneId(scene.id);
-                        setActiveMenuId(null);
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Change Layout</span>
-                    </button>
-
+                    {/* Primary Action 1: Change / Attach Media */}
                     <button
                       type="button"
                       onClick={() => {
                         setMediaPickerSceneId(scene.id);
                         setActiveMenuId(null);
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-emerald-500/20 flex items-center justify-between group transition-colors"
                     >
-                      <MonitorUp className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>{scene.activeMedia ? "Change Media / Deck" : "Attach Media / Deck"}</span>
+                      <div className="flex items-center gap-2">
+                        <MonitorUp className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                        <span className="font-semibold text-emerald-300">
+                          {scene.activeMedia ? "Change Media / Deck" : "Attach Media / Deck"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-emerald-400/80 font-bold uppercase">
+                        {scene.activeMedia ? scene.activeMedia.type : "Add"}
+                      </span>
                     </button>
 
+                    {/* Primary Action 2: Remove Media (if attached) */}
                     {scene.activeMedia && (
                       <button
                         type="button"
@@ -1157,12 +1176,38 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                           handleAttachMedia(scene.id, null);
                           setActiveMenuId(null);
                         }}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2"
+                        className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2 transition-colors"
                       >
                         <X className="w-3.5 h-3.5 text-rose-400" />
                         <span>Remove Media</span>
                       </button>
                     )}
+
+                    {/* Primary Action 3: Change Layout */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLayoutPickerSceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 transition-colors"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Change Layout</span>
+                    </button>
+
+                    {/* Primary Action 4: Update with stage */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        saveCurrentStageToScene(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 transition-colors"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Update with stage</span>
+                    </button>
 
                     <div className="my-1 border-t border-white/10" />
 

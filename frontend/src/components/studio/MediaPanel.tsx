@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { useStudioStore, MediaFileItem } from "@/stores/studio.store";
+import { useStudioStore, MediaFileItem, persistStudioLayout } from "@/stores/studio.store";
 import { StageOverlayAsset } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -259,17 +259,43 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         if (json.success && json.data?.url) {
           const serverUrl = json.data.url;
           const serverId = json.data.id || newItem.id;
+          const permanentItem: MediaFileItem = {
+            ...newItem,
+            id: serverId,
+            url: serverUrl,
+          };
+
+          // 1. Update MediaPanel local list
           setMediaList((prev) =>
-            prev.map((m) => (m.id === newItem.id ? { ...m, id: serverId, url: serverUrl } : m))
+            prev.map((m) => (m.id === newItem.id ? permanentItem : m))
           );
-          const currentActive = useStudioStore.getState().activeMedia;
-          if (currentActive?.id === newItem.id) {
-            setActiveMedia({
-              ...currentActive,
-              id: serverId,
-              url: serverUrl,
-            });
-          }
+
+          // 2. Update media library in Zustand & localStorage
+          addMediaLibraryItem(permanentItem);
+
+          // 3. Update all scenes that have this media attached
+          const currentStore = useStudioStore.getState();
+          const nextScenes = currentStore.scenes.map((s) =>
+            s.activeMedia?.id === newItem.id || s.activeMedia?.name === newItem.name
+              ? { ...s, activeMedia: permanentItem }
+              : s
+          );
+
+          // 4. Update activeMedia if it matches
+          const currentActive = currentStore.activeMedia;
+          const shouldUpdateActive =
+            currentActive?.id === newItem.id || currentActive?.name === newItem.name;
+
+          // 5. Persist layout immediately to localStorage and cloud database!
+          persistStudioLayout({
+            scenes: nextScenes,
+            ...(shouldUpdateActive ? { activeMedia: permanentItem } : {}),
+          });
+
+          useStudioStore.setState({
+            scenes: nextScenes,
+            ...(shouldUpdateActive ? { activeMedia: permanentItem } : {}),
+          });
         }
       } else {
         const errJson = await res.json().catch(() => ({}));

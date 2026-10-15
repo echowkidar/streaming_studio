@@ -629,7 +629,10 @@ function loadSavedMediaLibrary(): MediaFileItem[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const defaultIds = new Set(DEFAULT_STUDIO_MEDIA.map((m) => m.id));
-        const custom = parsed.filter((m: MediaFileItem) => !defaultIds.has(m.id));
+        // Filter out expired browser blob: URLs so only persistent server URLs or data URLs are restored
+        const custom = parsed.filter(
+          (m: MediaFileItem) => !defaultIds.has(m.id) && m.url && !m.url.startsWith("blob:")
+        );
         return [...custom, ...DEFAULT_STUDIO_MEDIA];
       }
     }
@@ -646,7 +649,7 @@ function persistMediaLibrary(items: MediaFileItem[]) {
   }
 }
 
-interface SavedStudioLayoutState {
+export interface SavedStudioLayoutState {
   broadcastTitle?: string;
   activeLayout?: StudioLayout;
   layoutSplitRatio?: number;
@@ -678,12 +681,12 @@ interface SavedStudioLayoutState {
 
 let activeStudioId: string | null = null;
 
-function getStudioStorageKey(studioId?: string | null): string {
+export function getStudioStorageKey(studioId?: string | null): string {
   const id = studioId || activeStudioId;
   return id ? `livestudio_studio_${id}` : STUDIO_LAYOUT_STORAGE_KEY;
 }
 
-function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayoutState {
+export function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayoutState {
   if (typeof window === "undefined") return {};
   try {
     const key = getStudioStorageKey(studioId);
@@ -700,7 +703,7 @@ function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayoutState
 
 let persistCloudTimeout: any = null;
 
-function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
+export function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
   if (typeof window === "undefined") return;
   try {
     const targetStudioId = activeStudioId;
@@ -937,7 +940,27 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       ];
     }
 
-    const nextScenes = hasSavedScenes ? saved.scenes! : studioScenes;
+    const savedMediaLib = loadSavedMediaLibrary();
+    const healMediaItem = (item: MediaFileItem | null | undefined): MediaFileItem | null => {
+      if (!item) return null;
+      if (!item.url || item.url.startsWith("blob:")) {
+        const found = savedMediaLib.find(
+          (m) =>
+            m.url &&
+            !m.url.startsWith("blob:") &&
+            (m.id === item.id || m.name === item.name)
+        );
+        if (found) {
+          return { ...item, id: found.id, url: found.url };
+        }
+      }
+      return item;
+    };
+
+    let nextScenes = (hasSavedScenes ? saved.scenes! : studioScenes).map((sc) => ({
+      ...sc,
+      activeMedia: healMediaItem(sc.activeMedia),
+    }));
     const nextActiveSceneId =
       saved.activeSceneId && nextScenes.some((s) => s.id === saved.activeSceneId)
         ? saved.activeSceneId
@@ -946,6 +969,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const nextActiveScene = nextScenes.find((s) => s.id === nextActiveSceneId);
     const nextLayout = saved.activeLayout || nextActiveScene?.layout || studioLayout;
     const nextSplit = saved.layoutSplitRatio || nextActiveScene?.splitRatio || studioSplitRatio;
+    const initialActiveMedia = healMediaItem(
+      saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null
+    );
 
     set({
       currentStudioId: studioId,
@@ -1012,12 +1038,83 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       },
       scenes: nextScenes,
       activeSceneId: nextActiveSceneId,
-      activeMedia: saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null,
+      activeMedia: initialActiveMedia,
       isScenesPanelOpen: saved.isScenesPanelOpen ?? true,
     });
 
-    // Background Cloud Sync: Fetch studio settings from backend database to sync across devices
+    // Background Cloud Sync & Auto-Heal Permanent Media Assets
     if (typeof window !== "undefined") {
+      // 1. Fetch uploaded permanent media assets to heal any remaining blob or missing URLs
+      const token = localStorage.getItem("livestudio_token");
+      fetch(`/api/media?studioId=${encodeURIComponent(studioId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((json) => {
+          if (json?.success && Array.isArray(json.data) && json.data.length > 0) {
+            const serverAssets: any[] = json.data;
+            const currentStore = get();
+            let hasRepairs = false;
+
+            const repairedScenes = currentStore.scenes.map((sc) => {
+              if (!sc.activeMedia) return sc;
+              if (sc.activeMedia.url?.startsWith("blob:") || !sc.activeMedia.url) {
+                const target = sc.activeMedia;
+                const match = serverAssets.find(
+                  (a) =>
+                    a.id === target.id ||
+                    a.name === target.name ||
+                    (target.name && a.name.includes(target.name))
+                );
+                if (match && match.url) {
+                  hasRepairs = true;
+                  return {
+                    ...sc,
+                    activeMedia: {
+                      ...target,
+                      id: match.id,
+                      url: match.url,
+                      name: target.name || match.name || "Media File",
+                    },
+                  };
+                }
+              }
+              return sc;
+            });
+
+            let repairedActiveMedia: MediaFileItem | null = currentStore.activeMedia;
+            if (repairedActiveMedia && (repairedActiveMedia.url?.startsWith("blob:") || !repairedActiveMedia.url)) {
+              const target = repairedActiveMedia;
+              const match = serverAssets.find(
+                (a) =>
+                  a.id === target.id ||
+                  a.name === target.name ||
+                  (target.name && a.name.includes(target.name))
+              );
+              if (match && match.url) {
+                hasRepairs = true;
+                repairedActiveMedia = {
+                  ...target,
+                  id: match.id,
+                  url: match.url,
+                  name: target.name || match.name || "Media File",
+                };
+              }
+            }
+
+            if (hasRepairs) {
+              persistStudioLayout({
+                scenes: repairedScenes,
+                activeMedia: repairedActiveMedia,
+              });
+              set({
+                scenes: repairedScenes,
+                activeMedia: repairedActiveMedia,
+              });
+            }
+          }
+        })
+        .catch(() => {});
       import("@/lib/api").then(({ apiRequest }) => {
         apiRequest<any>(`/api/studios/${studioId}`)
           .then((res) => {

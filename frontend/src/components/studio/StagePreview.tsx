@@ -34,6 +34,8 @@ import {
   ChevronRight,
   FileText,
   ShieldAlert,
+  MonitorUp,
+  Trash2,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
@@ -888,13 +890,28 @@ export const StagePreview: React.FC = () => {
               </div>
               <p className="text-xs font-semibold text-rose-300">Media source unavailable or expired</p>
               <p className="text-[10px] text-slate-500 max-w-[220px] truncate">{activeMedia.name}</p>
-              <button
-                type="button"
-                onClick={() => setActiveMedia(null)}
-                className="mt-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-semibold transition-all shadow-md pointer-events-auto"
-              >
-                Remove from Stage
-              </button>
+              <div className="flex items-center gap-2 mt-1 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  title="Open media library to select or upload a replacement file"
+                >
+                  <MonitorUp className="w-3.5 h-3.5" />
+                  <span>Change / Replace Media</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveMedia(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-semibold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  title="Remove from Stage"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove</span>
+                </button>
+              </div>
             </div>
           ) : activeMedia.type === "video" ? (
             <video
@@ -1251,6 +1268,19 @@ export const StagePreview: React.FC = () => {
               </button>
             </>
           )}
+
+          {/* Change / Replace Media */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+            }}
+            className="p-1 rounded hover:bg-emerald-600/80 text-slate-300 hover:text-white transition-colors"
+            title="Change / Select Media from Library"
+          >
+            <MonitorUp className="w-3.5 h-3.5 text-emerald-400 hover:text-white" />
+          </button>
 
           {/* Remove Media */}
           <button
