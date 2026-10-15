@@ -1234,7 +1234,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                       objectFit: mediaFit,
                                       objectPosition: `${effObjX}% ${effObjY}%`,
                                       transform: zoom > 1 ? `scale(${zoom})` : undefined,
-                                      transformOrigin: `${effObjX}% ${effObjY}%`,
+                                      transformOrigin: "center center",
                                     }}
                                     className="w-full h-full"
                                   />
@@ -1247,7 +1247,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                       objectFit: mediaFit,
                                       objectPosition: `${effObjX}% ${effObjY}%`,
                                       transform: zoom > 1 ? `scale(${zoom})` : undefined,
-                                      transformOrigin: `${effObjX}% ${effObjY}%`,
+                                      transformOrigin: "center center",
                                     }}
                                     className="w-full h-full"
                                   />

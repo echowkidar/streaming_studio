@@ -122,7 +122,7 @@ export const StagePreview: React.FC = () => {
   const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosY;
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
-  const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
+  const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
   const [mediaLoadError, setMediaLoadError] = useState(false);
   const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
 
@@ -154,21 +154,18 @@ export const StagePreview: React.FC = () => {
     });
   };
 
+  const isMediaMirrored = Boolean(fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo);
+
   const handleMediaCropPreset = (preset: "top" | "center" | "bottom" | "left" | "right") => {
     if (preset === "top") {
-      // Align to Top / Header (0%)
-      setTileTransform("active-media", { fitMode: "cover", panY: -50, panX: 0 });
+      setTileTransform("active-media", { fitMode: "cover", panY: -50 });
     } else if (preset === "bottom") {
-      // Align to Bottom / Signatures (100%)
-      setTileTransform("active-media", { fitMode: "cover", panY: 50, panX: 0 });
+      setTileTransform("active-media", { fitMode: "cover", panY: 50 });
     } else if (preset === "left") {
-      // Align to Left (0%)
-      setTileTransform("active-media", { fitMode: "cover", panX: -50, panY: 0 });
+      setTileTransform("active-media", { fitMode: "cover", panX: -50 });
     } else if (preset === "right") {
-      // Align to Right (100%)
-      setTileTransform("active-media", { fitMode: "cover", panX: 50, panY: 0 });
+      setTileTransform("active-media", { fitMode: "cover", panX: 50 });
     } else if (preset === "center") {
-      // Center (50%)
       setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
     }
   };
@@ -184,32 +181,41 @@ export const StagePreview: React.FC = () => {
 
   const handleMediaPanMouseDown = (e: React.MouseEvent) => {
     if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
-    if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("input")) return;
+    if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("input") || (e.target as HTMLElement).closest("select")) return;
     e.stopPropagation();
     e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
     setIsDraggingMediaPan(true);
     mediaPanStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       initialPanX: mediaPanX,
       initialPanY: mediaPanY,
+      rectWidth: Math.max(10, rect.width),
+      rectHeight: Math.max(10, rect.height),
     };
   };
 
   const handleMediaPanMouseMove = React.useCallback(
     (e: MouseEvent) => {
       if (!isDraggingMediaPan) return;
-      // Dragging mouse DOWN (e.clientY > startY): pulls document down to reveal top (Header) -> panY decreases towards -50
-      // Dragging mouse UP (e.clientY < startY): pushes document up to reveal bottom (Footer) -> panY increases towards +50
-      const deltaX = (e.clientX - mediaPanStartRef.current.startX) / 3.0;
-      const deltaY = (e.clientY - mediaPanStartRef.current.startY) / 3.0;
+      const { startX, startY, initialPanX, initialPanY, rectWidth, rectHeight } = mediaPanStartRef.current;
+      const deltaPixelX = e.clientX - startX;
+      const deltaPixelY = e.clientY - startY;
+
+      // When dragging mouse RIGHT (deltaPixelX > 0), user pulls image right to reveal left portion -> panX should decrease
+      // If mirrored (scaleX(-1)), horizontal visual motion is inverted, so direction flips
+      const xDirection = isMediaMirrored ? 1 : -1;
+      const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * 100 * xDirection;
+      const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * 100 * -1;
+
       const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
       setTileTransform("active-media", {
-        panX: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanX - deltaX).toFixed(1)))),
-        panY: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanY - deltaY).toFixed(1)))),
+        panX: Math.max(-maxPan, Math.min(maxPan, Number((initialPanX + deltaXPercent).toFixed(1)))),
+        panY: Math.max(-maxPan, Math.min(maxPan, Number((initialPanY + deltaYPercent).toFixed(1)))),
       });
     },
-    [isDraggingMediaPan, mediaZoom, setTileTransform]
+    [isDraggingMediaPan, mediaZoom, isMediaMirrored, setTileTransform]
   );
 
   const handleMediaPanMouseUp = React.useCallback(() => {
@@ -231,23 +237,32 @@ export const StagePreview: React.FC = () => {
     if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
     if (e.touches.length !== 1) return;
     e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
     setIsDraggingMediaPan(true);
     mediaPanStartRef.current = {
       startX: e.touches[0].clientX,
       startY: e.touches[0].clientY,
       initialPanX: mediaPanX,
       initialPanY: mediaPanY,
+      rectWidth: Math.max(10, rect.width),
+      rectHeight: Math.max(10, rect.height),
     };
   };
 
   const handleMediaPanTouchMove = (e: React.TouchEvent) => {
     if (!isDraggingMediaPan || e.touches.length !== 1) return;
-    const deltaX = (e.touches[0].clientX - mediaPanStartRef.current.startX) / 3.0;
-    const deltaY = (e.touches[0].clientY - mediaPanStartRef.current.startY) / 3.0;
+    const { startX, startY, initialPanX, initialPanY, rectWidth, rectHeight } = mediaPanStartRef.current;
+    const deltaPixelX = e.touches[0].clientX - startX;
+    const deltaPixelY = e.touches[0].clientY - startY;
+
+    const xDirection = isMediaMirrored ? 1 : -1;
+    const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * 100 * xDirection;
+    const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * 100 * -1;
+
     const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
     setTileTransform("active-media", {
-      panX: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanX - deltaX).toFixed(1)))),
-      panY: Math.max(-maxPan, Math.min(maxPan, Number((mediaPanStartRef.current.initialPanY - deltaY).toFixed(1)))),
+      panX: Math.max(-maxPan, Math.min(maxPan, Number((initialPanX + deltaXPercent).toFixed(1)))),
+      panY: Math.max(-maxPan, Math.min(maxPan, Number((initialPanY + deltaYPercent).toFixed(1)))),
     });
   };
 
@@ -982,7 +997,7 @@ export const StagePreview: React.FC = () => {
                   mediaZoom > 1 ? `scale(${mediaZoom})` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                transformOrigin: "center center",
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
@@ -1004,7 +1019,7 @@ export const StagePreview: React.FC = () => {
                   mediaZoom > 1 ? `scale(${mediaZoom})` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                transformOrigin: "center center",
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
