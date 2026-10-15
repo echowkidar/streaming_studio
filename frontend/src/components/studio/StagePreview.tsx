@@ -30,6 +30,10 @@ import {
   Hand,
   ArrowUp,
   ArrowDown,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  ShieldAlert,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
@@ -81,6 +85,13 @@ export const StagePreview: React.FC = () => {
     setTileTransform,
     isDrawingMode,
     toggleMediaMute,
+    scenes,
+    activeSceneId,
+    fairUseConfig,
+    activeTextCard,
+    nextSlide,
+    prevSlide,
+    isSceneTransitioning,
   } = useStudioStore();
 
   const mediaTransform = tileTransforms["active-media"] || {
@@ -109,6 +120,7 @@ export const StagePreview: React.FC = () => {
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0 });
   const [mediaLoadError, setMediaLoadError] = useState(false);
+  const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
 
   React.useEffect(() => {
     setMediaLoadError(false);
@@ -298,6 +310,14 @@ export const StagePreview: React.FC = () => {
   const hasAnyCustomBounds = Object.keys(participantBounds).length > 0;
   const expectedSlots = getLayoutExpectedSlots(activeLayout, customLayoutConfig);
 
+  const activeScene = scenes.find((s) => s.id === activeSceneId);
+  const remoteGuestsOnStageCount = onStageParticipants.filter(
+    (p) => !p.isLocal && !p.isScreen && p.role !== "host"
+  ).length;
+
+  const expectedGuestSlots = activeScene?.expectedGuestSlots ?? 0;
+  const remainingExpectedGuestSlots = Math.max(0, expectedGuestSlots - remoteGuestsOnStageCount);
+
   const isFullBleedLayout =
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
@@ -307,6 +327,25 @@ export const StagePreview: React.FC = () => {
       (customLayoutConfig?.mode === "solo" ||
         customLayoutConfig?.mode === "cinema" ||
         customLayoutConfig?.mode === "podcast"));
+
+  const hasVisualMedia = Boolean(
+    activeMedia &&
+      (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+  );
+
+  const allowGhostSlots = !isFullBleedLayout && (!hasVisualMedia || activeLayout === "presentation");
+
+  const totalGhostSlots = allowGhostSlots
+    ? remainingExpectedGuestSlots > 0
+      ? remainingExpectedGuestSlots
+      : orderedParticipants.length >= 1 && orderedParticipants.length < expectedSlots
+      ? expectedSlots - orderedParticipants.length
+      : 0
+    : 0;
+
+  const totalPlannedSlots = totalGhostSlots > 0
+    ? Math.max(expectedSlots, orderedParticipants.length + totalGhostSlots)
+    : orderedParticipants.length;
 
   const logoPositionClasses = {
     "top-left": "top-6 left-6",
@@ -774,6 +813,7 @@ export const StagePreview: React.FC = () => {
         key={p.id || index}
         data-stage-tile="true"
         data-participant-tile="true"
+        data-participant-id={String(p.id)}
         data-participant-name={p.name || "Guest"}
         data-participant-initials={
           p.name
@@ -820,6 +860,7 @@ export const StagePreview: React.FC = () => {
       <div
         data-stage-tile="true"
         data-stage-media="true"
+        data-participant-id="active-media"
         data-media-name={activeMedia.name}
         data-participant-fit={mediaFitMode}
         data-transparent-card={isTransparentCard ? "true" : "false"}
@@ -873,6 +914,7 @@ export const StagePreview: React.FC = () => {
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
+                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
@@ -891,6 +933,7 @@ export const StagePreview: React.FC = () => {
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
+                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
@@ -915,8 +958,21 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
+        {/* YouTube Fair Use / Reaction Badge */}
+        {fairUseConfig?.enabled && (
+          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none">
+            <ShieldAlert className="w-3 h-3" />
+            <span>Live Commentary & Review • Fair Use</span>
+          </div>
+        )}
+
         {/* Media Name Badge on Tile Hover */}
-        <div className="absolute top-3 left-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-20">
+        <div
+          className={cn(
+            "absolute opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-20",
+            fairUseConfig?.enabled ? "top-9 left-3" : "top-3 left-3"
+          )}
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="truncate max-w-[180px]">{activeMedia.name}</span>
           {activeMedia.loop !== false && (
@@ -1196,6 +1252,83 @@ export const StagePreview: React.FC = () => {
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {/* Multi-Slide Presentation Deck Controls (StreamYard Paid Plan) */}
+        {activeMedia.slides && activeMedia.slides.length > 0 && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/50 shadow-2xl pointer-events-auto">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                prevSlide();
+              }}
+              disabled={(activeMedia.currentSlideIndex || 0) <= 0}
+              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              title="Previous Slide"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-xs font-mono font-bold text-white px-1">
+              Slide {(activeMedia.currentSlideIndex || 0) + 1} / {activeMedia.slides.length}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                nextSlide();
+              }}
+              disabled={(activeMedia.currentSlideIndex || 0) >= activeMedia.slides.length - 1}
+              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              title="Next Slide"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+
+            {activeMedia.speakerNotes && activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0] && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSpeakerNotes(!showSpeakerNotes);
+                }}
+                className={cn(
+                  "ml-1.5 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                  showSpeakerNotes
+                    ? "bg-amber-500 text-black border-amber-400 font-bold"
+                    : "bg-white/10 hover:bg-white/20 text-amber-300 border-amber-500/30"
+                )}
+                title="Toggle Speaker Notes for this slide"
+              >
+                <FileText className="w-3 h-3" />
+                <span>Notes</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Floating Speaker Notes Overlay for Presenter */}
+        {showSpeakerNotes && activeMedia.slides && activeMedia.speakerNotes?.[activeMedia.currentSlideIndex || 0] && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-14 left-1/2 -translate-x-1/2 max-w-md w-[88%] bg-slate-950/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-3 shadow-2xl z-35 pointer-events-auto text-left"
+          >
+            <div className="flex items-center justify-between pb-1.5 border-b border-white/10 mb-1.5">
+              <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Speaker Notes (Slide {(activeMedia.currentSlideIndex || 0) + 1})
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSpeakerNotes(false)}
+                className="text-slate-400 hover:text-white text-xs px-1"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-200 leading-relaxed font-sans">
+              {activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0]}
+            </p>
+          </div>
+        )}
       </div>
     );
   };
@@ -1223,10 +1356,11 @@ export const StagePreview: React.FC = () => {
     // Calculate layout using StreamYard-grade layout engine
     const stageLayoutResult = calculateStageLayout(
       activeLayout,
-      orderedParticipants.length,
+      totalPlannedSlots,
       hasVisualMedia,
       layoutSplitRatio,
-      customLayoutConfig
+      customLayoutConfig,
+      Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP)
     );
 
     const defaultMediaBounds: ParticipantBounds =
@@ -1758,18 +1892,20 @@ export const StagePreview: React.FC = () => {
           );
         })}
 
-        {/* Empty Guest Placeholder Slots (Only rendered when 2+ participants are already arranged on stage) */}
-        {!hasVisualMedia && !isFullBleedLayout && orderedParticipants.length > 1 && orderedParticipants.length < expectedSlots && (
+        {/* StreamYard Ghost / Placeholder Slots: Waiting for Guest to join */}
+        {allowGhostSlots && totalGhostSlots > 0 && (
           <>
-            {Array.from({ length: expectedSlots - orderedParticipants.length }).map((_, i) => {
+            {Array.from({ length: totalGhostSlots }).map((_, i) => {
               const slotIdx = orderedParticipants.length + i;
-              const emptySlotBounds = getDefaultSlotBounds(
-                activeLayout,
-                slotIdx,
-                expectedSlots,
-                layoutSplitRatio,
-                customLayoutConfig
-              );
+              const emptySlotBounds =
+                stageLayoutResult.participantBounds[slotIdx] ||
+                getDefaultSlotBounds(
+                  activeLayout,
+                  slotIdx,
+                  totalPlannedSlots,
+                  layoutSplitRatio,
+                  customLayoutConfig
+                );
               const isCopied = copiedSlotIndex === slotIdx;
               const slotTitle =
                 activeLayout === "presentation"
@@ -1810,35 +1946,35 @@ export const StagePreview: React.FC = () => {
                         : "rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs"
                     )}
                   >
-                  <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
-                    <UserPlus className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:border-indigo-400/60 group-hover:bg-indigo-500/20 transition-all text-slate-400 group-hover:text-indigo-300">
+                      <UserPlus className="w-5 h-5" />
+                    </div>
+                    <div className="text-xs font-semibold text-slate-300 group-hover:text-white transition-colors">
+                      {slotTitle}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5 max-w-[160px] line-clamp-1">
+                      Waiting for participant to join
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyInviteForSlot(slotIdx);
+                      }}
+                      className={cn(
+                        "mt-2.5 px-3 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95",
+                        isCopied
+                          ? "bg-emerald-600 text-white shadow-emerald-500/30"
+                          : "bg-indigo-600/80 hover:bg-indigo-600 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40"
+                      )}
+                      title="Copy invite link to share with guest"
+                    >
+                      {isCopied ? <Check className="w-3 h-3 text-emerald-200" /> : <Copy className="w-3 h-3" />}
+                      <span>{isCopied ? "Copied! ✓" : "Invite Guest"}</span>
+                    </button>
                   </div>
-                  <div className="text-xs font-semibold text-slate-300 group-hover:text-white transition-colors">
-                    {slotTitle}
-                  </div>
-                  <p className="text-[10px] text-slate-500 mt-0.5 max-w-[160px] line-clamp-1">
-                    Waiting for participant to join
-                  </p>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCopyInviteForSlot(slotIdx);
-                    }}
-                    className={cn(
-                      "mt-2.5 px-3 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 shadow-md transition-all active:scale-95",
-                      isCopied
-                        ? "bg-emerald-600 text-white shadow-emerald-500/30"
-                        : "bg-indigo-600/80 hover:bg-indigo-600 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40"
-                    )}
-                    title="Copy invite link to share with guest"
-                  >
-                    {isCopied ? <Check className="w-3 h-3 text-emerald-200" /> : <Copy className="w-3 h-3" />}
-                    <span>{isCopied ? "Copied! ✓" : "Invite Guest"}</span>
-                  </button>
                 </div>
-              </div>
-            );
+              );
             })}
           </>
         )}
@@ -2448,6 +2584,47 @@ export const StagePreview: React.FC = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* Scene Custom Title / Text Card (StreamYard Paid Plan) */}
+      {activeTextCard && activeTextCard.enabled && activeTextCard.heading && (
+        <div
+          className={cn(
+            "absolute z-35 max-w-2xl w-[86%] pointer-events-none transition-all duration-300 animate-in fade-in select-none",
+            activeTextCard.position === "top"
+              ? "top-8 left-1/2 -translate-x-1/2"
+              : activeTextCard.position === "top-left"
+              ? "top-8 left-8"
+              : activeTextCard.position === "bottom-right"
+              ? "bottom-20 right-8"
+              : "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+          )}
+        >
+          <div
+            className="p-5 rounded-2xl shadow-2xl backdrop-blur-md text-center border border-white/15"
+            style={{
+              backgroundColor: activeTextCard.bgColor || "rgba(15, 23, 42, 0.88)",
+              opacity: (activeTextCard.bgOpacity ?? 85) / 100,
+            }}
+          >
+            <h3
+              className="text-2xl md:text-3xl font-black tracking-tight"
+              style={{ color: activeTextCard.textColor || "#ffffff" }}
+            >
+              {activeTextCard.heading}
+            </h3>
+            {activeTextCard.subheading && (
+              <p className="mt-1 text-sm md:text-base text-slate-300 font-medium">
+                {activeTextCard.subheading}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Scene Transition Fade Overlay (StreamYard Paid Plan) */}
+      {isSceneTransitioning && (
+        <div className="absolute inset-0 bg-[#07070d]/40 backdrop-blur-[2px] z-40 pointer-events-none transition-opacity duration-300 animate-in fade-in" />
       )}
       </div>
     </div>

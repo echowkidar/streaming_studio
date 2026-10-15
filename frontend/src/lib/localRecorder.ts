@@ -228,6 +228,22 @@ export class LocalParticipantRecorder {
     }
   }
 
+  public pause() {
+    if (this.mediaRecorder && this.mediaRecorder.state === "recording") {
+      this.mediaRecorder.pause();
+      this.trackInfo.status = "PAUSED";
+      this.notify();
+    }
+  }
+
+  public resume() {
+    if (this.mediaRecorder && this.mediaRecorder.state === "paused") {
+      this.mediaRecorder.resume();
+      this.trackInfo.status = "RECORDING";
+      this.notify();
+    }
+  }
+
   public stop(): Promise<string | null> {
     return new Promise((resolve) => {
       this.cleanup();

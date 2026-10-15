@@ -62,9 +62,47 @@ export interface MediaFileItem {
   desc?: string;
   isMuted?: boolean;
   volume?: number;
+  /** StreamYard Paid Plan: Multi-page Slide Deck URLs & Speaker Notes */
+  slides?: string[];
+  currentSlideIndex?: number;
+  speakerNotes?: Record<number, string>;
 }
 
 export type ActiveMedia = MediaFileItem;
+
+export interface SceneTextCard {
+  enabled: boolean;
+  heading: string;
+  subheading?: string;
+  textColor: string;
+  bgColor: string;
+  bgOpacity: number;
+  position: "center" | "top" | "bottom-right" | "top-left";
+  fontSize: "small" | "medium" | "large" | "xlarge";
+}
+
+export interface FairUseConfig {
+  enabled: boolean;
+  /** Forces host camera in corner PiP when playing full-screen videos */
+  enforceReactionPiP: boolean;
+  /** Automatically lowers media volume when host/guest speaks */
+  autoAudioDucking: boolean;
+  /** Target media volume (0-100) while someone is speaking */
+  duckingVolumePct: number;
+  /** Applies subtle scale/contrast/frame transform to avoid raw visual hash match */
+  visualTransformFilter: boolean;
+  /** Mirrors video horizontally in canvas output */
+  mirrorMediaVideo: boolean;
+  /** Adjusts video playback speed (e.g., 1.04) to bypass audio fingerprinting */
+  playbackRate: number;
+  /** Auto-pauses video every X seconds (0 = disabled, e.g., 10 = pause every 10s for 2.5s) */
+  autoPauseIntervalSec: number;
+  /** Displays Fair-Use Commentary watermark badge over media */
+  showFairUseBadge: boolean;
+  badgeText: string;
+  /** Switches back to host scene if host mic & cam are off for too long during media playback */
+  idleMediaGuardSec: number;
+}
 
 export interface StudioScene {
   id: string;
@@ -72,7 +110,20 @@ export interface StudioScene {
   layout: StudioLayout;
   splitRatio?: number;
   onStageParticipantIds?: (string | number)[];
+  /** Fixed seat assignments: slotIndex -> participantId */
+  slotAssignments?: Record<number, string | number>;
+  /** StreamYard Pre-Booked Guest Slots (e.g. 1, 2, 3) when no guest is connected yet */
+  expectedGuestSlots?: number;
+  /** Automatically promote connecting guests into this scene's open guest slots */
+  autoAddGuestsToStage?: boolean;
   activeMedia?: MediaFileItem | null;
+  /** StreamYard Paid Plan: Auto-switch to another scene when video ends */
+  nextSceneIdOnMediaEnd?: string | null;
+  /** Scene Transition effect when switching into this scene */
+  transitionType?: "cut" | "fade" | "wipe" | "stinger";
+  stingerVideoUrl?: string | null;
+  /** Rich Text / Title Card inside Scene */
+  textCard?: SceneTextCard | null;
   isTransparentMedia?: boolean;
   backgroundUrl?: string | null;
   backgroundType?: "image" | "video";
@@ -185,7 +236,7 @@ interface StudioState {
   toggleCam: () => void;
   toggleScreenShare: () => void;
 
-  // Participants
+  // Participants & StreamYard Pre-Booked Guest Slots
   participants: Participant[];
   setParticipants: (participants: Participant[]) => void;
   addParticipant: (participant: Participant) => void;
@@ -194,6 +245,10 @@ interface StudioState {
   moveToStage: (id: string | number) => void;
   moveToBackstage: (id: string | number) => void;
   setStageParticipants: (stageIds: (string | number)[]) => void;
+  preAddGuestSlotToScene: (sceneId?: string) => void;
+  removeGuestSlotFromScene: (sceneId?: string) => void;
+  setAutoAddGuestsToStage: (enabled: boolean, sceneId?: string) => void;
+  assignParticipantToSlot: (slotIndex: number, participantId: string | number | null, sceneId?: string) => void;
 
   // Branding & Overlays
   showLogo: boolean;
@@ -204,6 +259,8 @@ interface StudioState {
   activeBackgroundType: "image" | "video";
   activeThemeColor: string;
   activeBanner: LowerThirdBanner | null;
+  activeTextCard: SceneTextCard | null;
+  setSceneTextCard: (card: Partial<SceneTextCard> | null) => void;
   tickerText: string;
   showTicker: boolean;
   tickerConfig: TickerConfig;
@@ -242,6 +299,18 @@ interface StudioState {
   toggleMediaMute: () => void;
   setMediaMuted: (muted: boolean) => void;
   setMediaVolume: (volume: number) => void;
+  nextSlide: () => void;
+  prevSlide: () => void;
+  goToSlide: (index: number) => void;
+  triggerMediaEnded: () => void;
+
+  // YouTube Fair-Use & Anti-Reused Content Protection
+  fairUseConfig: FairUseConfig;
+  setFairUseConfig: (updates: Partial<FairUseConfig>) => void;
+
+  // Scene Transition State
+  isSceneTransitioning: boolean;
+  activeTransitionType: "cut" | "fade" | "wipe" | "stinger";
 
   // Unified Media Library
   mediaLibrary: MediaFileItem[];
@@ -394,6 +463,20 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Show Flyer",
     layout: "cinema",
     splitRatio: 50,
+    onStageParticipantIds: [],
+    expectedGuestSlots: 0,
+    autoAddGuestsToStage: false,
+    transitionType: "fade",
+    textCard: {
+      enabled: true,
+      heading: "STARTING SOON",
+      subheading: "Grab a coffee! We go live in a few moments.",
+      textColor: "#ffffff",
+      bgColor: "#0f172a",
+      bgOpacity: 85,
+      position: "center",
+      fontSize: "xlarge",
+    },
     backgroundUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1920&q=80",
     backgroundType: "image",
     activeMedia: null,
@@ -404,28 +487,39 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Host Only",
     layout: "solo",
     splitRatio: 50,
+    expectedGuestSlots: 0,
+    autoAddGuestsToStage: false,
+    transitionType: "fade",
     activeMedia: null,
     thumbnailColor: "#3b82f6",
   },
   {
     id: "scene-intro",
-    name: "Intro Video",
+    name: "Intro Video (Auto-Advance)",
     layout: "cinema",
     splitRatio: 50,
+    onStageParticipantIds: [],
+    expectedGuestSlots: 0,
+    autoAddGuestsToStage: false,
+    nextSceneIdOnMediaEnd: "scene-interview",
+    transitionType: "fade",
     activeMedia: {
       id: "media-intro-1",
       name: "Intro Video.mp4",
       type: "video",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-      loop: true,
+      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+      loop: false,
     },
     thumbnailColor: "#ec4899",
   },
   {
     id: "scene-interview",
-    name: "Interview Split",
+    name: "Interview Split (Auto-Guest)",
     layout: "cropped",
     splitRatio: 50,
+    expectedGuestSlots: 1,
+    autoAddGuestsToStage: true,
+    transitionType: "fade",
     activeMedia: null,
     thumbnailColor: "#10b981",
   },
@@ -434,19 +528,36 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     name: "Speaker View",
     layout: "speaker-large",
     splitRatio: 65,
+    expectedGuestSlots: 2,
+    autoAddGuestsToStage: true,
+    transitionType: "fade",
     activeMedia: null,
     thumbnailColor: "#8b5cf6",
   },
   {
     id: "scene-slide",
-    name: "Presentation Deck",
+    name: "Presentation Deck (Multi-Slide)",
     layout: "presentation",
     splitRatio: 68,
+    expectedGuestSlots: 1,
+    autoAddGuestsToStage: true,
+    transitionType: "fade",
     activeMedia: {
       id: "media-slides",
       name: "Product_Architecture_2026.pdf",
       type: "pdf",
       url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+      currentSlideIndex: 0,
+      slides: [
+        "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+        "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1600&q=80",
+        "https://images.unsplash.com/photo-1504868584819-f8e8b4b6d7e3?auto=format&fit=crop&w=1600&q=80",
+      ],
+      speakerNotes: {
+        0: "Welcome everyone to the 2026 Architecture Overview.",
+        1: "Slide 2 covers real-time metrics and WebRTC scaling.",
+        2: "Slide 3: Q&A and open floor discussion.",
+      },
     },
     thumbnailColor: "#06b6d4",
   },
@@ -457,10 +568,16 @@ export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [
     id: "media-slides",
     name: "Product_Architecture_2026.pdf",
     type: "pdf",
-    desc: "Presentation Deck (18 slides)",
-    duration: "18 slides",
+    desc: "Presentation Deck (3 slides)",
+    duration: "3 slides",
     url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
     thumbnail: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=400&q=80",
+    currentSlideIndex: 0,
+    slides: [
+      "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
+      "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1600&q=80",
+      "https://images.unsplash.com/photo-1504868584819-f8e8b4b6d7e3?auto=format&fit=crop&w=1600&q=80",
+    ],
   },
   {
     id: "media-countdown",
@@ -470,7 +587,7 @@ export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [
     duration: "00:30",
     url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
     thumbnail: "https://images.unsplash.com/photo-1518173946687-a4c8a383392e?auto=format&fit=crop&w=400&q=80",
-    loop: true,
+    loop: false,
   },
   {
     id: "media-keynote-clip",
@@ -539,6 +656,8 @@ interface SavedStudioLayoutState {
   showLogo?: boolean;
   logoPosition?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   activeBanner?: LowerThirdBanner | null;
+  activeTextCard?: SceneTextCard | null;
+  fairUseConfig?: FairUseConfig;
   chromaKeyConfig?: ChromaKeyConfig;
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
@@ -612,6 +731,88 @@ const initialActiveSceneId: string | null =
   savedLayout.activeSceneId && initialScenes.some((s) => s.id === savedLayout.activeSceneId)
     ? savedLayout.activeSceneId
     : initialScenes[0]?.id || null;
+
+/**
+ * Helper: Reconciles connecting/existing participants with StreamYard Scene rules.
+ * If a scene has `expectedGuestSlots > 0` and `autoAddGuestsToStage !== false`,
+ * newly connected guests automatically fill open stage slots!
+ */
+function reconcileParticipantsWithScene(
+  incomingParticipants: Participant[],
+  existingParticipants: Participant[],
+  activeScene?: StudioScene
+): Participant[] {
+  const existingStatusMap = new Map(existingParticipants.map((p) => [String(p.id), p.status]));
+  const explicitSceneIds = activeScene?.onStageParticipantIds
+    ? new Set(activeScene.onStageParticipantIds.map(String))
+    : null;
+
+  const expectedGuests = activeScene?.expectedGuestSlots ?? 0;
+  const shouldAutoAdd = activeScene?.autoAddGuestsToStage ?? (expectedGuests > 0);
+
+  // Count how many remote guests are already on stage
+  let currentOnStageGuests = 0;
+  incomingParticipants.forEach((p) => {
+    const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
+    const prevStatus = existingStatusMap.get(String(p.id));
+    if (!isHostOrScreen && (prevStatus === "ON_STAGE" || explicitSceneIds?.has(String(p.id)))) {
+      currentOnStageGuests++;
+    }
+  });
+
+  // Check if this is a media-only scene (explicitly empty stage with no guest slots)
+  const isMediaOnlyScene =
+    Array.isArray(activeScene?.onStageParticipantIds) &&
+    activeScene!.onStageParticipantIds!.length === 0 &&
+    expectedGuests === 0;
+
+  const reconciled = incomingParticipants.map((p) => {
+    const idStr = String(p.id);
+    const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
+
+    // 1. Preserve existing status if participant was already in the room
+    const existingStatus = existingStatusMap.get(idStr);
+    if (existingStatus) {
+      return { ...p, status: existingStatus };
+    }
+
+    // 2. If scene explicitly lists this participant ID
+    if (explicitSceneIds?.has(idStr)) {
+      return { ...p, status: "ON_STAGE" as const };
+    }
+
+    // 3. Host or Screen Share defaults to ON_STAGE unless in a Media-Only (Intro/Flyer) scene
+    if (isHostOrScreen) {
+      return { ...p, status: isMediaOnlyScene ? ("BACKSTAGE" as const) : ("ON_STAGE" as const) };
+    }
+
+    // 4. StreamYard Auto-Slot Fill: New Guest connects while broadcast/recording or pre-show is active!
+    if (shouldAutoAdd && currentOnStageGuests < expectedGuests) {
+      currentOnStageGuests++;
+      return { ...p, status: "ON_STAGE" as const };
+    }
+
+    return { ...p, status: (p.status || "BACKSTAGE") as any };
+  });
+
+  // Sort on-stage participants according to fixed slotAssignments if defined on scene
+  const slotMap = activeScene?.slotAssignments;
+  if (slotMap && Object.keys(slotMap).length > 0) {
+    const assignedSlotByParticipant = new Map<string, number>();
+    Object.entries(slotMap).forEach(([slotIdx, pId]) => {
+      if (pId !== null && pId !== undefined) {
+        assignedSlotByParticipant.set(String(pId), Number(slotIdx));
+      }
+    });
+    reconciled.sort((a, b) => {
+      const slotA = assignedSlotByParticipant.get(String(a.id)) ?? 999;
+      const slotB = assignedSlotByParticipant.get(String(b.id)) ?? 999;
+      return slotA - slotB;
+    });
+  }
+
+  return reconciled;
+}
 
 const initialActiveScene = initialScenes.find((s) => s.id === initialActiveSceneId);
 
@@ -783,6 +984,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       showLogo: saved.showLogo ?? true,
       logoPosition: saved.logoPosition || "top-right",
       activeBanner: saved.activeBanner ?? null,
+      activeTextCard: saved.activeTextCard ?? nextActiveScene?.textCard ?? null,
+      fairUseConfig: saved.fairUseConfig || get().fairUseConfig,
       chromaKeyConfig: saved.chromaKeyConfig || {
         enabled: false,
         keyColor: "#00b140",
@@ -834,6 +1037,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
                     logoConfig: cloud.logoConfig || state.logoConfig,
                     showLogo: cloud.showLogo !== undefined ? cloud.showLogo : state.showLogo,
                     activeBanner: cloud.activeBanner !== undefined ? cloud.activeBanner : state.activeBanner,
+                    activeTextCard: cloud.activeTextCard !== undefined ? cloud.activeTextCard : (cloudActiveScene?.textCard ?? state.activeTextCard),
+                    fairUseConfig: cloud.fairUseConfig || state.fairUseConfig,
                     activeStageOverlay: cloud.activeStageOverlay !== undefined ? cloud.activeStageOverlay : state.activeStageOverlay,
                     activeMedia: cloud.activeMedia !== undefined ? cloud.activeMedia : state.activeMedia,
                   };
@@ -852,8 +1057,32 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   isRecordPaused: false,
   recordDuration: 0,
   liveDuration: 0,
-  viewerCount: 1420,
+  viewerCount: 0,
   connectionQuality: "EXCELLENT",
+
+  isSceneTransitioning: false,
+  activeTransitionType: "fade",
+
+  fairUseConfig: {
+    enabled: true,
+    enforceReactionPiP: true,
+    autoAudioDucking: true,
+    duckingVolumePct: 18,
+    visualTransformFilter: true,
+    mirrorMediaVideo: false,
+    playbackRate: 1.04,
+    autoPauseIntervalSec: 0,
+    showFairUseBadge: true,
+    badgeText: "LIVE COMMENTARY & REVIEW • FAIR USE",
+    idleMediaGuardSec: 60,
+    ...(savedLayout.fairUseConfig || {}),
+  },
+  setFairUseConfig: (updates) =>
+    set((s) => {
+      const next = { ...s.fairUseConfig, ...updates };
+      persistStudioLayout({ fairUseConfig: next });
+      return { fairUseConfig: next };
+    }),
 
   activeLayout: savedLayout.activeLayout || initialActiveScene?.layout || "speaker-large",
   setLayout: (layout) => {
@@ -966,12 +1195,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       if (p?.isScreen || key.includes("screen")) {
         nextBounds["screen-share"] = merged;
       }
-      const onStageIndex = s.participants
-        .filter((item) => item.status === "ON_STAGE")
-        .findIndex((item) => String(item.id) === key);
-      if (onStageIndex >= 0) {
-        nextBounds[`slot-${onStageIndex}`] = merged;
-      }
 
       persistStudioLayout({ participantBounds: nextBounds });
       return {
@@ -989,12 +1212,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       }
       if (p?.isScreen || key.includes("screen")) {
         delete next["screen-share"];
-      }
-      const onStageIndex = s.participants
-        .filter((item) => item.status === "ON_STAGE")
-        .findIndex((item) => String(item.id) === key);
-      if (onStageIndex >= 0) {
-        delete next[`slot-${onStageIndex}`];
       }
       persistStudioLayout({ participantBounds: next });
       return { participantBounds: next };
@@ -1066,18 +1283,20 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   participants: [],
   setParticipants: (newParticipants) =>
     set((s) => {
-      const existingStatusMap = new Map(s.participants.map((p) => [String(p.id), p.status]));
-      const merged = newParticipants.map((p) => {
-        const existingStatus = existingStatusMap.get(String(p.id));
-        return {
-          ...p,
-          status: existingStatus || p.status || (p.role === "host" || p.isLocal || p.isScreen ? "ON_STAGE" : "BACKSTAGE"),
-        };
-      });
+      const activeScene = s.scenes.find((sc) => sc.id === s.activeSceneId);
+      const merged = reconcileParticipantsWithScene(newParticipants, s.participants, activeScene);
       return { participants: merged };
     }),
   addParticipant: (participant) =>
-    set((s) => ({ participants: [...s.participants, participant] })),
+    set((s) => {
+      const activeScene = s.scenes.find((sc) => sc.id === s.activeSceneId);
+      const merged = reconcileParticipantsWithScene(
+        [...s.participants, participant],
+        s.participants,
+        activeScene
+      );
+      return { participants: merged };
+    }),
   removeParticipant: (id) =>
     set((s) => ({ participants: s.participants.filter((p) => p.id !== id) })),
   updateParticipant: (id, updates) =>
@@ -1085,22 +1304,97 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       participants: s.participants.map((p) => (p.id === id ? { ...p, ...updates } : p)),
     })),
   moveToStage: (id) =>
-    set((s) => ({
-      participants: s.participants.map((p) => (p.id === id ? { ...p, status: "ON_STAGE" } : p)),
-    })),
+    set((s) => {
+      const nextParticipants = s.participants.map((p) =>
+        p.id === id ? { ...p, status: "ON_STAGE" as const } : p
+      );
+      const onStageIds = nextParticipants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, onStageParticipantIds: onStageIds } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { participants: nextParticipants, scenes: nextScenes };
+    }),
   moveToBackstage: (id) =>
-    set((s) => ({
-      participants: s.participants.map((p) => (p.id === id ? { ...p, status: "BACKSTAGE" } : p)),
-    })),
+    set((s) => {
+      const nextParticipants = s.participants.map((p) =>
+        p.id === id ? { ...p, status: "BACKSTAGE" as const } : p
+      );
+      const onStageIds = nextParticipants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, onStageParticipantIds: onStageIds } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { participants: nextParticipants, scenes: nextScenes };
+    }),
   setStageParticipants: (stageIds) =>
     set((s) => {
       const stageSet = new Set(stageIds.map(String));
-      return {
-        participants: s.participants.map((p) => ({
-          ...p,
-          status: stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE",
-        })),
-      };
+      const nextParticipants = s.participants.map((p) => ({
+        ...p,
+        status: (stageSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as any,
+      }));
+      const onStageIds = nextParticipants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, onStageParticipantIds: onStageIds } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { participants: nextParticipants, scenes: nextScenes };
+    }),
+
+  // StreamYard Pre-Show Guest Slot Management
+  preAddGuestSlotToScene: (sceneId) =>
+    set((s) => {
+      const targetId = sceneId || s.activeSceneId;
+      if (!targetId) return s;
+      const nextScenes = s.scenes.map((sc) => {
+        if (sc.id !== targetId) return sc;
+        const nextSlots = Math.min(8, (sc.expectedGuestSlots || 0) + 1);
+        return { ...sc, expectedGuestSlots: nextSlots, autoAddGuestsToStage: true };
+      });
+      persistStudioLayout({ scenes: nextScenes });
+      return { scenes: nextScenes };
+    }),
+  removeGuestSlotFromScene: (sceneId) =>
+    set((s) => {
+      const targetId = sceneId || s.activeSceneId;
+      if (!targetId) return s;
+      const nextScenes = s.scenes.map((sc) => {
+        if (sc.id !== targetId) return sc;
+        const nextSlots = Math.max(0, (sc.expectedGuestSlots || 0) - 1);
+        return { ...sc, expectedGuestSlots: nextSlots };
+      });
+      persistStudioLayout({ scenes: nextScenes });
+      return { scenes: nextScenes };
+    }),
+  setAutoAddGuestsToStage: (enabled, sceneId) =>
+    set((s) => {
+      const targetId = sceneId || s.activeSceneId;
+      if (!targetId) return s;
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === targetId ? { ...sc, autoAddGuestsToStage: enabled } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { scenes: nextScenes };
+    }),
+  assignParticipantToSlot: (slotIndex, participantId, sceneId) =>
+    set((s) => {
+      const targetId = sceneId || s.activeSceneId;
+      if (!targetId) return s;
+      const nextScenes = s.scenes.map((sc) => {
+        if (sc.id !== targetId) return sc;
+        const nextMap = { ...(sc.slotAssignments || {}) };
+        if (participantId === null) {
+          delete nextMap[slotIndex];
+        } else {
+          nextMap[slotIndex] = participantId;
+        }
+        return { ...sc, slotAssignments: nextMap };
+      });
+      const updatedActive = nextScenes.find((sc) => sc.id === s.activeSceneId);
+      const nextParticipants = reconcileParticipantsWithScene(s.participants, s.participants, updatedActive);
+      persistStudioLayout({ scenes: nextScenes });
+      return { scenes: nextScenes, participants: nextParticipants };
     }),
 
   showLogo: savedLayout.showLogo !== undefined ? savedLayout.showLogo : true,
@@ -1114,6 +1408,26 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   activeBackgroundType: savedLayout.activeBackgroundType || "image",
   activeThemeColor: savedLayout.activeThemeColor || "#6366f1",
   activeBanner: savedLayout.activeBanner !== undefined ? savedLayout.activeBanner : null,
+  activeTextCard: savedLayout.activeTextCard ?? initialActiveScene?.textCard ?? null,
+  setSceneTextCard: (card) =>
+    set((s) => {
+      const base: SceneTextCard = s.activeTextCard || {
+        enabled: true,
+        heading: "LIVE KEYNOTE",
+        subheading: "",
+        textColor: "#ffffff",
+        bgColor: "#0f172a",
+        bgOpacity: 85,
+        position: "center",
+        fontSize: "large",
+      };
+      const nextCard = card === null ? null : { ...base, ...card };
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, textCard: nextCard } : sc
+      );
+      persistStudioLayout({ activeTextCard: nextCard, scenes: nextScenes });
+      return { activeTextCard: nextCard, scenes: nextScenes };
+    }),
   tickerText:
     savedLayout.tickerText ||
     "🔥 Welcome to LiveStudio 2.0 • Ask your questions in the live chat! • Streaming to YouTube",
@@ -1244,22 +1558,33 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     persistStudioLayout({ activeOverlayUrl: url });
     set({ activeOverlayUrl: url });
   },
-  setBackground: (url, type) => {
-    const resolvedType =
-      type ||
-      (url &&
-      (url.endsWith(".mp4") ||
-        url.endsWith(".webm") ||
-        url.includes("mixkit") ||
-        url.includes("video"))
-        ? "video"
-        : "image");
-    persistStudioLayout({ activeBackgroundUrl: url, activeBackgroundType: resolvedType });
-    set({
-      activeBackgroundUrl: url,
-      activeBackgroundType: resolvedType,
-    });
-  },
+  setBackground: (url, type) =>
+    set((s) => {
+      const resolvedType =
+        type ||
+        (url &&
+        (url.endsWith(".mp4") ||
+          url.endsWith(".webm") ||
+          url.includes("mixkit") ||
+          url.includes("video"))
+          ? "video"
+          : "image");
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId
+          ? { ...sc, backgroundUrl: url, backgroundType: resolvedType }
+          : sc
+      );
+      persistStudioLayout({
+        activeBackgroundUrl: url,
+        activeBackgroundType: resolvedType,
+        scenes: nextScenes,
+      });
+      return {
+        activeBackgroundUrl: url,
+        activeBackgroundType: resolvedType,
+        scenes: nextScenes,
+      };
+    }),
   setThemeColor: (color) => {
     persistStudioLayout({ activeThemeColor: color });
     set((s) => ({
@@ -1271,10 +1596,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       },
     }));
   },
-  setBanner: (banner) => {
-    persistStudioLayout({ activeBanner: banner });
-    set({ activeBanner: banner });
-  },
+  setBanner: (banner) =>
+    set((s) => {
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, banner } : sc
+      );
+      persistStudioLayout({ activeBanner: banner, scenes: nextScenes });
+      return { activeBanner: banner, scenes: nextScenes };
+    }),
   setTicker: (text, show) => {
     persistStudioLayout({ tickerText: text, showTicker: show });
     set((s) => ({
@@ -1303,10 +1632,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
     return DEFAULT_STUDIO_OVERLAYS;
   })(),
-  setStageOverlay: (overlay) => {
-    persistStudioLayout({ activeStageOverlay: overlay });
-    set({ activeStageOverlay: overlay });
-  },
+  setStageOverlay: (overlay) =>
+    set((s) => {
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, stageOverlay: overlay } : sc
+      );
+      persistStudioLayout({ activeStageOverlay: overlay, scenes: nextScenes });
+      return { activeStageOverlay: overlay, scenes: nextScenes };
+    }),
   toggleStageOverlay: (overlay) =>
     set((s) => {
       const next = s.activeStageOverlay?.id === overlay.id ? null : overlay;
@@ -1394,10 +1727,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       : (savedLayout.activeSceneId
           ? (savedLayout.scenes || DEFAULT_STUDIO_SCENES).find((s) => s.id === savedLayout.activeSceneId)?.activeMedia
           : null) || null,
-  setActiveMedia: (media) => {
-    persistStudioLayout({ activeMedia: media });
-    set({ activeMedia: media });
-  },
+  setActiveMedia: (media) =>
+    set((s) => {
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, activeMedia: media } : sc
+      );
+      persistStudioLayout({ activeMedia: media, scenes: nextScenes });
+      return { activeMedia: media, scenes: nextScenes };
+    }),
   toggleMediaMute: () => {
     const current = get().activeMedia;
     if (!current) return;
@@ -1440,6 +1777,53 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return s;
     });
     set({ activeMedia: updated, scenes });
+  },
+
+  // Multi-Slide Presentation Controls (StreamYard Paid Plan)
+  nextSlide: () => {
+    const media = get().activeMedia;
+    if (!media || !media.slides || media.slides.length === 0) return;
+    const nextIdx = Math.min(media.slides.length - 1, (media.currentSlideIndex || 0) + 1);
+    get().setActiveMedia({
+      ...media,
+      currentSlideIndex: nextIdx,
+      url: media.slides[nextIdx],
+    });
+  },
+  prevSlide: () => {
+    const media = get().activeMedia;
+    if (!media || !media.slides || media.slides.length === 0) return;
+    const prevIdx = Math.max(0, (media.currentSlideIndex || 0) - 1);
+    get().setActiveMedia({
+      ...media,
+      currentSlideIndex: prevIdx,
+      url: media.slides[prevIdx],
+    });
+  },
+  goToSlide: (index: number) => {
+    const media = get().activeMedia;
+    if (!media || !media.slides || !media.slides[index]) return;
+    get().setActiveMedia({
+      ...media,
+      currentSlideIndex: index,
+      url: media.slides[index],
+    });
+  },
+
+  // Auto-Advance Scene when Intro/Video Media Ends
+  triggerMediaEnded: () => {
+    const state = get();
+    const activeScene = state.scenes.find((s) => s.id === state.activeSceneId);
+    if (activeScene?.nextSceneIdOnMediaEnd) {
+      const targetExists = state.scenes.some((s) => s.id === activeScene.nextSceneIdOnMediaEnd);
+      if (targetExists) {
+        get().switchScene(activeScene.nextSceneIdOnMediaEnd);
+        return;
+      }
+    }
+    if (state.activeMedia && !state.activeMedia.loop) {
+      get().setActiveMedia(null);
+    }
   },
 
   mediaLibrary: loadSavedMediaLibrary(),
@@ -1586,6 +1970,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       layout: custom?.layout || state.activeLayout || "solo",
       splitRatio: custom?.splitRatio || state.layoutSplitRatio || 50,
       onStageParticipantIds: custom?.onStageParticipantIds || onStageIds,
+      expectedGuestSlots: custom?.expectedGuestSlots ?? 1,
+      autoAddGuestsToStage: custom?.autoAddGuestsToStage ?? true,
+      transitionType: custom?.transitionType || "fade",
+      textCard: custom?.textCard ?? null,
       activeMedia: custom?.activeMedia !== undefined ? custom?.activeMedia : state.activeMedia,
       backgroundUrl: custom?.backgroundUrl !== undefined ? custom?.backgroundUrl : state.activeBackgroundUrl,
       backgroundType: custom?.backgroundType || state.activeBackgroundType,
@@ -1615,9 +2003,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const current = get().scenes;
     if (current.length <= 1) return;
     const next = current.filter((s) => s.id !== id);
-    const nextActive = get().activeSceneId === id ? next[0].id : get().activeSceneId;
+    const wasActive = get().activeSceneId === id;
+    const nextActive = wasActive ? next[0].id : get().activeSceneId;
     persistStudioLayout({ scenes: next, activeSceneId: nextActive });
     set({ scenes: next, activeSceneId: nextActive });
+    if (wasActive && nextActive) {
+      get().switchScene(nextActive);
+    }
   },
   duplicateScene: (id) => {
     const scene = get().scenes.find((s) => s.id === id);
@@ -1639,62 +2031,135 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set({ scenes: list });
   },
   switchScene: (id) => {
-    const scene = get().scenes.find((s) => s.id === id);
+    const state = get();
+    const scene = state.scenes.find((s) => s.id === id);
     if (!scene) return;
 
-    persistStudioLayout({ activeSceneId: id });
-    set({ activeSceneId: id });
-
-    // 1. Layout
-    get().setLayout(scene.layout);
-    if (scene.splitRatio) {
-      get().setLayoutSplitRatio(scene.splitRatio);
+    // Switch karne se pehle current active scene ka state auto-save karein (StreamYard standard)
+    if (state.activeSceneId && state.activeSceneId !== id) {
+      get().saveCurrentStageToScene(state.activeSceneId);
     }
 
-    // 2. Onstage Participants
-    if (scene.onStageParticipantIds && scene.onStageParticipantIds.length > 0) {
+    const transition = scene.transitionType || "fade";
+    if (transition !== "cut") {
+      set({ isSceneTransitioning: true, activeTransitionType: transition });
+      setTimeout(() => set({ isSceneTransitioning: false }), 420);
+    }
+
+    const targetLayout = scene.layout || "solo";
+    const targetSplit =
+      scene.splitRatio ??
+      (targetLayout === "three-equal"
+        ? 33
+        : targetLayout === "speaker-large" || targetLayout === "presentation"
+        ? 65
+        : 50);
+
+    // StreamYard Scene Participant Reconciliation:
+    // Supports Media-Only scenes (onStageParticipantIds: []) AND auto-promoting connected guests if scene has expectedGuestSlots
+    let nextParticipants = state.participants;
+    if (Array.isArray(scene.onStageParticipantIds)) {
       const targetIds = new Set(scene.onStageParticipantIds.map(String));
-      const nextParticipants = get().participants.map((p) => ({
-        ...p,
-        status: (targetIds.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as any,
-      }));
-      set({ participants: nextParticipants });
+      const expectedGuests = scene.expectedGuestSlots ?? 0;
+      let filledGuests = 0;
+
+      nextParticipants = state.participants.map((p) => {
+        const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
+        if (targetIds.has(String(p.id))) {
+          if (!isHostOrScreen) filledGuests++;
+          return { ...p, status: "ON_STAGE" as const };
+        }
+        if (!isHostOrScreen && scene.autoAddGuestsToStage && filledGuests < expectedGuests) {
+          filledGuests++;
+          return { ...p, status: "ON_STAGE" as const };
+        }
+        return { ...p, status: "BACKSTAGE" as const };
+      });
+    } else {
+      nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene);
     }
 
-    // 3. Active Media (StreamYard parity: always set to scene.activeMedia or null to clear previous scene's media)
-    get().setActiveMedia(scene.activeMedia || null);
+    // 2. Apply Fit/Cover transforms based on scene layout
+    const currentTransforms = { ...state.tileTransforms };
+    if (targetLayout === "cropped" || targetLayout === "podcast") {
+      nextParticipants.forEach((p) => {
+        if (!p.isScreen) {
+          currentTransforms[p.id] = {
+            ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+            fitMode: "cover",
+          };
+        }
+      });
+    } else if (targetLayout === "side-by-side" || targetLayout === "fit") {
+      nextParticipants.forEach((p) => {
+        currentTransforms[p.id] = {
+          ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+          fitMode: "contain",
+        };
+      });
+    }
+
     if (scene.isTransparentMedia !== undefined) {
-      get().setTileTransform("active-media", { isTransparentBg: Boolean(scene.isTransparentMedia) });
+      currentTransforms["active-media"] = {
+        ...(currentTransforms["active-media"] || { fitMode: "contain", zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        isTransparentBg: Boolean(scene.isTransparentMedia),
+      };
     }
 
-    // 4. Background
-    if (scene.backgroundUrl !== undefined) {
-      get().setBackground(scene.backgroundUrl || null, scene.backgroundType || "image");
-    }
+    const nextBgUrl = scene.backgroundUrl !== undefined ? scene.backgroundUrl : state.activeBackgroundUrl;
+    const nextBgType = scene.backgroundType || state.activeBackgroundType;
+    const nextStageOverlay = scene.stageOverlay !== undefined ? scene.stageOverlay : state.activeStageOverlay;
+    const nextBanner = scene.banner !== undefined ? scene.banner : state.activeBanner;
+    const nextTextCard = scene.textCard !== undefined ? scene.textCard : null;
+    const nextMedia = scene.activeMedia !== undefined ? scene.activeMedia : null;
 
-    // 5. Overlay
-    if (scene.stageOverlay !== undefined) {
-      get().setStageOverlay(scene.stageOverlay || null);
-    } else if (scene.overlayUrl !== undefined) {
-      get().setOverlay(scene.overlayUrl || null);
-    }
+    // Single atomic state update (prevents UI flicker & layout overwrites)
+    set({
+      activeSceneId: id,
+      activeLayout: targetLayout,
+      layoutSplitRatio: targetSplit,
+      participantBounds: {},
+      selectedParticipantId: null,
+      participants: nextParticipants,
+      tileTransforms: currentTransforms,
+      activeMedia: nextMedia,
+      activeBackgroundUrl: nextBgUrl,
+      activeBackgroundType: nextBgType,
+      activeStageOverlay: nextStageOverlay,
+      activeBanner: nextBanner,
+      activeTextCard: nextTextCard,
+      customLayoutConfig: {
+        ...state.customLayoutConfig,
+        heroParticipantId: scene.heroParticipantId ?? null,
+      },
+    });
 
-    // 6. Banner
-    if (scene.banner !== undefined) {
-      get().setBanner(scene.banner || null);
-    }
-
-    // 7. Spotlight
-    get().setCustomLayoutConfig({ heroParticipantId: scene.heroParticipantId || undefined });
+    persistStudioLayout({
+      activeSceneId: id,
+      activeLayout: targetLayout,
+      layoutSplitRatio: targetSplit,
+      participantBounds: {},
+      tileTransforms: currentTransforms,
+      activeMedia: nextMedia,
+      activeBackgroundUrl: nextBgUrl,
+      activeBackgroundType: nextBgType,
+      activeStageOverlay: nextStageOverlay,
+      activeBanner: nextBanner,
+      activeTextCard: nextTextCard,
+    });
   },
   saveCurrentStageToScene: (id) => {
     const state = get();
     const onStageIds = state.participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+    const existingScene = state.scenes.find((s) => s.id === id);
     get().updateScene(id, {
       layout: state.activeLayout,
       splitRatio: state.layoutSplitRatio,
       onStageParticipantIds: onStageIds,
+      expectedGuestSlots: existingScene?.expectedGuestSlots,
+      autoAddGuestsToStage: existingScene?.autoAddGuestsToStage,
       activeMedia: state.activeMedia || null,
+      textCard: state.activeTextCard || null,
       isTransparentMedia: state.tileTransforms["active-media"]?.isTransparentBg ?? false,
       backgroundUrl: state.activeBackgroundUrl || null,
       backgroundType: state.activeBackgroundType,

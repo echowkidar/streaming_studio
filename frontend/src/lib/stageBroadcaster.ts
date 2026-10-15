@@ -27,6 +27,8 @@ interface CachedTileLayout {
   role: string;
   fitMode?: string;
   isTransparentCard?: boolean;
+  participantId?: string;
+  zIndex?: number;
 }
 
 class StageBroadcaster {
@@ -53,8 +55,17 @@ class StageBroadcaster {
   private tickerOffset = 0;
   private lastTickerTime = 0;
 
-  // Audio Connections
-  private connectedAudioTracks = new Set<string>();
+  // Fair-Use Auto-Pause & Idle Commentary Tracking
+  private lastAutoPauseTimestamp = 0;
+  private isAutoPausedByFairUse = false;
+  private lastHostActiveTimestamp = 0;
+  private boundEndedElements = new WeakSet<HTMLMediaElement>();
+
+  // Audio Connections (GainNode per participant track to eliminate mute/backstage leaks)
+  private participantAudioNodes = new Map<
+    string,
+    { source: MediaStreamAudioSourceNode; gain: GainNode }
+  >();
   private connectedMediaElements = new Set<HTMLMediaElement>();
   private mediaGainNode: GainNode | null = null;
 
@@ -125,6 +136,8 @@ class StageBroadcaster {
     }
 
     this.isBroadcasting = true;
+    this.lastAutoPauseTimestamp = performance.now();
+    this.lastHostActiveTimestamp = performance.now();
 
     // 1. Setup Composite 720p HD Canvas (1280x720 @ 30fps)
     const WIDTH = 1280;
@@ -211,9 +224,10 @@ class StageBroadcaster {
       if (elapsed >= this.FRAME_TOLERANCE) {
         this.lastFrameTime = now;
 
-        if (now - this.lastLayoutCacheTime > 1000) {
+        if (now - this.lastLayoutCacheTime > 250) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
           this.refreshAudioConnections();
+          this.enforceFairUseMediaPolicies(now);
           this.lastLayoutCacheTime = now;
         }
 
@@ -230,11 +244,11 @@ class StageBroadcaster {
     };
     this.animFrameId = requestAnimationFrame(render);
 
-    // Background Web Worker Clock: Only fires when tab is hidden/throttled and rAF stops
+    // Background Web Worker Clock: Only renders when browser tab is hidden/throttled or rAF stalls
     this.startWorkerClock(() => {
       if (!this.isBroadcasting) return;
       const now = performance.now();
-      if (now - lastRafTime > 45) {
+      if ((typeof document !== "undefined" && document.hidden) || now - lastRafTime > 60) {
         doRenderFrame(now);
       }
     });
@@ -261,6 +275,68 @@ class StageBroadcaster {
 
     console.log("[StageBroadcaster] Stage composite active (30 FPS background-resilient canvas + mixed audio).");
     return { videoTrack: this.activeVideoTrack, audioTrack: this.activeAudioTrack };
+  }
+
+  /**
+   * Enforces YouTube Fair-Use & StreamYard Auto-Advance on active media elements:
+   * 1. Binds `ended` listener to auto-advance to `nextSceneIdOnMediaEnd`
+   * 2. Applies playbackRate shift (e.g. 1.04x)
+   * 3. Applies periodic Auto-Pause interval to break Content-ID continuous match
+   * 4. Idle Media Guard: cuts back to host if mic & cam are off for too long
+   */
+  private enforceFairUseMediaPolicies(now: number) {
+    const store = useStudioStore.getState();
+    const { fairUseConfig, activeMedia, participants } = store;
+
+    const mediaVideo = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!mediaVideo || !activeMedia || activeMedia.type !== "video") return;
+
+    // 1. Auto-Advance Scene when Video Ends
+    if (!this.boundEndedElements.has(mediaVideo)) {
+      this.boundEndedElements.add(mediaVideo);
+      mediaVideo.addEventListener("ended", () => {
+        useStudioStore.getState().triggerMediaEnded();
+      });
+    }
+
+    if (!fairUseConfig || !fairUseConfig.enabled) return;
+
+    // 2. Playback Speed Shift (Anti-Audio Fingerprint)
+    const targetRate = fairUseConfig.playbackRate || 1.0;
+    if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.01) {
+      mediaVideo.playbackRate = targetRate;
+    }
+
+    // 3. Auto-Pause Interval (Breaks 10s+ continuous Content-ID claim window)
+    if (fairUseConfig.autoPauseIntervalSec > 0) {
+      const intervalMs = fairUseConfig.autoPauseIntervalSec * 1000;
+      if (!mediaVideo.paused && now - this.lastAutoPauseTimestamp >= intervalMs) {
+        this.isAutoPausedByFairUse = true;
+        this.lastAutoPauseTimestamp = now;
+        mediaVideo.pause();
+        setTimeout(() => {
+          if (this.isAutoPausedByFairUse && mediaVideo.paused) {
+            this.isAutoPausedByFairUse = false;
+            this.lastAutoPauseTimestamp = performance.now();
+            mediaVideo.play().catch(() => {});
+          }
+        }, 2200);
+      }
+    }
+
+    // 4. Idle Media Guard (Prevents unoriginal stream flag if host leaves media unattended)
+    const isAnySpeakerActive = participants.some(
+      (p) => p.status === "ON_STAGE" && (p.camOn || p.micOn || p.isSpeaking)
+    );
+    if (isAnySpeakerActive) {
+      this.lastHostActiveTimestamp = now;
+    } else if (
+      fairUseConfig.idleMediaGuardSec > 0 &&
+      now - this.lastHostActiveTimestamp > fairUseConfig.idleMediaGuardSec * 1000
+    ) {
+      this.lastHostActiveTimestamp = now;
+      store.triggerMediaEnded();
+    }
   }
 
   public stopStageComposite() {
@@ -295,7 +371,13 @@ class StageBroadcaster {
       this.mediaGainNode = null;
     }
 
-    this.connectedAudioTracks.clear();
+    this.participantAudioNodes.forEach((entry) => {
+      try {
+        entry.source.disconnect();
+        entry.gain.disconnect();
+      } catch {}
+    });
+    this.participantAudioNodes.clear();
     this.connectedMediaElements.clear();
     this.cachedLayouts = [];
     this.canvas = null;
@@ -383,6 +465,8 @@ class StageBroadcaster {
 
     this.activeBroadcastId = broadcastId;
     this.isBroadcasting = true;
+    this.lastAutoPauseTimestamp = performance.now();
+    this.lastHostActiveTimestamp = performance.now();
     this.chunkQueue = [];
     this.isUploading = false;
 
@@ -469,10 +553,11 @@ class StageBroadcaster {
       if (elapsed >= this.FRAME_TOLERANCE) {
         this.lastFrameTime = now;
 
-        // Refresh layout snapshot every 1000ms (avoids synchronous reflow stalls during render)
-        if (now - this.lastLayoutCacheTime > 1000) {
+        // Refresh layout snapshot every 250ms and enforce fair-use policies
+        if (now - this.lastLayoutCacheTime > 250) {
           this.updateLayoutCache(container, WIDTH, HEIGHT);
           this.refreshAudioConnections();
+          this.enforceFairUseMediaPolicies(now);
           this.lastLayoutCacheTime = now;
         }
 
@@ -489,11 +574,11 @@ class StageBroadcaster {
     };
     this.animFrameId = requestAnimationFrame(render);
 
-    // Background Web Worker Clock: Only fires when tab is hidden/throttled and rAF stops
+    // Background Web Worker Clock: Only renders when browser tab is hidden/throttled or rAF stalls
     this.startWorkerClock(() => {
       if (!this.isBroadcasting) return;
       const now = performance.now();
-      if (now - lastRafTime > 45) {
+      if ((typeof document !== "undefined" && document.hidden) || now - lastRafTime > 60) {
         doRenderFrame(now);
       }
     });
@@ -619,6 +704,9 @@ class StageBroadcaster {
         const isLocal = tile.getAttribute("data-participant-local") === "true";
         const isScreen = tile.getAttribute("data-participant-screen") === "true";
         const role = tile.getAttribute("data-participant-role") || "";
+        const participantId = tile.getAttribute("data-participant-id") || "";
+        const computedZ = typeof window !== "undefined" ? parseInt(window.getComputedStyle(tile).zIndex, 10) : 10;
+        const zIndex = Number.isNaN(computedZ) ? 10 : computedZ;
         const fitMode =
           tile.getAttribute("data-participant-fit") ||
           tile.querySelector("[data-participant-fit]")?.getAttribute("data-participant-fit") ||
@@ -645,9 +733,13 @@ class StageBroadcaster {
           role,
           fitMode,
           isTransparentCard,
+          participantId,
+          zIndex,
         });
       });
 
+      // Z-Index sorting so floating PiP & dragged freeform boxes draw on top
+      nextLayouts.sort((a, b) => (a.zIndex || 10) - (b.zIndex || 10));
       this.cachedLayouts = nextLayouts;
     } catch (err) {
       console.warn("[StageBroadcaster] Layout snapshot warning:", err);
@@ -656,40 +748,65 @@ class StageBroadcaster {
 
   /**
    * Connect participant and media audio streams into the broadcast mix
+   * StreamYard Parity: Backstage & muted participants are instantly silenced with GainNode
    */
   public refreshAudioConnections() {
     if (!this.audioCtx || !this.audioDestination) return;
 
     try {
       const store = useStudioStore.getState();
+      const activeTrackIds = new Set<string>();
 
-      // 1. Participant Microphones
-      const onStageParticipants = store.participants.filter(
-        (p) => p.status === "ON_STAGE" && p.micOn !== false
-      );
+      let isAnyParticipantSpeaking = false;
 
-      onStageParticipants.forEach((p) => {
+      // 1. Participant Microphones with GainNode control (Prevents mute/backstage audio leaks)
+      store.participants.forEach((p) => {
         const mediaTrack =
           (p.audioTrack as any)?.mediaStreamTrack ||
           (p.audioTrack instanceof MediaStreamTrack ? p.audioTrack : null);
 
+        const isAudible = p.status === "ON_STAGE" && p.micOn !== false;
+        if (isAudible && p.isSpeaking) {
+          isAnyParticipantSpeaking = true;
+        }
+
         if (mediaTrack && mediaTrack.readyState === "live") {
           const trackId = mediaTrack.id || String(p.id);
-          if (!this.connectedAudioTracks.has(trackId)) {
+          activeTrackIds.add(trackId);
+
+          let nodeEntry = this.participantAudioNodes.get(trackId);
+          if (!nodeEntry) {
             try {
               const srcStream = new MediaStream([mediaTrack]);
-              const srcNode = this.audioCtx!.createMediaStreamSource(srcStream);
-              srcNode.connect(this.audioDestination!);
-              this.connectedAudioTracks.add(trackId);
-              console.log(`[StageBroadcaster] Connected mic audio for participant: ${p.name}`);
+              const source = this.audioCtx!.createMediaStreamSource(srcStream);
+              const gain = this.audioCtx!.createGain();
+              gain.gain.value = isAudible ? 1 : 0;
+              source.connect(gain);
+              gain.connect(this.audioDestination!);
+              this.participantAudioNodes.set(trackId, { source, gain });
+              console.log(`[StageBroadcaster] Connected mic audio with GainNode for ${p.name}`);
             } catch (err) {
-              console.warn(`[StageBroadcaster] Audio connect error for participant ${p.name}:`, err);
+              console.warn(`[StageBroadcaster] Audio connect error for ${p.name}:`, err);
             }
+          } else {
+            // Real-time Mute / Unmute / Backstage cutoff
+            nodeEntry.gain.gain.value = isAudible ? 1 : 0;
           }
         }
       });
 
-      // 2. Active Stage Media Video / Audio Element
+      // Disconnect and clean up participants that left or disconnected
+      this.participantAudioNodes.forEach((entry, trackId) => {
+        if (!activeTrackIds.has(trackId)) {
+          try {
+            entry.source.disconnect();
+            entry.gain.disconnect();
+          } catch {}
+          this.participantAudioNodes.delete(trackId);
+        }
+      });
+
+      // 2. Active Stage Media Video / Audio Element (with Auto Audio Ducking)
       const mediaVideo =
         (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
         (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
@@ -705,8 +822,16 @@ class StageBroadcaster {
         }
 
         const isMediaMuted = Boolean(store.activeMedia?.isMuted || mediaVideo.muted);
+        const baseVol = (store.activeMedia?.volume ?? 80) / 100;
+        const shouldDuck =
+          store.fairUseConfig?.enabled &&
+          store.fairUseConfig?.autoAudioDucking &&
+          isAnyParticipantSpeaking;
+        const duckVol = (store.fairUseConfig?.duckingVolumePct ?? 18) / 100;
+        const finalGain = isMediaMuted ? 0 : shouldDuck ? Math.min(baseVol, duckVol) : baseVol;
+
         if (this.mediaGainNode) {
-          this.mediaGainNode.gain.value = isMediaMuted ? 0 : (typeof store.activeMedia?.volume === "number" ? store.activeMedia.volume : 1);
+          this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.12);
         }
         if (mediaVideo.muted !== isMediaMuted) {
           mediaVideo.muted = isMediaMuted;
@@ -719,14 +844,12 @@ class StageBroadcaster {
 
           if (stream) {
             const audioTrack = stream.getAudioTracks()[0];
-            if (audioTrack && !this.connectedAudioTracks.has(audioTrack.id)) {
+            if (audioTrack && !this.participantAudioNodes.has(audioTrack.id)) {
               const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-              if (this.mediaGainNode) {
-                srcNode.connect(this.mediaGainNode);
-              } else {
-                srcNode.connect(this.audioDestination);
-              }
-              this.connectedAudioTracks.add(audioTrack.id);
+              const gainNode = this.mediaGainNode || this.audioCtx.createGain();
+              srcNode.connect(gainNode);
+              if (!this.mediaGainNode) gainNode.connect(this.audioDestination);
+              this.participantAudioNodes.set(audioTrack.id, { source: srcNode, gain: gainNode });
               console.log("[StageBroadcaster] Connected media video audio stream to broadcast mix");
             }
           } else if (!this.connectedMediaElements.has(mediaVideo)) {
@@ -841,6 +964,17 @@ class StageBroadcaster {
         const panY = mediaTf.panY || 0;
 
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
+          ctx.save();
+          if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.visualTransformFilter) {
+            ctx.filter = "contrast(1.05) saturate(1.06)";
+            if (currentStore.fairUseConfig.mirrorMediaVideo) {
+              const cx = x + w / 2;
+              ctx.translate(cx, 0);
+              ctx.scale(-1, 1);
+              ctx.translate(-cx, 0);
+            }
+          }
+
           const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
           const tRatio = w / h;
           let objectPosX = Math.max(0, Math.min(100, 50 + panX));
@@ -896,6 +1030,23 @@ class StageBroadcaster {
                 ctx.drawImage(mediaVideo, dx, dy, dw, dh);
               } catch {}
             }
+          }
+          ctx.restore();
+
+          // Fair-Use Commentary Badge on Media
+          if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
+            const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
+            ctx.save();
+            ctx.font = "bold 11px Inter, system-ui, sans-serif";
+            const bw = ctx.measureText(badgeTxt).width + 24;
+            ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+            this.drawRoundedRect(ctx, x + 12, y + h - 34, bw, 22, 6);
+            ctx.fill();
+            ctx.fillStyle = "#38bdf8";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(badgeTxt, x + 24, y + h - 23);
+            ctx.restore();
           }
         } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
           const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
@@ -981,6 +1132,15 @@ class StageBroadcaster {
             tile.isScreen ||
             (video.videoHeight > video.videoWidth * 1.05 && tile.fitMode !== "cover");
 
+          const pTransform =
+            (tile.participantId ? store.tileTransforms[tile.participantId] : null) ||
+            (tile.isLocal ? store.tileTransforms["local-host"] : null);
+          const zoom = Math.max(1, pTransform?.zoom || 1);
+          const panX = pTransform?.panX || 0;
+          const panY = pTransform?.panY || 0;
+          const flipH = pTransform?.flipH !== undefined ? pTransform.flipH : (tile.isLocal && !tile.isScreen);
+          const flipV = pTransform?.flipV || false;
+
           if (isContain) {
             // Auto-adjust Fit / Pillarbox (StreamYard standard for vertical mobile phones & screen shares):
             // Preserves 100% of the video without chopping off heads, chins, or content
@@ -993,38 +1153,50 @@ class StageBroadcaster {
               dx = x + (w - dw) / 2;
             }
 
-            try {
-              if (tile.isLocal && !tile.isScreen) {
-                ctx.save();
-                ctx.translate(dx + dw, dy);
-                ctx.scale(-1, 1);
-                ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, dw, dh);
-                ctx.restore();
-              } else {
-                ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, dx, dy, dw, dh);
-              }
-            } catch {}
-          } else {
-            // Fill / Cover mode: crop center to fill slot
-            let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-            if (vRatio > tRatio) {
-              sw = video.videoHeight * tRatio;
-              sx = (video.videoWidth - sw) / 2;
-            } else {
-              sh = video.videoWidth / tRatio;
-              sy = (video.videoHeight - sh) / 2;
-            }
+            let sw = video.videoWidth / zoom;
+            let sh = video.videoHeight / zoom;
+            let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
+            let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
+            sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
+            sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
 
             try {
-              if (tile.isLocal && !tile.isScreen) {
-                ctx.save();
-                ctx.translate(x + w, y);
-                ctx.scale(-1, 1);
+              ctx.save();
+              if (flipH || flipV) {
+                ctx.translate(dx + (flipH ? dw : 0), dy + (flipV ? dh : 0));
+                ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+              } else {
+                ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
+              }
+              ctx.restore();
+            } catch {}
+          } else {
+            // Fill / Cover mode: crop center to fill slot with zoom and pan
+            let sw = video.videoWidth;
+            let sh = video.videoHeight;
+            if (vRatio > tRatio) {
+              sw = video.videoHeight * tRatio;
+            } else {
+              sh = video.videoWidth / tRatio;
+            }
+            sw = sw / zoom;
+            sh = sh / zoom;
+            let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
+            let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
+            sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
+            sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
+
+            try {
+              ctx.save();
+              if (flipH || flipV) {
+                ctx.translate(x + (flipH ? w : 0), y + (flipV ? h : 0));
+                ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
                 ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
-                ctx.restore();
               } else {
                 ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
               }
+              ctx.restore();
             } catch {}
           }
         } else {
@@ -1453,6 +1625,46 @@ class StageBroadcaster {
 
       ctx.restore();
     }
+
+      // 6. Scene Custom Text / Title Card (StreamYard Paid Plan)
+      if (store.activeTextCard && store.activeTextCard.enabled && store.activeTextCard.heading) {
+        const card = store.activeTextCard;
+        ctx.save();
+        const cardW = Math.min(720, W * 0.7);
+        const cardH = card.subheading ? 130 : 90;
+        let cx = (W - cardW) / 2;
+        let cy = (H - cardH) / 2;
+        if (card.position === "top") cy = 48;
+        else if (card.position === "top-left") { cx = 40; cy = 48; }
+        else if (card.position === "bottom-right") { cx = W - cardW - 40; cy = H - cardH - 90; }
+
+        ctx.fillStyle = card.bgColor || "rgba(15, 23, 42, 0.88)";
+        ctx.globalAlpha = (card.bgOpacity ?? 85) / 100;
+        this.drawRoundedRect(ctx, cx, cy, cardW, cardH, 16);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = card.textColor || "#ffffff";
+        ctx.font = "bold 32px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(card.heading, cx + cardW / 2, cy + (card.subheading ? 46 : cardH / 2));
+
+        if (card.subheading) {
+          ctx.fillStyle = "#cbd5e1";
+          ctx.font = "500 18px Inter, system-ui, sans-serif";
+          ctx.fillText(card.subheading, cx + cardW / 2, cy + 92);
+        }
+        ctx.restore();
+      }
+
+      // 7. Scene Transition Fade Overlay
+      if (store.isSceneTransitioning) {
+        ctx.save();
+        ctx.fillStyle = "rgba(7, 7, 13, 0.35)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+      }
     } catch (renderErr) {
       console.warn("[StageBroadcaster] renderStageFrame catch:", renderErr);
     }
@@ -1503,9 +1715,16 @@ class StageBroadcaster {
       while (!uploaded && retries < 3 && this.isBroadcasting && this.activeBroadcastId) {
         retries++;
         try {
+          let token = "";
+          if (typeof window !== "undefined") {
+            token = localStorage.getItem("livestudio_token") || "";
+          }
           const res = await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
             method: "POST",
-            headers: { "Content-Type": "application/octet-stream" },
+            headers: {
+              "Content-Type": "application/octet-stream",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: chunk,
           });
           if (res.ok) {
@@ -1565,7 +1784,13 @@ class StageBroadcaster {
       this.canvas.remove();
     }
 
-    this.connectedAudioTracks.clear();
+    this.participantAudioNodes.forEach((entry) => {
+      try {
+        entry.source.disconnect();
+        entry.gain.disconnect();
+      } catch {}
+    });
+    this.participantAudioNodes.clear();
     this.connectedMediaElements.clear();
     this.cachedLayouts = [];
     this.canvas = null;

@@ -271,6 +271,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     mediaLibrary,
     addMediaLibraryItem,
     removeMediaLibraryItem,
+    preAddGuestSlotToScene,
+    removeGuestSlotFromScene,
+    setAutoAddGuestsToStage,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -1011,8 +1014,19 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 {renderThumbnailContent(scene)}
 
                 {/* Layout Badge (Top Left) */}
-                <div className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
-                  <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
+                <div className="absolute top-1 left-1 z-10 flex items-center gap-1">
+                  <div className="px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
+                    <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
+                  </div>
+                  {(scene.expectedGuestSlots || 0) > 0 && (
+                    <div
+                      className="px-1 py-0.5 rounded bg-indigo-950/90 backdrop-blur-xs text-[7px] font-bold text-indigo-300 border border-indigo-500/40 pointer-events-none shadow-sm flex items-center gap-0.5"
+                      title={`${scene.expectedGuestSlots} Pre-Booked Guest Slot${(scene.expectedGuestSlots || 0) > 1 ? "s" : ""}`}
+                    >
+                      <User className="w-2 h-2 text-indigo-400" />
+                      <span>{scene.expectedGuestSlots}G</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Media Label Badge on thumbnail */}
@@ -1148,6 +1162,110 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                         <X className="w-3.5 h-3.5 text-rose-400" />
                         <span>Remove Media</span>
                       </button>
+                    )}
+
+                    <div className="my-1 border-t border-white/10" />
+
+                    {/* Pre-Booked Guest Slots (StreamYard parity) */}
+                    <div className="px-2.5 py-1.5 flex items-center justify-between text-slate-300 bg-white/[0.03] rounded-lg my-0.5">
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <Users className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Guest Slots:</span>
+                        <span className="font-bold text-white px-1 py-0.2 rounded bg-indigo-500/20 border border-indigo-500/40">{scene.expectedGuestSlots ?? 0}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => removeGuestSlotFromScene(scene.id)}
+                          disabled={(scene.expectedGuestSlots ?? 0) <= 0}
+                          className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-white flex items-center justify-center text-xs font-bold transition-colors"
+                          title="Decrease guest slot count"
+                        >
+                          -
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => preAddGuestSlotToScene(scene.id)}
+                          className="w-5 h-5 rounded bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center text-xs font-bold transition-colors shadow-sm"
+                          title="Add pre-booked guest slot to scene"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setAutoAddGuestsToStage(!scene.autoAddGuestsToStage, scene.id)}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center justify-between text-[11px]"
+                      title="Automatically promote connecting guests directly to stage"
+                    >
+                      <span>Auto-Stage Guests</span>
+                      <span
+                        className={cn(
+                          "px-1.5 py-0.2 rounded text-[9px] font-bold",
+                          scene.autoAddGuestsToStage
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                            : "bg-white/10 text-slate-400"
+                        )}
+                      >
+                        {scene.autoAddGuestsToStage ? "ON" : "OFF"}
+                      </span>
+                    </button>
+
+                    {/* Transition Effect (StreamYard Paid Plan) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextTrans = scene.transitionType === "fade" ? "cut" : "fade";
+                        updateScene(scene.id, { transitionType: nextTrans });
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center justify-between text-[11px]"
+                      title="Scene switch transition effect (Cut or Smooth Fade)"
+                    >
+                      <span>Transition Effect</span>
+                      <span
+                        className={cn(
+                          "px-1.5 py-0.2 rounded text-[9px] font-bold uppercase",
+                          scene.transitionType === "fade"
+                            ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                            : "bg-white/10 text-slate-400"
+                        )}
+                      >
+                        {scene.transitionType || "cut"}
+                      </span>
+                    </button>
+
+                    {/* Auto-Advance Video Scenes (StreamYard Paid Plan) */}
+                    {scene.activeMedia?.type === "video" && (
+                      <div className="px-2.5 py-1.5 text-slate-300 bg-white/[0.03] rounded-lg my-0.5">
+                        <div className="text-[10px] text-slate-400 mb-1 flex items-center justify-between">
+                          <span>Auto-Advance on Video End:</span>
+                          {scene.nextSceneIdOnMediaEnd && (
+                            <button
+                              type="button"
+                              onClick={() => updateScene(scene.id, { nextSceneIdOnMediaEnd: undefined })}
+                              className="text-[9px] text-rose-400 hover:underline"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                        <select
+                          value={scene.nextSceneIdOnMediaEnd || ""}
+                          onChange={(e) => updateScene(scene.id, { nextSceneIdOnMediaEnd: e.target.value || undefined })}
+                          className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="">None (Loop or stay)</option>
+                          {scenes
+                            .filter((s) => s.id !== scene.id)
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>
+                                → {s.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
                     )}
 
                     <div className="my-1 border-t border-white/10" />
