@@ -995,371 +995,14 @@ export const StagePreview: React.FC = () => {
           />
         )}
 
-        {/* YouTube Fair Use / Reaction Badge */}
+        {/* YouTube Fair Use / Reaction Badge (Broadcast watermark at bottom-left corner) */}
         {fairUseConfig?.enabled && (
-          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none">
-            <ShieldAlert className="w-3 h-3" />
-            <span>Live Commentary & Review • Fair Use</span>
+          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none">
+            <ShieldAlert className="w-3 h-3 text-slate-950" />
+            <span>Fair Use • Safe Mode</span>
           </div>
         )}
 
-        {/* Media Name Badge on Tile Hover */}
-        <div
-          className={cn(
-            "absolute opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5 text-[10px] font-mono text-white pointer-events-none z-20",
-            fairUseConfig?.enabled ? "top-9 left-3" : "top-3 left-3"
-          )}
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="truncate max-w-[180px]">{activeMedia.name}</span>
-          {activeMedia.loop !== false && (
-            <span className="text-[9px] text-emerald-400 font-mono font-normal">
-              (Loop)
-            </span>
-          )}
-          {activeMedia.isMuted && (
-            <span className="text-[9px] text-rose-400 font-mono font-bold flex items-center gap-0.5 bg-rose-950/60 px-1 py-0.5 rounded border border-rose-500/30">
-              <VolumeX className="w-2.5 h-2.5" /> Muted
-            </span>
-          )}
-        </div>
-
-        {/* Floating Quick Crop, Pan, Zoom, Fit Controls on Tile Hover */}
-        <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 bg-black/80 backdrop-blur-md p-1 rounded-xl border border-white/20 shadow-2xl">
-          {activeMedia.type === "video" && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveMedia({
-                  ...activeMedia,
-                  loop: !(activeMedia.loop ?? true),
-                });
-              }}
-              className={cn(
-                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
-                (activeMedia.loop ?? true)
-                  ? "bg-indigo-600 text-white border-indigo-400 font-bold"
-                  : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-300"
-              )}
-              title={
-                (activeMedia.loop ?? true)
-                  ? "Auto-Repeat ON (Video will loop continuously)"
-                  : "Auto-Repeat OFF (Video will play once)"
-              }
-            >
-              <Repeat className="w-3 h-3" />
-              <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
-            </button>
-          )}
-
-          {/* Mute vs Sound Toggle Button */}
-          {(activeMedia.type === "video" || activeMedia.type === "audio") && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleMediaMute();
-              }}
-              className={cn(
-                "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
-                activeMedia.isMuted
-                  ? "bg-rose-500/25 border-rose-500/50 text-rose-300 font-bold"
-                  : "bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 text-emerald-300"
-              )}
-              title={
-                activeMedia.isMuted
-                  ? "Media Audio is Muted (Click to Unmute)"
-                  : "Media Audio is Playing (Click to Mute)"
-              }
-            >
-              {activeMedia.isMuted ? (
-                <>
-                  <VolumeX className="w-3 h-3 text-rose-400" />
-                  <span>Muted</span>
-                </>
-              ) : (
-                <>
-                  <Volume2 className="w-3 h-3 text-emerald-400" />
-                  <span>Audio</span>
-                </>
-              )}
-            </button>
-          )}
-
-          {/* Fit vs Crop Toggle */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleToggleMediaCrop();
-            }}
-            className={cn(
-              "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
-              mediaFitMode === "cover"
-                ? "bg-amber-500 text-black font-bold border-amber-400"
-                : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
-            )}
-            title={
-              mediaFitMode === "cover"
-                ? "Currently: Cropped to Fill Window (Click to Fit 100%)"
-                : "Currently: Fit 100% in Window (Click to Crop & Fill Window)"
-            }
-          >
-            <Crop className="w-3 h-3" />
-            <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Crop"}</span>
-          </button>
-
-          {/* Transparent Card Background Toggle */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setTileTransform("active-media", {
-                isTransparentBg: !mediaTransform.isTransparentBg,
-              });
-            }}
-            className={cn(
-              "px-2 py-1 rounded-lg text-[10px] font-semibold border flex items-center gap-1 shadow-md transition-all",
-              mediaTransform.isTransparentBg
-                ? "bg-indigo-600 text-white font-bold border-indigo-400"
-                : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
-            )}
-            title={
-              mediaTransform.isTransparentBg
-                ? "Card Background: Transparent (Click to switch to Dark Card)"
-                : "Card Background: Dark Card (Click to make Card Transparent / Show Wallpaper)"
-            }
-          >
-            <Layers className="w-3 h-3" />
-            <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
-          </button>
-
-          {/* Zoom & Document Alignment Controls when in Crop / Fill mode */}
-          {(mediaFitMode === "cover" || mediaZoom > 1) && (
-            <>
-              {/* Zoom Out */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMediaZoomOut();
-                }}
-                disabled={mediaZoom <= 1}
-                className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3 h-3" />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-slate-200 px-0.5">
-                {Math.round(mediaZoom * 100)}%
-              </span>
-              {/* Zoom In */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMediaZoomIn();
-                }}
-                disabled={mediaZoom >= 3}
-                className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3 h-3" />
-              </button>
-
-              {/* Document & Graphic Alignment Presets (Horizontal & Vertical) */}
-              <div className="flex items-center gap-0.5 bg-white/5 rounded-lg border border-white/10 px-0.5">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("left");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanX <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Show Left Side"
-                >
-                  Left
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("center");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    Math.abs(mediaPanX) < 20 && Math.abs(mediaPanY) < 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Center Alignment"
-                >
-                  Mid
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("right");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanX >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Show Right Side"
-                >
-                  Right
-                </button>
-                <span className="w-px h-2.5 bg-white/20 mx-0.5" />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("top");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Show Top / Letterhead"
-                >
-                  Top
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleMediaCropPreset("bottom");
-                  }}
-                  className={cn(
-                    "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                    mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                  )}
-                  title="Show Bottom / Signatures"
-                >
-                  Btm
-                </button>
-              </div>
-
-              {/* Vertical Pan Slider */}
-              <input
-                type="range"
-                min="-50"
-                max="50"
-                step="1"
-                value={Math.round(mediaPanY)}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  setTileTransform("active-media", {
-                    fitMode: "cover",
-                    panY: Number(e.target.value),
-                  });
-                }}
-                className="w-12 h-1 accent-amber-400 bg-white/20 rounded cursor-pointer"
-                title={`Vertical Position: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
-              />
-
-              {/* Reset Crop */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleResetMediaTransform();
-                }}
-                className="p-1 rounded text-slate-400 hover:text-amber-300"
-                title="Reset Crop to Fit"
-              >
-                <RotateCcw className="w-3 h-3" />
-              </button>
-            </>
-          )}
-
-          {/* YouTube Fair-Use & Anti-Reused Content Protection Controls */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setFairUseConfig({ enabled: !fairUseConfig.enabled });
-            }}
-            className={cn(
-              "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-              fairUseConfig?.enabled
-                ? "bg-amber-500/25 text-amber-300 border-amber-500/50"
-                : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-            )}
-            title="Toggle YouTube Fair-Use & Anti-Reused Content Safe Mode"
-          >
-            <ShieldAlert className="w-3 h-3 text-amber-400" />
-            <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
-          </button>
-
-          {fairUseConfig?.enabled && (
-            <select
-              value={fairUseConfig?.autoPauseIntervalSec ?? 0}
-              onChange={(e) => {
-                e.stopPropagation();
-                setFairUseConfig({ autoPauseIntervalSec: Number(e.target.value) });
-              }}
-              className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
-              title="Auto-Pause Interval (Anti-Content ID match)"
-            >
-              <option value={0}>Pause: Off</option>
-              <option value={10}>Pause: 10s</option>
-              <option value={15}>Pause: 15s</option>
-              <option value={20}>Pause: 20s</option>
-            </select>
-          )}
-
-          {fairUseConfig?.enabled && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setFairUseConfig({
-                  filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
-                });
-              }}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                (fairUseConfig?.filmGrainOverlay ?? true)
-                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-              )}
-              title="Toggle Dynamic Film-Grain Adjustment Layer (Anti-Fingerprint Hash Mutator)"
-            >
-              <Sparkles className="w-3 h-3 text-amber-400" />
-              <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
-            </button>
-          )}
-
-          {/* Change / Replace Media */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
-            }}
-            className="p-1 rounded hover:bg-emerald-600/80 text-slate-300 hover:text-white transition-colors"
-            title="Change / Select Media from Library"
-          >
-            <MonitorUp className="w-3.5 h-3.5 text-emerald-400 hover:text-white" />
-          </button>
-
-          {/* Remove Media */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveMedia(null);
-            }}
-            className="p-1 rounded hover:bg-rose-600 text-slate-300 hover:text-white transition-colors"
-            title="Remove Media from Stage"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
 
         {/* Multi-Slide Presentation Deck Controls (StreamYard Paid Plan) */}
         {activeMedia.slides && activeMedia.slides.length > 0 && (
@@ -1508,7 +1151,7 @@ export const StagePreview: React.FC = () => {
               setSelectedParticipantId("active-media");
             }}
             className={cn(
-              "rounded-2xl overflow-visible select-none transition-shadow",
+              "rounded-2xl overflow-visible select-none transition-shadow group/mediatile",
               isMediaSelected
                 ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer"
                 : mediaTransform.isTransparentBg
@@ -1521,21 +1164,18 @@ export const StagePreview: React.FC = () => {
               {renderMediaTile()}
             </div>
 
-            {/* Floating Action Pill Toolbar for Media */}
-            {isMediaSelected && (
-              <div
-                className={cn(
-                  "absolute z-50 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none",
-                  mediaBounds.height >= 85
-                    ? "top-3 left-1/2 -translate-x-1/2"
-                    : mediaBounds.y < 12
-                    ? "-bottom-11 left-1/2 -translate-x-1/2"
-                    : "-top-11 left-1/2 -translate-x-1/2"
-                )}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                onTouchStart={(e) => e.stopPropagation()}
-              >
+            {/* Unified Floating Action Pill Toolbar for Media */}
+            <div
+              className={cn(
+                "absolute z-50 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap transition-all duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none top-3 left-1/2 -translate-x-1/2",
+                isMediaSelected
+                  ? "opacity-100 pointer-events-auto"
+                  : "opacity-0 group-hover/mediatile:opacity-100 pointer-events-none group-hover/mediatile:pointer-events-auto"
+              )}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+            >
                 {/* Media Name Tag */}
                 <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[120px] truncate">
                   🎬 {activeMedia.name}
@@ -1825,6 +1465,20 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
+                {/* Change / Replace Media from library */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+                  }}
+                  className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-medium flex items-center gap-1 transition-colors"
+                  title="Change / Select Media from Library"
+                >
+                  <MonitorUp className="w-3 h-3 text-emerald-400" />
+                  <span>Replace</span>
+                </button>
+
                 {/* Stop / Remove Media */}
                 <button
                   type="button"
@@ -1838,17 +1492,18 @@ export const StagePreview: React.FC = () => {
                   Remove
                 </button>
 
-                {/* Deselect */}
-                <button
-                  type="button"
-                  onClick={() => setSelectedParticipantId(null)}
-                  className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
-                  title="Deselect window"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+                {/* Deselect / Close Toolbar (shown when selected) */}
+                {isMediaSelected && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedParticipantId(null)}
+                    className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
+                    title="Deselect window"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
-            )}
           </div>
         )}
         {orderedParticipants.map((p, idx) => {
@@ -1940,8 +1595,8 @@ export const StagePreview: React.FC = () => {
               {isSelected && (
                 <div
                   className={cn(
-                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
-                    bounds.y < 12 ? "-bottom-11" : "-top-11"
+                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none",
+                    bounds.height >= 85 || bounds.y < 12 ? "top-3" : "-top-11"
                   )}
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
@@ -2298,9 +1953,16 @@ export const StagePreview: React.FC = () => {
         </div>
       )}
 
-      {/* StreamYard Stage Window Quick-Split Controller (appears when 2+ slots or participants on stage) */}
+      {/* StreamYard Stage Window Quick-Split Controller (appears when 2+ slots or participants on stage and no tile is selected) */}
       {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 opacity-0 group-hover/stage:opacity-100 hover:opacity-100 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto">
+        <div
+          className={cn(
+            "absolute top-3 left-1/2 -translate-x-1/2 z-30 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto",
+            selectedParticipantId !== null
+              ? "opacity-0 pointer-events-none"
+              : "opacity-0 group-hover/stage:opacity-100 hover:opacity-100"
+          )}
+        >
           <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
           {(activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal")
             ? [

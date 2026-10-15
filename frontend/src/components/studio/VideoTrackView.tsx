@@ -50,6 +50,7 @@ export function VideoTrackView({
     chromaKeyConfig,
     activeLayout,
     customLayoutConfig,
+    selectedParticipantId,
   } = useStudioStore();
 
   const isFullBleedLayout =
@@ -63,6 +64,7 @@ export function VideoTrackView({
         customLayoutConfig?.mode === "podcast"));
 
   const tileId = String(id || name || "tile");
+  const isTileSelected = Boolean(id && String(selectedParticipantId) === String(id));
 
   // Dynamic Orientation Detection (Auto-adjusts for mobile vertical vs horizontal phones, StreamYard standard)
   const [detectedPortrait, setDetectedPortrait] = useState(false);
@@ -366,7 +368,12 @@ export function VideoTrackView({
       {/* ─────────────────────────────────────────────────────────── */}
       {/* FLOATING TILE CONTROLS (StreamYard Paid Parity: Zoom, Fit, Rotate) */}
       {/* ─────────────────────────────────────────────────────────── */}
-      <div className="absolute top-2.5 right-2.5 z-30 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/80 backdrop-blur-md p-1 rounded-xl border border-white/15 shadow-2xl">
+      <div
+        className={cn(
+          "absolute top-2.5 right-2.5 z-30 flex items-center gap-1 transition-opacity duration-200 bg-black/80 backdrop-blur-md p-1 rounded-xl border border-white/15 shadow-2xl",
+          isTileSelected ? "opacity-0 pointer-events-none" : "opacity-0 group-hover:opacity-100"
+        )}
+      >
         {/* Fit vs Fill Toggle Button */}
         <button
           onClick={(e) => {
