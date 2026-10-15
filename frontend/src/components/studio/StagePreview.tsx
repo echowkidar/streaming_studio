@@ -321,6 +321,11 @@ export const StagePreview: React.FC = () => {
   const expectedGuestSlots = activeScene?.expectedGuestSlots ?? 0;
   const remainingExpectedGuestSlots = Math.max(0, expectedGuestSlots - remoteGuestsOnStageCount);
 
+  const hasVisualMedia = Boolean(
+    activeMedia &&
+      (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+  );
+
   const isFullBleedLayout =
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
@@ -331,17 +336,19 @@ export const StagePreview: React.FC = () => {
         customLayoutConfig?.mode === "cinema" ||
         customLayoutConfig?.mode === "podcast"));
 
-  const hasVisualMedia = Boolean(
-    activeMedia &&
-      (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
-  );
+  const isSoloOrCinema =
+    activeLayout === "solo" ||
+    activeLayout === "cinema" ||
+    (activeLayout === "custom" &&
+      (customLayoutConfig?.mode === "solo" || customLayoutConfig?.mode === "cinema"));
 
-  const allowGhostSlots = !isFullBleedLayout && (!hasVisualMedia || activeLayout === "presentation");
+  // Ghost slots should be allowed in all multi-person layouts (cropped, side-by-side, 3-equal, 4-grid, presentation, etc.)
+  const allowGhostSlots = !isSoloOrCinema;
 
   const totalGhostSlots = allowGhostSlots
     ? remainingExpectedGuestSlots > 0
       ? remainingExpectedGuestSlots
-      : orderedParticipants.length >= 1 && orderedParticipants.length < expectedSlots
+      : !hasVisualMedia && orderedParticipants.length >= 1 && orderedParticipants.length < expectedSlots
       ? expectedSlots - orderedParticipants.length
       : 0
     : 0;
@@ -1269,6 +1276,64 @@ export const StagePreview: React.FC = () => {
             </>
           )}
 
+          {/* YouTube Fair-Use & Anti-Reused Content Protection Controls */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setFairUseConfig({ enabled: !fairUseConfig.enabled });
+            }}
+            className={cn(
+              "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+              fairUseConfig?.enabled
+                ? "bg-amber-500/25 text-amber-300 border-amber-500/50"
+                : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+            )}
+            title="Toggle YouTube Fair-Use & Anti-Reused Content Safe Mode"
+          >
+            <ShieldAlert className="w-3 h-3 text-amber-400" />
+            <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
+          </button>
+
+          {fairUseConfig?.enabled && (
+            <select
+              value={fairUseConfig?.autoPauseIntervalSec ?? 0}
+              onChange={(e) => {
+                e.stopPropagation();
+                setFairUseConfig({ autoPauseIntervalSec: Number(e.target.value) });
+              }}
+              className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
+              title="Auto-Pause Interval (Anti-Content ID match)"
+            >
+              <option value={0}>Pause: Off</option>
+              <option value={10}>Pause: 10s</option>
+              <option value={15}>Pause: 15s</option>
+              <option value={20}>Pause: 20s</option>
+            </select>
+          )}
+
+          {fairUseConfig?.enabled && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFairUseConfig({
+                  filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                });
+              }}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                (fairUseConfig?.filmGrainOverlay ?? true)
+                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+              )}
+              title="Toggle Dynamic Film-Grain Adjustment Layer (Anti-Fingerprint Hash Mutator)"
+            >
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
+            </button>
+          )}
+
           {/* Change / Replace Media */}
           <button
             type="button"
@@ -1460,8 +1525,12 @@ export const StagePreview: React.FC = () => {
             {isMediaSelected && (
               <div
                 className={cn(
-                  "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150",
-                  mediaBounds.y < 12 ? "-bottom-11" : "-top-11"
+                  "absolute z-50 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none",
+                  mediaBounds.height >= 85
+                    ? "top-3 left-1/2 -translate-x-1/2"
+                    : mediaBounds.y < 12
+                    ? "-bottom-11 left-1/2 -translate-x-1/2"
+                    : "-top-11 left-1/2 -translate-x-1/2"
                 )}
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -2037,7 +2106,7 @@ export const StagePreview: React.FC = () => {
                     className={cn(
                       "w-full h-full flex flex-col items-center justify-center p-4 text-center transition-all group",
                       isFullBleedLayout
-                        ? "rounded-none border-0 bg-[#0c0c14]"
+                        ? "rounded-none border-2 border-dashed border-indigo-500/40 bg-[#0c0c16]/90 hover:border-indigo-400 hover:bg-[#121324]"
                         : "rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] hover:border-indigo-500/40 hover:bg-indigo-950/10 backdrop-blur-xs"
                     )}
                   >
