@@ -90,8 +90,8 @@ export function getDefaultSlotBounds(
       // 2 speakers: side by side 16:9 boxes
       const col0W = Math.max(15, safeSplit - 3);
       const col1W = Math.max(15, 100 - safeSplit - 3);
-      const h0 = Math.min(58, Math.max(26, col0W * 1.02));
-      const h1 = Math.min(58, Math.max(26, col1W * 1.02));
+      const h0 = Math.min(54, Math.max(26, col0W * 0.96));
+      const h1 = Math.min(54, Math.max(26, col1W * 0.96));
       const y0 = Math.max(4, (100 - h0) / 2);
       const y1 = Math.max(4, (100 - h1) / 2);
 
@@ -617,8 +617,8 @@ export function calculateStageLayout(
       // StreamYard Fit Layout with Media: 16:9 media on left, 16:9 participant on right!
       const col0W = Math.max(15, safeSplit - 3);
       const col1W = Math.max(15, 100 - safeSplit - 3);
-      const h0 = Math.min(68, Math.max(26, col0W * 1.02));
-      const h1 = Math.min(68, Math.max(26, col1W * 1.02));
+      const h0 = Math.min(54, Math.max(26, col0W * 0.96));
+      const h1 = Math.min(54, Math.max(26, col1W * 0.96));
       const y0 = Math.max(4, (100 - h0) / 2);
       const y1 = Math.max(4, (100 - h1) / 2);
 

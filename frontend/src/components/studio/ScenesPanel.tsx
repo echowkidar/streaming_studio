@@ -1142,10 +1142,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   <div
                     onClick={(e) => e.stopPropagation()}
                     className={cn(
-                      "absolute right-1 z-50 w-52 bg-[#151628] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95 max-h-[min(460px,70vh)] overflow-y-auto scrollbar-thin",
-                      index >= scenes.length - 2 && scenes.length > 2
-                        ? "bottom-2"
-                        : "top-2"
+                      "fixed left-48 sm:left-56 z-[100] w-60 bg-[#151628] border border-white/20 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.9)] p-2 text-xs animate-in fade-in zoom-in-95 max-h-[80vh] overflow-y-auto custom-scrollbar",
+                      index >= scenes.length - 2 && scenes.length > 2 ? "bottom-16" : "top-28"
                     )}
                   >
                     {/* Primary Action 1: Change / Attach Media */}

@@ -1047,23 +1047,25 @@ export const StagePreview: React.FC = () => {
 
         {/* Old-Movie Bareek Vertical Scratches & Traveling Lines Overlay */}
         {fairUseConfig?.enabled && (fairUseConfig?.vintageLinesOverlay ?? true) && (
-          <div
-            className="absolute inset-0 pointer-events-none z-15 overflow-hidden select-none opacity-45"
-            style={{
-              backgroundImage: `
-                repeating-linear-gradient(90deg, transparent 0%, transparent 13.5%, rgba(255,250,235,0.22) 13.55%, transparent 13.65%),
-                repeating-linear-gradient(90.4deg, transparent 0%, transparent 29.1%, rgba(0,0,0,0.28) 29.15%, transparent 29.25%),
-                repeating-linear-gradient(89.6deg, transparent 0%, transparent 47.3%, rgba(255,255,255,0.18) 47.34%, transparent 47.42%)
-              `,
-              backgroundSize: "190% 100%",
-              animation: "pulse 0.18s steps(3, end) infinite",
-            }}
-          />
+          <div className="absolute inset-0 pointer-events-none z-15 overflow-hidden select-none opacity-35">
+            <div className="absolute top-0 bottom-0 left-[18%] w-[1px] bg-white/40 animate-pulse" />
+            <div className="absolute top-[15%] bottom-[10%] left-[63%] w-[1px] bg-black/50 animate-ping" style={{ animationDuration: "1.4s" }} />
+            <div className="absolute top-0 bottom-[25%] left-[82%] w-[0.5px] bg-amber-100/35 animate-pulse" style={{ animationDuration: "0.9s" }} />
+            <div className="absolute top-[20%] bottom-[10%] left-[34%] w-[0.8px] bg-white/30 animate-pulse" style={{ animationDuration: "1.1s" }} />
+            <div className="absolute top-[5%] bottom-[35%] left-[49%] w-[0.5px] bg-black/45 animate-pulse" style={{ animationDuration: "0.7s" }} />
+          </div>
         )}
 
         {/* YouTube Fair Use / Reaction Badge (Broadcast watermark at bottom-left corner) */}
         {fairUseConfig?.enabled && (
-          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none">
+          <div
+            className={cn(
+              "absolute left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none transition-all",
+              activeMedia.type === "video" && mediaFitMode === "contain" && mediaZoom === 1
+                ? "bottom-11"
+                : "bottom-3"
+            )}
+          >
             <ShieldAlert className="w-3 h-3 text-slate-950" />
             <span>Fair Use • Safe Mode</span>
           </div>
@@ -1233,7 +1235,7 @@ export const StagePreview: React.FC = () => {
             {/* Unified Floating Action Pill Toolbar for Media */}
             <div
               className={cn(
-                "absolute z-50 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap transition-all duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none top-3 left-1/2 -translate-x-1/2",
+                "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto transition-all duration-150 w-max max-w-[calc(100%-16px)] top-2.5 left-1/2 -translate-x-1/2",
                 isMediaSelected
                   ? "opacity-100 pointer-events-auto"
                   : "opacity-0 group-hover/mediatile:opacity-100 pointer-events-none group-hover/mediatile:pointer-events-auto"
