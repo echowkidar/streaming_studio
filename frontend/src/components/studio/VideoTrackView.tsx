@@ -49,11 +49,13 @@ export function VideoTrackView({
     activeThemeColor,
     chromaKeyConfig,
     activeLayout,
+    isStageCropped,
     customLayoutConfig,
     selectedParticipantId,
   } = useStudioStore();
 
   const isFullBleedLayout =
+    isStageCropped ||
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
     activeLayout === "cinema" ||
@@ -95,6 +97,7 @@ export function VideoTrackView({
 
   const explicitFitMode = tileTransforms[tileId]?.fitMode;
   const isCroppedStageLayout =
+    isStageCropped ||
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
     (activeLayout === "custom" &&

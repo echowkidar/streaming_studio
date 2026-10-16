@@ -667,13 +667,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
     // 2. 2-Person Fit (16:9 widescreen boxes)
     if (layout === "side-by-side" || layout === "fit") {
+      const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center gap-1">
           <div className="w-[46%] h-[80%]">
-            {hasMedia ? renderMediaTile() : renderCameraTile()}
+            {hasMedia ? (isMediaRight ? renderCameraTile() : renderMediaTile()) : renderCameraTile()}
           </div>
           <div className="w-[46%] h-[80%]">
-            {renderCameraTile()}
+            {hasMedia ? (isMediaRight ? renderMediaTile() : renderCameraTile()) : renderCameraTile()}
           </div>
         </div>
       );
@@ -681,16 +682,23 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
     // 3. 2-Person Cropped / Full-Bleed
     if (layout === "cropped" || layout === "podcast") {
+      const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center">
           <div className="w-full h-full flex divide-x divide-white/25 border border-white/25 rounded overflow-hidden shadow-xs">
             <div className="flex-1 h-full">
               {hasMedia
-                ? renderMediaTile("rounded-none border-0")
+                ? isMediaRight
+                  ? renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+                  : renderMediaTile("rounded-none border-0")
                 : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
             <div className="flex-1 h-full">
-              {renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
+              {hasMedia
+                ? isMediaRight
+                  ? renderMediaTile("rounded-none border-0")
+                  : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+                : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
           </div>
         </div>
@@ -699,17 +707,18 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
     // 4. 3-Column Trio / 3 People
     if (layout === "three-equal") {
+      const mediaSlot = Math.max(0, Math.min(2, scene.mediaSlotIndex ?? 0));
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center">
           <div className="w-full h-full flex gap-0.5">
             <div className="flex-1 h-full">
-              {hasMedia ? renderMediaTile() : renderCameraTile()}
+              {hasMedia && mediaSlot === 0 ? renderMediaTile() : renderCameraTile()}
             </div>
             <div className="flex-1 h-full">
-              {renderCameraTile()}
+              {hasMedia && mediaSlot === 1 ? renderMediaTile() : renderCameraTile()}
             </div>
             <div className="flex-1 h-full">
-              {renderCameraTile()}
+              {hasMedia && mediaSlot === 2 ? renderMediaTile() : renderCameraTile()}
             </div>
           </div>
         </div>

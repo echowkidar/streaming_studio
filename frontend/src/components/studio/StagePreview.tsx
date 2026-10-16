@@ -98,6 +98,8 @@ export const StagePreview: React.FC = () => {
     toggleSoloParticipant,
     scenes,
     activeSceneId,
+    isStageCropped,
+    setIsStageCropped,
     fairUseConfig,
     setFairUseConfig,
     activeTextCard,
@@ -394,6 +396,7 @@ export const StagePreview: React.FC = () => {
   );
 
   const isFullBleedLayout =
+    isStageCropped ||
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
     activeLayout === "cinema" ||
@@ -412,16 +415,25 @@ export const StagePreview: React.FC = () => {
   // Ghost slots should be allowed in all multi-person layouts (cropped, side-by-side, 3-equal, 4-grid, presentation, etc.)
   const allowGhostSlots = !isSoloOrCinema;
 
+  const effectiveExpectedSlots = hasVisualMedia
+    ? Math.max(1, expectedSlots - 1)
+    : expectedSlots;
+
+  const effectiveRemainingGuestSlots = Math.min(
+    remainingExpectedGuestSlots,
+    Math.max(0, effectiveExpectedSlots - orderedParticipants.length)
+  );
+
   const totalGhostSlots = allowGhostSlots
-    ? remainingExpectedGuestSlots > 0
-      ? remainingExpectedGuestSlots
-      : !hasVisualMedia && orderedParticipants.length >= 1 && orderedParticipants.length < expectedSlots
-      ? expectedSlots - orderedParticipants.length
+    ? effectiveRemainingGuestSlots > 0
+      ? effectiveRemainingGuestSlots
+      : orderedParticipants.length >= 1 && orderedParticipants.length < effectiveExpectedSlots
+      ? effectiveExpectedSlots - orderedParticipants.length
       : 0
     : 0;
 
   const totalPlannedSlots = totalGhostSlots > 0
-    ? Math.max(expectedSlots, orderedParticipants.length + totalGhostSlots)
+    ? Math.max(effectiveExpectedSlots, orderedParticipants.length + totalGhostSlots)
     : orderedParticipants.length;
 
   const logoPositionClasses = {
@@ -504,7 +516,9 @@ export const StagePreview: React.FC = () => {
         if (orientation === "vertical") {
           const relativeX = moveEvt.clientX - rect.left;
           const percentage = Math.round((relativeX / rect.width) * 100);
-          const clamped = Math.max(20, Math.min(80, percentage));
+          const isThreeCol = activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
+          const maxPct = isThreeCol ? 58 : 80;
+          const clamped = Math.max(20, Math.min(maxPct, percentage));
           setLayoutSplitRatio(clamped);
         } else {
           const relativeY = moveEvt.clientY - rect.top;
@@ -543,7 +557,9 @@ export const StagePreview: React.FC = () => {
         if (orientation === "vertical") {
           const relativeX = touchEvt.touches[0].clientX - rect.left;
           const percentage = Math.round((relativeX / rect.width) * 100);
-          const clamped = Math.max(20, Math.min(80, percentage));
+          const isThreeCol = activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
+          const maxPct = isThreeCol ? 58 : 80;
+          const clamped = Math.max(20, Math.min(maxPct, percentage));
           setLayoutSplitRatio(clamped);
         } else {
           const relativeY = touchEvt.touches[0].clientY - rect.top;
@@ -1202,7 +1218,8 @@ export const StagePreview: React.FC = () => {
       layoutSplitRatio,
       customLayoutConfig,
       Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
-      mediaSlotIndex
+      mediaSlotIndex,
+      isStageCropped
     );
 
     const defaultMediaBounds: ParticipantBounds =
@@ -1734,9 +1751,10 @@ export const StagePreview: React.FC = () => {
           const calculatedBounds = stageLayoutResult.participantBounds[idx] || getDefaultSlotBounds(
             activeLayout,
             idx,
-            orderedParticipants.length,
+            totalPlannedSlots,
             layoutSplitRatio,
-            customLayoutConfig
+            customLayoutConfig,
+            isStageCropped
           );
           const isPip = activeLayout === "pip" || customLayoutConfig.mode === "pip";
           const bounds: ParticipantBounds =
@@ -2004,7 +2022,8 @@ export const StagePreview: React.FC = () => {
                   slotIdx,
                   totalPlannedSlots,
                   layoutSplitRatio,
-                  customLayoutConfig
+                  customLayoutConfig,
+                  isStageCropped
                 );
               const isCopied = copiedSlotIndex === slotIdx;
               const slotTitle =
@@ -2105,14 +2124,20 @@ export const StagePreview: React.FC = () => {
             (activeLayout === "custom" &&
               (customLayoutConfig?.mode === "stacked" || customLayoutConfig?.mode === "hero-bottom"));
 
+          const isThreeCol = activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
+          const isCustom3Split = layoutSplitRatio !== 50 && layoutSplitRatio !== 33 && layoutSplitRatio !== 65;
+          const dividerLeftPct = isThreeCol
+            ? (isCustom3Split ? Math.max(20, Math.min(58, layoutSplitRatio)) : 33.33)
+            : layoutSplitRatio;
+
           if (isVerticalSplit) {
             return (
               <div
-                style={{ left: `${layoutSplitRatio}%` }}
+                style={{ left: `${dividerLeftPct}%` }}
                 className="absolute top-1 bottom-1 -ml-3 w-6 flex items-center justify-center cursor-col-resize select-none group/divider z-30 pointer-events-auto"
                 onMouseDown={(e) => handleSplitDividerMouseDown(e, "vertical")}
                 onTouchStart={(e) => handleSplitDividerTouchStart(e, "vertical")}
-                title={`Drag to resize stage split (${layoutSplitRatio}% / ${100 - layoutSplitRatio}%)`}
+                title={`Drag to resize stage split (${dividerLeftPct}% / ${Number((100 - dividerLeftPct).toFixed(1))}%)`}
               >
                 <div className="w-1 h-full rounded-full bg-white/20 group-hover/divider:bg-indigo-400 group-hover/divider:w-1.5 transition-all shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
                 <div className="absolute w-5 h-9 rounded-full bg-black/90 border border-white/25 flex flex-col items-center justify-center gap-0.5 shadow-2xl group-hover/divider:border-indigo-400 group-hover/divider:scale-110 group-hover/divider:bg-indigo-950 transition-all">

@@ -57,10 +57,12 @@ export function getDefaultSlotBounds(
   index: number,
   total: number,
   splitRatio: number = 50,
-  customConfig?: CustomLayoutConfig
+  customConfig?: CustomLayoutConfig,
+  isStageCropped: boolean = false
 ): ParticipantBounds {
   const safeSplit = Math.max(20, Math.min(80, splitRatio || 50));
   const effectiveTotal = Math.max(1, total);
+  const fullBleed = isStageCropped || layout === "cropped" || layout === "podcast" || layout === "interview";
 
   switch (layout) {
     case "solo": {
@@ -72,6 +74,11 @@ export function getDefaultSlotBounds(
 
     case "side-by-side":
     case "fit": {
+      // In full-fill / cropped mode, side-by-side acts identically to cropped edge-to-edge
+      if (fullBleed) {
+        return getDefaultSlotBounds("cropped", index, total, splitRatio, customConfig, isStageCropped);
+      }
+
       // StreamYard Fit Layout:
       // If only 1 speaker is on stage: centered 16:9 widescreen frame with canvas background visible!
       if (effectiveTotal <= 1) {
@@ -133,7 +140,29 @@ export function getDefaultSlotBounds(
 
     case "stacked": {
       if (effectiveTotal <= 1) {
-        return { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
+        return fullBleed
+          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
+          : { x: 4, y: 4, width: 92, height: 92, zIndex: 10, isLockedRatio: true };
+      }
+      if (fullBleed) {
+        const topH = safeSplit;
+        const botH = 100 - safeSplit;
+        if (index === 0) {
+          return { x: 0, y: 0, width: 100, height: topH, zIndex: 10, isLockedRatio: true };
+        }
+        if (index === 1) {
+          return { x: 0, y: topH, width: 100, height: botH, zIndex: 10, isLockedRatio: true };
+        }
+        const totalRows = Math.min(4, Math.max(2, effectiveTotal));
+        const h = 100 / totalRows;
+        return {
+          x: 0,
+          y: index * h,
+          width: 100,
+          height: h,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
       }
       const topH = Math.max(15, safeSplit - 5);
       const botH = Math.max(15, 100 - safeSplit - 5);
@@ -233,6 +262,22 @@ export function getDefaultSlotBounds(
         return { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true };
       }
       const heroSplit = splitRatio ? Math.max(25, Math.min(85, splitRatio)) : 65;
+      if (fullBleed) {
+        if (index === 0) {
+          return { x: 0, y: 0, width: heroSplit, height: 100, zIndex: 10, isLockedRatio: true };
+        }
+        const sideTotal = Math.max(1, effectiveTotal - 1);
+        const sideH = 100 / sideTotal;
+        const sideY = (index - 1) * sideH;
+        return {
+          x: heroSplit,
+          y: sideY,
+          width: 100 - heroSplit,
+          height: sideH,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
       if (index === 0) {
         return { x: 2, y: 4, width: Math.max(20, heroSplit - 3), height: 92, zIndex: 10, isLockedRatio: true };
       }
@@ -287,35 +332,78 @@ export function getDefaultSlotBounds(
 
     case "three-equal": {
       if (effectiveTotal <= 1) {
-        return { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
+        return fullBleed
+          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
+          : { x: 4, y: 4, width: 92, height: 92, zIndex: 10, isLockedRatio: true };
       }
       if (effectiveTotal === 2) {
-        return getDefaultSlotBounds("side-by-side", index, 2, splitRatio, customConfig);
+        return getDefaultSlotBounds(fullBleed ? "cropped" : "side-by-side", index, 2, splitRatio, customConfig, isStageCropped);
       }
-      // StreamYard 3-Column Equal Layout (31% each when splitRatio is near default)
+      // StreamYard 3-Column Equal Layout
       const isCustomSplit = splitRatio !== 50 && splitRatio !== 33 && splitRatio !== 65;
-      const col0W = isCustomSplit ? Math.max(20, Math.min(56, safeSplit - 3)) : 31;
-      const remainingW = 96 - col0W - 4;
-      const otherW = Number((remainingW / 2).toFixed(1));
-      if (index === 0) {
-        return { x: 2, y: 14, width: col0W, height: 72, zIndex: 10, isLockedRatio: true };
-      }
-      if (index === 1) {
-        return { x: 2 + col0W + 2, y: 14, width: otherW, height: 72, zIndex: 10, isLockedRatio: true };
-      }
-      if (index === 2) {
-        return { x: 2 + col0W + 2 + otherW + 2, y: 14, width: otherW, height: 72, zIndex: 10, isLockedRatio: true };
+      if (fullBleed) {
+        // 100% full height bleed edge-to-edge (0 to 100%)
+        const col0W = isCustomSplit ? Math.max(20, Math.min(58, safeSplit)) : 33.33;
+        const remainingW = 100 - col0W;
+        const otherW = Number((remainingW / 2).toFixed(2));
+        if (index === 0) {
+          return { x: 0, y: 0, width: col0W, height: 100, zIndex: 10, isLockedRatio: true };
+        }
+        if (index === 1) {
+          return { x: col0W, y: 0, width: otherW, height: 100, zIndex: 10, isLockedRatio: true };
+        }
+        if (index === 2) {
+          return { x: col0W + otherW, y: 0, width: 100 - (col0W + otherW), height: 100, zIndex: 10, isLockedRatio: true };
+        }
+      } else {
+        // Framed 3-column with clean 4% padding and 92% height (no huge black bars!)
+        const col0W = isCustomSplit ? Math.max(20, Math.min(56, safeSplit - 3)) : 31;
+        const remainingW = 96 - col0W - 4;
+        const otherW = Number((remainingW / 2).toFixed(1));
+        if (index === 0) {
+          return { x: 2, y: 4, width: col0W, height: 92, zIndex: 10, isLockedRatio: true };
+        }
+        if (index === 1) {
+          return { x: 2 + col0W + 2, y: 4, width: otherW, height: 92, zIndex: 10, isLockedRatio: true };
+        }
+        if (index === 2) {
+          return { x: 2 + col0W + 2 + otherW + 2, y: 4, width: otherW, height: 92, zIndex: 10, isLockedRatio: true };
+        }
       }
       // 4+ participants fallback to grid
-      return getDefaultSlotBounds("six-grid", index, effectiveTotal, splitRatio, customConfig);
+      return getDefaultSlotBounds("six-grid", index, effectiveTotal, splitRatio, customConfig, isStageCropped);
     }
 
     case "four-grid": {
       if (effectiveTotal <= 1) {
-        return { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
+        return fullBleed
+          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
+          : { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
       }
       if (effectiveTotal === 2) {
-        return getDefaultSlotBounds("side-by-side", index, 2, splitRatio, customConfig);
+        return getDefaultSlotBounds(fullBleed ? "cropped" : "side-by-side", index, 2, splitRatio, customConfig, isStageCropped);
+      }
+      if (fullBleed) {
+        if (effectiveTotal === 3) {
+          if (index === 0) return { x: 0, y: 0, width: 50, height: 50, zIndex: 10, isLockedRatio: true };
+          if (index === 1) return { x: 50, y: 0, width: 50, height: 50, zIndex: 10, isLockedRatio: true };
+          if (index === 2) return { x: 25, y: 50, width: 50, height: 50, zIndex: 10, isLockedRatio: true };
+        }
+        const cols = 2;
+        const totalRows = Math.ceil(effectiveTotal / cols);
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        const col0W = safeSplit;
+        const col1W = 100 - safeSplit;
+        const rowH = 100 / totalRows;
+        return {
+          x: col === 0 ? 0 : safeSplit,
+          y: row * rowH,
+          width: col === 0 ? col0W : col1W,
+          height: rowH,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
       }
       if (effectiveTotal === 3) {
         // StreamYard classic 3-grid: 2 tiles on top, 1 centered on bottom
@@ -343,16 +431,41 @@ export function getDefaultSlotBounds(
     case "five-grid":
     case "six-grid": {
       if (effectiveTotal <= 1) {
-        return { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
+        return fullBleed
+          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
+          : { x: 12, y: 12, width: 76, height: 76, zIndex: 10, isLockedRatio: true };
       }
       if (effectiveTotal === 2) {
-        return getDefaultSlotBounds("side-by-side", index, 2, splitRatio, customConfig);
+        return getDefaultSlotBounds(fullBleed ? "cropped" : "side-by-side", index, 2, splitRatio, customConfig, isStageCropped);
       }
       if (effectiveTotal === 3) {
-        return getDefaultSlotBounds("three-equal", index, 3, splitRatio, customConfig);
+        return getDefaultSlotBounds("three-equal", index, 3, splitRatio, customConfig, isStageCropped);
       }
       if (effectiveTotal === 4) {
-        return getDefaultSlotBounds("four-grid", index, 4, splitRatio, customConfig);
+        return getDefaultSlotBounds("four-grid", index, 4, splitRatio, customConfig, isStageCropped);
+      }
+      if (fullBleed) {
+        if (effectiveTotal === 5) {
+          if (index < 3) {
+            return { x: index * 33.33, y: 0, width: 33.34, height: 50, zIndex: 10, isLockedRatio: true };
+          }
+          const botIndex = index - 3;
+          return { x: 16.66 + botIndex * 33.33, y: 50, width: 33.34, height: 50, zIndex: 10, isLockedRatio: true };
+        }
+        const cols = 3;
+        const totalRows = Math.ceil(effectiveTotal / cols);
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        const colW = 100 / cols;
+        const rowH = 100 / totalRows;
+        return {
+          x: col * colW,
+          y: row * rowH,
+          width: colW,
+          height: rowH,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
       }
       if (effectiveTotal === 5) {
         // StreamYard 5-seat: 3 on top row, 2 centered on bottom row
@@ -384,6 +497,18 @@ export function getDefaultSlotBounds(
       const totalRows = Math.max(1, Math.ceil(effectiveTotal / cols));
       const col = index % cols;
       const row = Math.floor(index / cols);
+      if (fullBleed) {
+        const w = 100 / cols;
+        const h = 100 / totalRows;
+        return {
+          x: col * w,
+          y: row * h,
+          width: w,
+          height: h,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+      }
       const w = Number(((96 - (cols - 1) * 2) / cols).toFixed(1));
       const h = Number(((94 - (totalRows - 1) * 2) / totalRows).toFixed(1));
       return {
@@ -398,14 +523,14 @@ export function getDefaultSlotBounds(
 
     case "custom": {
       const mode = customConfig?.mode || "hero-side";
-      if (mode === "solo") return getDefaultSlotBounds("solo", index, total, splitRatio);
-      if (mode === "side-by-side") return getDefaultSlotBounds("side-by-side", index, total, splitRatio);
-      if (mode === "stacked") return getDefaultSlotBounds("stacked", index, total, splitRatio);
-      if (mode === "three-equal") return getDefaultSlotBounds("three-equal", index, total, splitRatio);
-      if (mode === "six-grid") return getDefaultSlotBounds("six-grid", index, total, splitRatio);
-      if (mode === "podcast") return getDefaultSlotBounds("podcast", index, total, splitRatio);
-      if (mode === "hero-side") return getDefaultSlotBounds("speaker-large", index, total, splitRatio);
-      if (mode === "hero-bottom") return getDefaultSlotBounds("presentation", index, total, splitRatio);
+      if (mode === "solo") return getDefaultSlotBounds("solo", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "side-by-side") return getDefaultSlotBounds("side-by-side", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "stacked") return getDefaultSlotBounds("stacked", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "three-equal") return getDefaultSlotBounds("three-equal", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "six-grid") return getDefaultSlotBounds("six-grid", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "podcast") return getDefaultSlotBounds("podcast", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "hero-side") return getDefaultSlotBounds("speaker-large", index, total, splitRatio, customConfig, isStageCropped);
+      if (mode === "hero-bottom") return getDefaultSlotBounds("presentation", index, total, splitRatio, customConfig, isStageCropped);
       if (mode === "grid") {
         const cols = customConfig?.columns || 2;
         const rows = Math.max(1, Math.ceil(effectiveTotal / cols));
@@ -500,14 +625,15 @@ export function calculateStageLayout(
   splitRatio: number = 50,
   customConfig?: CustomLayoutConfig,
   enforceReactionPiP: boolean = false,
-  mediaSlotIndex: number = 0
+  mediaSlotIndex: number = 0,
+  isStageCropped: boolean = false
 ): StageLayoutResult {
   // If NO active visual media on stage, compute participant bounds directly
   if (!hasVisualMedia) {
     const participantBounds: ParticipantBounds[] = [];
     for (let i = 0; i < totalParticipants; i++) {
       participantBounds.push(
-        getDefaultSlotBounds(layout, i, totalParticipants, splitRatio, customConfig)
+        getDefaultSlotBounds(layout, i, totalParticipants, splitRatio, customConfig, isStageCropped)
       );
     }
     return { mediaBounds: null, participantBounds };
@@ -520,8 +646,9 @@ export function calculateStageLayout(
   ) {
     const safeSplit = Math.max(20, Math.min(80, splitRatio || 50));
     const isMediaOnRight = mediaSlotIndex >= 1; // 0 = Left Side, 1 = Right Side!
+    const isCropped = isStageCropped || layout === "cropped" || layout === "podcast" || layout === "interview";
 
-    if (layout === "cropped" || layout === "podcast" || layout === "interview") {
+    if (isCropped) {
       const leftW = safeSplit;
       const rightW = 100 - safeSplit;
       const mediaBounds: ParticipantBounds = isMediaOnRight
@@ -600,7 +727,7 @@ export function calculateStageLayout(
 
     const allSlotBounds: ParticipantBounds[] = [];
     for (let s = 0; s < totalSlots; s++) {
-      allSlotBounds.push(getDefaultSlotBounds(layout, s, totalSlots, splitRatio, customConfig));
+      allSlotBounds.push(getDefaultSlotBounds(layout, s, totalSlots, splitRatio, customConfig, isStageCropped));
     }
 
     const mediaBounds = allSlotBounds[targetMediaSlot];

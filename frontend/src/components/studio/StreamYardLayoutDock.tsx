@@ -254,6 +254,8 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
     activeLayout,
     setLayout,
     resetAllParticipantBounds,
+    isStageCropped,
+    setIsStageCropped,
   } = useStudioStore();
 
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -364,6 +366,25 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
               <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
             </div>
           </button>
+
+          {/* Universal Stage Full-Fill (Cropped Edge-to-Edge) Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsStageCropped(!isStageCropped)}
+            className={cn(
+              "group relative flex items-center justify-center w-8 h-7 sm:w-8.5 sm:h-7.5 rounded-lg border transition-all duration-150 shrink-0",
+              isStageCropped
+                ? "bg-emerald-600/30 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.4)] ring-1 ring-emerald-500/50"
+                : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+            )}
+            aria-label="Universal Full Fill"
+          >
+            <Maximize2 className="w-3.5 h-3.5 text-emerald-400 group-hover:text-white transition-colors" />
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+              {isStageCropped ? "Full Fill: ON (No black bars)" : "Full Fill: OFF (Fit with borders)"}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+            </div>
+          </button>
         </div>
 
         {/* ─── COMPACT / MOBILE VIEW (Narrow screens < 920px): Row 1 + Expand Chevron ─── */}
@@ -428,6 +449,25 @@ export const StreamYardLayoutDock: React.FC<StreamYardLayoutDockProps> = ({
             aria-label="Add layout"
           >
             <Plus className="w-4 h-4 text-cyan-400 group-hover:text-white transition-colors" />
+          </button>
+
+          {/* Universal Full Fill Button Mobile */}
+          <button
+            type="button"
+            onClick={() => setIsStageCropped(!isStageCropped)}
+            className={cn(
+              "group relative flex items-center justify-center w-8 h-7 sm:w-8.5 sm:h-7.5 rounded-lg border transition-all duration-150 shrink-0",
+              isStageCropped
+                ? "bg-emerald-600/30 border-emerald-400 text-emerald-300 ring-1 ring-emerald-500/50"
+                : "bg-white/5 border-white/5 text-slate-400 hover:text-white hover:bg-white/10 hover:border-white/20"
+            )}
+            aria-label="Universal Full Fill"
+          >
+            <Maximize2 className="w-3.5 h-3.5 text-emerald-400 group-hover:text-white transition-colors" />
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md bg-[#161722] border border-white/15 text-white text-[11px] font-medium shadow-2xl pointer-events-none whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50">
+              {isStageCropped ? "Full Fill: ON" : "Full Fill: OFF"}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-[#161722]" />
+            </div>
           </button>
         </div>
 

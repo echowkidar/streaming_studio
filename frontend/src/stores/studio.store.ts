@@ -116,8 +116,16 @@ export interface StudioScene {
   name: string;
   layout: StudioLayout;
   splitRatio?: number;
+  /** Universal Full-Bleed Cropped Mode: true = 100% top-to-bottom edge-to-edge fill in ANY layout (2, 3, 4, 6 grid) */
+  isStageCropped?: boolean;
   /** Media kis slot me dikhega: 0 = Left/Top-Left/Hero, 1 = Right/Middle/Top-Right, 2 = Right/Bottom-Left, 3 = Bottom-Right */
   mediaSlotIndex?: number;
+  /** Per-Scene saved Zoom, Pan, Fit/Cover, Flip & Transparent card states */
+  tileTransforms?: Record<string, TileTransform>;
+  /** Per-Scene saved Freeform / PiP bounds */
+  participantBounds?: Record<string, ParticipantBounds>;
+  /** Per-Scene saved Custom Layout Config */
+  customLayoutConfig?: CustomLayoutConfig;
   onStageParticipantIds?: (string | number)[];
   /** Fixed seat assignments: slotIndex -> participantId */
   slotAssignments?: Record<number, string | number>;
@@ -223,6 +231,8 @@ interface StudioState {
   // Layout
   activeLayout: StudioLayout;
   setLayout: (layout: StudioLayout) => void;
+  isStageCropped: boolean;
+  setIsStageCropped: (cropped: boolean) => void;
   layoutSplitRatio: number; // 20 to 80 (default 50)
   setLayoutSplitRatio: (ratio: number) => void;
   customLayoutConfig: CustomLayoutConfig;
@@ -1244,6 +1254,30 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setActiveExtraCameraDeviceId: (id) => set({ activeExtraCameraDeviceId: id }),
 
   activeLayout: savedLayout.activeLayout || initialActiveScene?.layout || "speaker-large",
+  isStageCropped:
+    savedLayout.scenes?.find((s) => s.id === savedLayout.activeSceneId)?.isStageCropped ??
+    (savedLayout.activeLayout === "cropped" || savedLayout.activeLayout === "podcast"),
+
+  setIsStageCropped: (cropped) =>
+    set((s) => {
+      const currentTransforms = { ...s.tileTransforms };
+      s.participants.forEach((p) => {
+        if (!p.isScreen) {
+          currentTransforms[p.id] = {
+            ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+            fitMode: cropped ? "cover" : "contain",
+          };
+        }
+      });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId
+          ? { ...sc, isStageCropped: cropped, tileTransforms: currentTransforms }
+          : sc
+      );
+      persistStudioLayout({ scenes: nextScenes, tileTransforms: currentTransforms });
+      return { isStageCropped: cropped, tileTransforms: currentTransforms, scenes: nextScenes };
+    }),
+
   setLayout: (layout) => {
     const defaultSplit =
       layout === "three-equal"
@@ -1251,6 +1285,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         : layout === "speaker-large" || layout === "presentation"
         ? 65
         : 50;
+
+    const nextCropped =
+      layout === "cropped" || layout === "podcast"
+        ? true
+        : layout === "side-by-side" || layout === "fit"
+        ? false
+        : get().isStageCropped;
 
     const currentTransforms = { ...get().tileTransforms };
     let hasTransformChanges = false;
@@ -1280,7 +1321,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
 
     const updatedScenes = activeSceneId
-      ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, layout, splitRatio: defaultSplit } : s))
+      ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, layout, splitRatio: defaultSplit, isStageCropped: nextCropped } : s))
       : get().scenes;
 
     persistStudioLayout({
@@ -1293,6 +1334,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     });
     set({
       activeLayout: layout,
+      isStageCropped: nextCropped,
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
       selectedParticipantId: null,
@@ -2126,11 +2168,30 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setMediaSlotIndex: (slotIndex) =>
     set((s) => {
       const clamped = Math.max(0, Math.min(8, slotIndex));
+      const prevSlot = s.mediaSlotIndex ?? 0;
+
+      // 2-Window Split (Cropped / Fit / Side-by-Side / Podcast / Interview) me Left <-> Right switch hone par
+      // layoutSplitRatio ko mirror (100 - ratio) karein taaki Media aur Guest ka size ulta na ho!
+      const isTwoColumnSplit =
+        s.activeLayout === "cropped" ||
+        s.activeLayout === "podcast" ||
+        s.activeLayout === "interview" ||
+        s.activeLayout === "side-by-side" ||
+        s.activeLayout === "fit" ||
+        s.activeLayout === "stacked";
+
+      let nextSplit = s.layoutSplitRatio;
+      if (isTwoColumnSplit && ((prevSlot === 0 && clamped >= 1) || (prevSlot >= 1 && clamped === 0))) {
+        nextSplit = Math.max(20, Math.min(80, 100 - s.layoutSplitRatio));
+      }
+
       const nextScenes = s.scenes.map((sc) =>
-        sc.id === s.activeSceneId ? { ...sc, mediaSlotIndex: clamped } : sc
+        sc.id === s.activeSceneId
+          ? { ...sc, mediaSlotIndex: clamped, splitRatio: nextSplit }
+          : sc
       );
-      persistStudioLayout({ scenes: nextScenes });
-      return { mediaSlotIndex: clamped, scenes: nextScenes };
+      persistStudioLayout({ layoutSplitRatio: nextSplit, scenes: nextScenes });
+      return { mediaSlotIndex: clamped, layoutSplitRatio: nextSplit, scenes: nextScenes };
     }),
 
   moveParticipantOrder: (id, direction) =>
@@ -2341,10 +2402,17 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
   },
   duplicateScene: (id) => {
+    // Agar active scene duplicate ho raha hai, toh pehle stage ki har current setting usme save karein
+    if (get().activeSceneId === id) {
+      get().saveCurrentStageToScene(id);
+    }
     const scene = get().scenes.find((s) => s.id === id);
     if (!scene) return;
+
+    // 100% Deep Clone taaki Media position, Zoom, Pan, Crop, Guest Slots sab exact copy hon
+    const deepCloned: StudioScene = JSON.parse(JSON.stringify(scene));
     const copy: StudioScene = {
-      ...scene,
+      ...deepCloned,
       id: `scene-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       name: `${scene.name} (Copy)`,
     };
@@ -2364,7 +2432,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const scene = state.scenes.find((s) => s.id === id);
     if (!scene) return;
 
-    // Switch karne se pehle current active scene ka state auto-save karein (StreamYard standard)
+    // Switch karne se pehle current active scene ka poora state auto-save karein (StreamYard standard)
     if (state.activeSceneId && state.activeSceneId !== id) {
       get().saveCurrentStageToScene(state.activeSceneId);
     }
@@ -2376,6 +2444,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
 
     const targetLayout = scene.layout || "solo";
+    const targetCropped =
+      scene.isStageCropped !== undefined
+        ? scene.isStageCropped
+        : targetLayout === "cropped" || targetLayout === "podcast";
+
     const targetSplit =
       scene.splitRatio ??
       (targetLayout === "three-equal"
@@ -2388,25 +2461,19 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     // Supports Media-Only scenes, auto-promoting connected guests, and replaceHostOnGuestJoin
     const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
 
-    // 2. Apply Fit/Cover transforms based on scene layout
-    const currentTransforms = { ...state.tileTransforms };
-    if (targetLayout === "cropped" || targetLayout === "podcast") {
-      nextParticipants.forEach((p) => {
-        if (!p.isScreen) {
-          currentTransforms[p.id] = {
-            ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
-            fitMode: "cover",
-          };
-        }
-      });
-    } else if (targetLayout === "side-by-side" || targetLayout === "fit") {
-      nextParticipants.forEach((p) => {
+    // Restore scene-specific tileTransforms (Zoom, Pan, Fit/Cover, Transparent Media)
+    const currentTransforms: Record<string, TileTransform> = scene.tileTransforms
+      ? JSON.parse(JSON.stringify(scene.tileTransforms))
+      : { ...state.tileTransforms };
+
+    nextParticipants.forEach((p) => {
+      if (!p.isScreen) {
         currentTransforms[p.id] = {
           ...(currentTransforms[p.id] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
-          fitMode: "contain",
+          fitMode: targetCropped || targetLayout === "cropped" || targetLayout === "podcast" ? "cover" : (currentTransforms[p.id]?.fitMode || "cover"),
         };
-      });
-    }
+      }
+    });
 
     if (scene.isTransparentMedia !== undefined) {
       currentTransforms["active-media"] = {
@@ -2421,13 +2488,18 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const nextBanner = scene.banner !== undefined ? scene.banner : state.activeBanner;
     const nextTextCard = scene.textCard !== undefined ? scene.textCard : null;
     const nextMedia = scene.activeMedia !== undefined ? scene.activeMedia : null;
+    const nextBounds = scene.participantBounds ? JSON.parse(JSON.stringify(scene.participantBounds)) : {};
+    const nextCustomConfig = scene.customLayoutConfig
+      ? { ...state.customLayoutConfig, ...scene.customLayoutConfig }
+      : { ...state.customLayoutConfig, heroParticipantId: scene.heroParticipantId ?? null };
 
     // Single atomic state update (prevents UI flicker & layout overwrites)
     set({
       activeSceneId: id,
       activeLayout: targetLayout,
+      isStageCropped: targetCropped,
       layoutSplitRatio: targetSplit,
-      participantBounds: {},
+      participantBounds: nextBounds,
       selectedParticipantId: null,
       participants: nextParticipants,
       tileTransforms: currentTransforms,
@@ -2439,17 +2511,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       activeTextCard: nextTextCard,
       activeExtraCameraDeviceId: scene.extraCameraDeviceId || null,
       mediaSlotIndex: scene.mediaSlotIndex ?? 0,
-      customLayoutConfig: {
-        ...state.customLayoutConfig,
-        heroParticipantId: scene.heroParticipantId ?? null,
-      },
+      customLayoutConfig: nextCustomConfig,
     });
 
     persistStudioLayout({
       activeSceneId: id,
       activeLayout: targetLayout,
       layoutSplitRatio: targetSplit,
-      participantBounds: {},
+      participantBounds: nextBounds,
       tileTransforms: currentTransforms,
       activeMedia: nextMedia,
       activeBackgroundUrl: nextBgUrl,
@@ -2465,12 +2534,18 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const existingScene = state.scenes.find((s) => s.id === id);
     get().updateScene(id, {
       layout: state.activeLayout,
+      isStageCropped: state.isStageCropped,
       splitRatio: state.layoutSplitRatio,
       mediaSlotIndex: state.mediaSlotIndex ?? 0,
+      tileTransforms: JSON.parse(JSON.stringify(state.tileTransforms || {})),
+      participantBounds: JSON.parse(JSON.stringify(state.participantBounds || {})),
+      customLayoutConfig: JSON.parse(JSON.stringify(state.customLayoutConfig || {})),
       onStageParticipantIds: onStageIds,
       expectedGuestSlots: existingScene?.expectedGuestSlots,
       autoAddGuestsToStage: existingScene?.autoAddGuestsToStage,
-      activeMedia: state.activeMedia || null,
+      replaceHostOnGuestJoin: existingScene?.replaceHostOnGuestJoin,
+      slotAssignments: existingScene?.slotAssignments,
+      activeMedia: state.activeMedia ? JSON.parse(JSON.stringify(state.activeMedia)) : null,
       extraCameraDeviceId: state.activeExtraCameraDeviceId ?? existingScene?.extraCameraDeviceId ?? null,
       textCard: state.activeTextCard || null,
       isTransparentMedia: state.tileTransforms["active-media"]?.isTransparentBg ?? false,
