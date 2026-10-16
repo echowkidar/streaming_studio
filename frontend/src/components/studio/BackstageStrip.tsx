@@ -21,9 +21,11 @@ import {
   Presentation,
   Play,
   Pause,
+  Maximize2,
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { VideoTrackView } from "./VideoTrackView";
 
 interface BackstageStripProps {
   onInviteGuest?: () => void;
@@ -44,6 +46,8 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
     setActiveMedia,
     toggleMediaMute,
     toggleParticipantMic,
+    soloTargetId,
+    toggleSoloParticipant,
     tileTransforms,
     setTileTransform,
     customLayoutConfig,
@@ -88,17 +92,21 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
             )}
             title={isOnStage ? "Click to remove from stage (Backstage)" : "Click to add to stage (In Stream)"}
           >
-            {/* Card Preview Background */}
-            <div className="absolute inset-0 bg-[#0a0a12] flex items-center justify-center overflow-hidden">
-              {p.camOn ? (
+            {/* Real-Time Live Camera Preview inside Backstage/Stage Card */}
+            <div className="absolute inset-0 bg-[#0a0a12] flex items-center justify-center overflow-hidden pointer-events-none">
+              {p.camOn && (p.videoTrack || isScreen) ? (
                 <div className="w-full h-full relative">
-                  {/* Live WebRTC or simulated camera video feed */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/60 z-10 pointer-events-none" />
-                  <div className="w-full h-full flex items-center justify-center bg-indigo-950/20">
-                    <span className="text-xl font-bold text-indigo-300 opacity-60">
-                      {isScreen ? <MonitorUp className="w-6 h-6 text-cyan-400" /> : p.name ? p.name[0]?.toUpperCase() : "G"}
-                    </span>
-                  </div>
+                  <VideoTrackView
+                    id={p.id}
+                    track={p.videoTrack}
+                    name={p.name}
+                    camOn={p.camOn}
+                    micOn={p.micOn}
+                    isLocal={Boolean(p.isLocal)}
+                    isScreen={isScreen}
+                    className="w-full h-full rounded-none border-0"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/50 z-10" />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-1 text-slate-500">
@@ -200,6 +208,18 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
                       <span>Unmute Participant</span>
                     </>
                   )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleSoloParticipant(p.id);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-slate-200 hover:bg-white/10 font-semibold"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{String(soloTargetId) === String(p.id) ? "Exit Solo (Restore Stage)" : "Solo Fullscreen"}</span>
                 </button>
 
                 <button

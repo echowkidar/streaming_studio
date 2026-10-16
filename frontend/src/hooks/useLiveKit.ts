@@ -423,6 +423,7 @@ export function useLiveKit({
                       stageParticipantIds: onStageIds.map(String),
                       activeLayout: currentStore.activeLayout,
                       layoutSplitRatio: currentStore.layoutSplitRatio,
+                      mediaSlotIndex: currentStore.mediaSlotIndex ?? 0,
                       participantBounds: currentStore.participantBounds || {},
                       activeMedia: currentStore.activeMedia || null,
                       tileTransforms: currentStore.tileTransforms || {},
@@ -483,6 +484,9 @@ export function useLiveKit({
                   if (typeof data.layoutSplitRatio === "number") {
                     useStudioStore.getState().setLayoutSplitRatio(data.layoutSplitRatio);
                   }
+                  if (typeof data.mediaSlotIndex === "number") {
+                    useStudioStore.getState().setMediaSlotIndex(data.mediaSlotIndex);
+                  }
                   if (Array.isArray(data.stageParticipantIds)) {
                     const stageIds = data.stageParticipantIds.map(String);
                     useStudioStore.getState().setStageParticipants(stageIds);
@@ -512,6 +516,14 @@ export function useLiveKit({
                   // ignore
                 }
               }
+            }
+
+            if (data.type === "PRIVATE_CHAT" && data.message) {
+              if (data.senderId && newRoom.localParticipant && data.senderId === newRoom.localParticipant.identity) {
+                return;
+              }
+              useStudioStore.getState().addPrivateMessage(data.message, false);
+              return;
             }
 
             if (data.type === "REMOTE_MUTE") {
@@ -776,6 +788,32 @@ export function useLiveKit({
     };
   }, []);
 
+  // Listen for private chat dispatch from studio store
+  useEffect(() => {
+    const handleSendPrivateChat = (e: Event) => {
+      try {
+        const customEvent = e as CustomEvent;
+        const detail = customEvent.detail;
+        if (!detail || !roomRef.current?.localParticipant || roomRef.current.state !== "connected") return;
+        const payload = JSON.stringify({
+          type: "PRIVATE_CHAT",
+          senderId: roomRef.current.localParticipant.identity,
+          message: detail,
+        });
+        roomRef.current.localParticipant
+          .publishData(new TextEncoder().encode(payload), { reliable: true })
+          .catch((err) => console.warn("Failed to publish private chat data:", err));
+      } catch (err) {
+        console.warn("Error sending private chat:", err);
+      }
+    };
+
+    window.addEventListener("livestudio-send-private-chat", handleSendPrivateChat);
+    return () => {
+      window.removeEventListener("livestudio-send-private-chat", handleSendPrivateChat);
+    };
+  }, []);
+
   // Broadcast stage sync across room
   const publishStageSync = useCallback(
     async (
@@ -783,7 +821,8 @@ export function useLiveKit({
       layout?: string,
       splitRatio?: number,
       bounds?: Record<string, any>,
-      media?: any
+      media?: any,
+      slotIndex?: number
     ) => {
       if (!roomRef.current?.localParticipant || roomRef.current.state !== "connected") return;
       try {
@@ -791,6 +830,7 @@ export function useLiveKit({
         let splitR = splitRatio;
         let pBounds = bounds;
         let activeM = media;
+        let mSlotIndex = slotIndex;
         let tTransforms = undefined;
         if (typeof window !== "undefined") {
           try {
@@ -799,6 +839,7 @@ export function useLiveKit({
             if (splitR === undefined) splitR = st.layoutSplitRatio;
             if (!pBounds) pBounds = st.participantBounds;
             if (activeM === undefined) activeM = st.activeMedia;
+            if (mSlotIndex === undefined) mSlotIndex = st.mediaSlotIndex;
             tTransforms = st.tileTransforms;
           } catch {
             // ignore
@@ -810,6 +851,7 @@ export function useLiveKit({
           stageParticipantIds: stageParticipantIds.map(String),
           activeLayout: activeL,
           layoutSplitRatio: splitR ?? 50,
+          mediaSlotIndex: mSlotIndex ?? 0,
           participantBounds: pBounds || {},
           activeMedia: activeM || null,
           tileTransforms: tTransforms || {},

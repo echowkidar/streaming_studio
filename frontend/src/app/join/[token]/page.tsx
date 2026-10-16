@@ -28,6 +28,8 @@ import {
   Minimize2,
   Layers,
   AlertTriangle,
+  Settings2,
+  Headphones,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -47,6 +49,9 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const activeMedia = useStudioStore((s) => s.activeMedia);
   const customLayoutConfig = useStudioStore((s) => s.customLayoutConfig);
   const tileTransforms = useStudioStore((s) => s.tileTransforms) || {};
+  const privateMessages = useStudioStore((s) => s.privateMessages);
+  const addPrivateMessage = useStudioStore((s) => s.addPrivateMessage);
+
   const [displayName, setDisplayName] = useState("");
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -56,10 +61,54 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: string; text: string; time: string }>>([
-    { sender: "LiveStudio", text: "Welcome to the studio! You can privately chat with the host here.", time: "Now" }
-  ]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [chatInput, setChatInput] = useState("");
+
+  // Hot-swap Cam & Mic Device States
+  const [isDeviceSettingsOpen, setIsDeviceSettingsOpen] = useState(false);
+  const [availableAudioDevices, setAvailableAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [availableVideoDevices, setAvailableVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string>("");
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string>("");
+
+  const prevMsgCountRef = useRef(privateMessages.length);
+  useEffect(() => {
+    if (privateMessages.length > prevMsgCountRef.current) {
+      if (!isChatOpen) {
+        const lastMsg = privateMessages[privateMessages.length - 1];
+        if (lastMsg && lastMsg.sender !== displayName) {
+          setUnreadChatCount((c) => c + 1);
+        }
+      }
+    }
+    prevMsgCountRef.current = privateMessages.length;
+  }, [privateMessages, isChatOpen, displayName]);
+
+  const handleToggleChat = () => {
+    if (!isChatOpen) {
+      setUnreadChatCount(0);
+    }
+    setIsChatOpen(!isChatOpen);
+  };
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      try {
+        if (typeof navigator !== "undefined" && navigator.mediaDevices?.enumerateDevices) {
+          const devs = await navigator.mediaDevices.enumerateDevices();
+          setAvailableAudioDevices(devs.filter((d) => d.kind === "audioinput"));
+          setAvailableVideoDevices(devs.filter((d) => d.kind === "videoinput"));
+        }
+      } catch (err) {
+        console.warn("Device enumeration error:", err);
+      }
+    };
+    loadDevices();
+    navigator.mediaDevices?.addEventListener?.("devicechange", loadDevices);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", loadDevices);
+    };
+  }, []);
 
   const previewVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -142,6 +191,8 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
     toggleMicrophone,
     toggleScreenShare,
     flipCamera,
+    setAudioDevice,
+    setVideoDevice,
     connect,
     disconnect,
   } = useLiveKit({
@@ -230,15 +281,29 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    setChatMessages((prev) => [
-      ...prev,
+    addPrivateMessage(
       {
-        sender: displayName || "You",
+        sender: displayName || "Guest",
+        role: "guest",
         text: chatInput.trim(),
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       },
-    ]);
+      true
+    );
     setChatInput("");
+  };
+
+  const handleSwitchAudio = async (deviceId: string) => {
+    setSelectedAudioDeviceId(deviceId);
+    if (setAudioDevice) {
+      await setAudioDevice(deviceId);
+    }
+  };
+
+  const handleSwitchVideo = async (deviceId: string) => {
+    setSelectedVideoDeviceId(deviceId);
+    if (setVideoDevice) {
+      await setVideoDevice(deviceId);
+    }
   };
 
   // Participant resolution
@@ -576,11 +641,27 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setIsChatOpen(!isChatOpen)}
+                onClick={handleToggleChat}
                 className="h-8 text-xs text-slate-300 relative"
               >
                 <MessageSquare className="w-3.5 h-3.5 sm:mr-1 text-indigo-400" />
                 <span className="hidden xs:inline">Chat</span>
+                {unreadChatCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[9px] font-bold animate-pulse">
+                    {unreadChatCount}
+                  </span>
+                )}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsDeviceSettingsOpen(true)}
+                className="h-8 px-2 text-xs text-slate-300 hover:text-white"
+                title="Audio & Video Settings"
+              >
+                <Settings2 className="w-3.5 h-3.5 sm:mr-1 text-slate-400" />
+                <span className="hidden xs:inline">Settings</span>
               </Button>
 
               <Button variant="danger" size="sm" onClick={handleLeave} className="h-8 px-2 sm:px-3 text-xs">
@@ -1383,15 +1464,39 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs custom-scrollbar">
-                    {chatMessages.map((msg, i) => (
-                      <div key={i} className="p-2.5 rounded-xl bg-surface border border-white/5 space-y-1">
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className="font-semibold text-indigo-300">{msg.sender}</span>
-                          <span className="text-slate-500 font-mono">{msg.time}</span>
-                        </div>
-                        <p className="text-slate-200">{msg.text}</p>
+                    {privateMessages.length === 0 ? (
+                      <div className="h-32 flex flex-col items-center justify-center text-center p-4 text-slate-500">
+                        <MessageSquare className="w-6 h-6 mb-1.5 opacity-40 text-slate-400" />
+                        <p className="text-[11px] font-medium text-slate-400">No private messages yet</p>
+                        <p className="text-[9px] text-slate-600 mt-0.5">
+                          Privately chat with the host and other backstage guests here.
+                        </p>
                       </div>
-                    ))}
+                    ) : (
+                      privateMessages.map((msg) => (
+                        <div key={msg.id} className="p-2.5 rounded-xl bg-surface border border-white/5 space-y-1">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={cn(
+                                  "px-1.5 py-0.2 rounded text-[8px] font-bold uppercase",
+                                  msg.role === "host"
+                                    ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                                    : msg.role === "system"
+                                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+                                    : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                )}
+                              >
+                                {msg.role || "guest"}
+                              </span>
+                              <span className="font-semibold text-white">{msg.sender}</span>
+                            </div>
+                            <span className="text-slate-500 font-mono text-[9px]">{msg.timestamp}</span>
+                          </div>
+                          <p className="text-slate-200 leading-relaxed text-xs">{msg.text}</p>
+                        </div>
+                      ))
+                    )}
                   </div>
 
                   <form onSubmit={handleSendChat} className="p-2.5 border-t border-white/10 flex items-center gap-2 bg-[#09090f]">
@@ -1458,6 +1563,33 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
               {lkScreen ? "Stop Sharing" : "Share Screen"}
             </Button>
 
+            {/* Cam & Mic Settings Modal Button */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsDeviceSettingsOpen(true)}
+              className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs text-slate-300 hover:text-white"
+              title="Camera & Microphone Settings"
+            >
+              <Settings2 className="w-4 h-4 sm:mr-1.5 text-slate-400" />
+              <span className="hidden sm:inline">Settings</span>
+            </Button>
+
+            {/* Private Chat button in footer (for mobile) */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleToggleChat}
+              className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl font-medium text-xs text-slate-300 hover:text-white relative xs:hidden"
+            >
+              <MessageSquare className="w-4 h-4 text-indigo-400" />
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
+                  {unreadChatCount}
+                </span>
+              )}
+            </Button>
+
             {/* Leave Studio Button */}
             <Button
               variant="danger"
@@ -1469,6 +1601,91 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
               <span>Leave</span>
             </Button>
           </footer>
+
+          {/* Guest Device Settings & Echo Prevention Modal */}
+          {isDeviceSettingsOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-[#0e0e18] border border-white/10 rounded-2xl p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-2">
+                    <Settings2 className="w-5 h-5 text-indigo-400" />
+                    <h3 className="text-sm font-semibold text-white">Audio & Video Settings</h3>
+                  </div>
+                  <button
+                    onClick={() => setIsDeviceSettingsOpen(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Microphone Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-emerald-400" />
+                    Microphone
+                  </label>
+                  <select
+                    value={selectedAudioDeviceId}
+                    onChange={(e) => handleSwitchAudio(e.target.value)}
+                    className="w-full h-9 px-3 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  >
+                    <option value="">Default Microphone</option>
+                    {availableAudioDevices.map((dev, i) => (
+                      <option key={dev.deviceId || i} value={dev.deviceId}>
+                        {dev.label || `Microphone ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Camera Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5 text-indigo-400" />
+                    Camera
+                  </label>
+                  <select
+                    value={selectedVideoDeviceId}
+                    onChange={(e) => handleSwitchVideo(e.target.value)}
+                    className="w-full h-9 px-3 text-xs rounded-xl bg-surface border border-white/10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  >
+                    <option value="">Default Camera</option>
+                    {availableVideoDevices.map((dev, i) => (
+                      <option key={dev.deviceId || i} value={dev.deviceId}>
+                        {dev.label || `Camera ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Echo & Feedback Prevention Tip */}
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 text-xs flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-semibold text-white flex items-center gap-1.5">
+                      <Headphones className="w-3.5 h-3.5 text-amber-400" />
+                      Echo Prevention Best Practice:
+                    </div>
+                    <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                      Please wear headphones or earbuds while in the studio. If using computer speakers, your microphone will capture the host's voice and cause an echo on the live broadcast.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setIsDeviceSettingsOpen(false)}
+                    className="px-4 text-xs"
+                  >
+                    Done
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

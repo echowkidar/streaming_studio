@@ -91,6 +91,11 @@ export const StagePreview: React.FC = () => {
     isDrawingMode,
     toggleMediaMute,
     toggleParticipantMic,
+    mediaSlotIndex,
+    setMediaSlotIndex,
+    moveParticipantOrder,
+    soloTargetId,
+    toggleSoloParticipant,
     scenes,
     activeSceneId,
     fairUseConfig,
@@ -1197,7 +1202,8 @@ export const StagePreview: React.FC = () => {
       hasVisualMedia,
       layoutSplitRatio,
       customLayoutConfig,
-      Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP)
+      Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
+      mediaSlotIndex
     );
 
     const defaultMediaBounds: ParticipantBounds =
@@ -1616,6 +1622,74 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
+                {/* Media Stage Position / Slot Selector (Left, Right, Middle, Corners) */}
+                {totalPlannedSlots >= 1 && !isSoloOrCinema && (
+                  <div className="flex items-center gap-1 bg-indigo-950/80 border border-indigo-400/50 rounded-lg px-1.5 py-0.5">
+                    <span className="text-[9px] font-bold text-indigo-300 uppercase">Pos:</span>
+                    <select
+                      value={mediaSlotIndex}
+                      onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
+                      className="bg-transparent text-[10px] font-bold text-white focus:outline-none cursor-pointer"
+                      title="Choose where Media appears on stage (Left, Right, Middle, or Grid Slot)"
+                    >
+                      {activeLayout === "cropped" || activeLayout === "podcast" || activeLayout === "side-by-side" || activeLayout === "fit" || activeLayout === "interview" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">◧ Left Side</option>
+                          <option value={1} className="bg-slate-900">◨ Right Side (Host Left)</option>
+                        </>
+                      ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
+                        <>
+                          <option value={0} className="bg-slate-900">◧ Left Col</option>
+                          <option value={1} className="bg-slate-900">⫿ Middle Col</option>
+                          <option value={2} className="bg-slate-900">◨ Right Col</option>
+                        </>
+                      ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
+                        <>
+                          <option value={0} className="bg-slate-900">↖ Top-Left</option>
+                          <option value={1} className="bg-slate-900">↗ Top-Right</option>
+                          <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
+                          <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
+                        </>
+                      ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">★ Hero Left (Large)</option>
+                          <option value={1} className="bg-slate-900">▤ Side Top-Right (Small)</option>
+                          {totalPlannedSlots >= 2 && (
+                            <option value={2} className="bg-slate-900">▤ Side Btm-Right (Small)</option>
+                          )}
+                        </>
+                      ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">⬆ Top Window</option>
+                          <option value={1} className="bg-slate-900">⬇ Bottom Window</option>
+                        </>
+                      ) : (
+                        Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
+                          <option key={sIdx} value={sIdx} className="bg-slate-900">
+                            Slot {sIdx + 1}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                )}
+
+                {/* 1-Click Solo / Restore Media Button */}
+                <button
+                  type="button"
+                  onClick={() => toggleSoloParticipant("active-media")}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                    soloTargetId === "active-media"
+                      ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
+                      : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
+                  )}
+                  title="Solo Media Fullscreen (click again to restore previous layout)"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                  <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
+                </button>
+
                 {/* Change / Replace Media from library */}
                 <button
                   type="button"
@@ -1776,6 +1850,47 @@ export const StagePreview: React.FC = () => {
                   </button>
 
                   <span className="w-px h-3 bg-white/20" />
+
+                  {/* Swap Participant Slot Order (Left / Right / Up / Down) */}
+                  {orderedParticipants.length >= 2 && (
+                    <div className="flex items-center gap-0.5 bg-white/10 rounded-lg border border-white/15 px-1 py-0.5">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveParticipantOrder(p.id, "left")}
+                        className="px-1 text-[10px] font-bold text-cyan-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                        title="Swap with previous slot (Move Left / Up)"
+                      >
+                        ◄
+                      </button>
+                      <span className="text-[9px] text-slate-300 font-mono px-0.5">Slot {idx + 1}</span>
+                      <button
+                        type="button"
+                        disabled={idx === orderedParticipants.length - 1}
+                        onClick={() => moveParticipantOrder(p.id, "right")}
+                        className="px-1 text-[10px] font-bold text-cyan-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                        title="Swap with next slot (Move Right / Down)"
+                      >
+                        ►
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 1-Click Solo / Restore Layout Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => toggleSoloParticipant(p.id)}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                      String(soloTargetId) === String(p.id)
+                        ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
+                        : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
+                    )}
+                    title="Instantly Solo this speaker full-screen (click again to restore previous layout)"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>{String(soloTargetId) === String(p.id) ? "Un-Solo" : "Solo"}</span>
+                  </button>
 
                   {/* Spotlight / Hero Speaker Toggle */}
                   <button
@@ -1966,7 +2081,7 @@ export const StagePreview: React.FC = () => {
         )}
 
         {/* StreamYard Responsive Stage Split Dividers (Multi-Layout Parity) */}
-        {!hasVisualMedia && orderedParticipants.length >= 2 && (() => {
+        {((hasVisualMedia && totalPlannedSlots >= 1) || orderedParticipants.length >= 2) && (() => {
           const isVerticalSplit =
             activeLayout === "side-by-side" ||
             activeLayout === "fit" ||

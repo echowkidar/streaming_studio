@@ -254,9 +254,28 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     setIsMounted(true);
   }, []);
 
+  const [realCameras, setRealCameras] = useState<MediaDeviceInfo[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && navigator.mediaDevices?.enumerateDevices) {
+      const loadCams = () => {
+        navigator.mediaDevices
+          .enumerateDevices()
+          .then((devices) => {
+            setRealCameras(devices.filter((d) => d.kind === "videoinput" && d.deviceId));
+          })
+          .catch(() => {});
+      };
+      loadCams();
+      navigator.mediaDevices.addEventListener?.("devicechange", loadCams);
+      return () => navigator.mediaDevices.removeEventListener?.("devicechange", loadCams);
+    }
+  }, []);
+
   const {
     scenes,
     activeSceneId,
+    activeMedia,
     isScenesPanelOpen,
     toggleScenesPanel,
     addScene,
@@ -996,6 +1015,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         {scenes.map((scene, index) => {
           const isActive = activeSceneId === scene.id;
           const isDragTarget = dragOverIdx === index;
+          const effectiveSceneMedia = scene.activeMedia || (isActive ? activeMedia : null);
 
           return (
             <div
@@ -1033,7 +1053,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 }}
               >
                 {/* Visual Layout Representation */}
-                {renderThumbnailContent(scene)}
+                {renderThumbnailContent({ ...scene, activeMedia: effectiveSceneMedia })}
 
                 {/* Layout Badge (Top Left) */}
                 <div className="absolute top-1 left-1 z-10 flex items-center gap-1">
@@ -1052,7 +1072,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 </div>
 
                 {/* Media Label Badge on thumbnail with 1-click Change Media */}
-                {scene.activeMedia && (
+                {effectiveSceneMedia && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1062,12 +1082,12 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                     className="absolute bottom-1 left-1 z-20 flex items-center gap-1 bg-black/85 hover:bg-black backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-semibold text-cyan-300 hover:text-cyan-200 border border-cyan-500/40 hover:border-cyan-400 shadow-md cursor-pointer pointer-events-auto transition-all group/badge"
                     title="Click to Change Media / Deck"
                   >
-                    {scene.activeMedia.type === "pdf" ? (
+                    {effectiveSceneMedia.type === "pdf" ? (
                       <FileText className="w-2.5 h-2.5 text-cyan-300" />
                     ) : (
                       <Clapperboard className="w-2.5 h-2.5 text-indigo-300" />
                     )}
-                    <span className="truncate max-w-[80px]">{scene.activeMedia.name}</span>
+                    <span className="truncate max-w-[80px]">{effectiveSceneMedia.name}</span>
                     <Edit2 className="w-2 h-2 opacity-60 group-hover/badge:opacity-100 text-cyan-400 ml-0.5" />
                   </button>
                 )}
@@ -1076,7 +1096,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               {/* Action Buttons (Top Right) */}
               <div className="absolute top-1 right-1 z-20 flex items-center gap-1 pointer-events-auto">
                 {/* Clapperboard if media attached */}
-                {scene.activeMedia && (
+                {effectiveSceneMedia && (
                   <span className="p-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300">
                     <Clapperboard className="w-2.5 h-2.5" />
                   </span>
@@ -1159,20 +1179,21 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       <div className="flex items-center gap-2">
                         <MonitorUp className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
                         <span className="font-semibold text-emerald-300">
-                          {scene.activeMedia ? "Change Media / Deck" : "Attach Media / Deck"}
+                          {effectiveSceneMedia ? "Change Media / Deck" : "Attach Media / Deck"}
                         </span>
                       </div>
                       <span className="text-[10px] text-emerald-400/80 font-bold uppercase">
-                        {scene.activeMedia ? scene.activeMedia.type : "Add"}
+                        {effectiveSceneMedia ? effectiveSceneMedia.type : "Add"}
                       </span>
                     </button>
 
                     {/* Primary Action 2: Remove Media (if attached) */}
-                    {scene.activeMedia && (
+                    {effectiveSceneMedia && (
                       <button
                         type="button"
                         onClick={() => {
                           handleAttachMedia(scene.id, null);
+                          if (isActive) setActiveMedia(null);
                           setActiveMenuId(null);
                         }}
                         className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2 transition-colors"
@@ -1436,12 +1457,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       <select
                         value={scene.extraCameraDeviceId || ""}
                         onChange={(e) => updateScene(scene.id, { extraCameraDeviceId: e.target.value || null })}
-                        className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-slate-900 border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
                       >
                         <option value="">Default Host Camera</option>
-                        <option value="extra-cam-topdown">Top-Down Document Camera</option>
-                        <option value="extra-cam-demo">Secondary Product Demo Cam</option>
-                        <option value="extra-cam-wide">Wide Studio Angle Cam</option>
+                        {realCameras.map((cam, idx) => (
+                          <option key={cam.deviceId || idx} value={cam.deviceId}>
+                            📷 {cam.label || `Camera ${idx + 1}`}
+                          </option>
+                        ))}
                       </select>
                     </div>
 

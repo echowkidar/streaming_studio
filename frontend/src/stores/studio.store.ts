@@ -116,6 +116,8 @@ export interface StudioScene {
   name: string;
   layout: StudioLayout;
   splitRatio?: number;
+  /** Media kis slot me dikhega: 0 = Left/Top-Left/Hero, 1 = Right/Middle/Top-Right, 2 = Right/Bottom-Left, 3 = Bottom-Right */
+  mediaSlotIndex?: number;
   onStageParticipantIds?: (string | number)[];
   /** Fixed seat assignments: slotIndex -> participantId */
   slotAssignments?: Record<number, string | number>;
@@ -341,6 +343,20 @@ interface StudioState {
   pinMessage: (msg: ChatMessage | null) => void;
   commentConfig: CommentConfig;
   setCommentConfig: (config: Partial<CommentConfig>) => void;
+
+  // Private Backstage Chat (Host <-> Guests)
+  privateMessages: Array<{ id: string; sender: string; role: string; text: string; timestamp: string }>;
+  addPrivateMessage: (msg: { id?: string; sender: string; role?: string; text: string; timestamp?: string }, broadcast?: boolean) => void;
+
+  // Media Slot Position & Participant Reordering
+  mediaSlotIndex: number;
+  setMediaSlotIndex: (slotIndex: number) => void;
+  moveParticipantOrder: (id: string | number, direction: "left" | "right") => void;
+
+  // 1-Click Solo / Spotlight Memory State
+  soloTargetId: string | number | null;
+  preSoloSnapshot: { layout: StudioLayout; onStageIds: (string | number)[] } | null;
+  toggleSoloParticipant: (id: string | number) => void;
 
   // Destinations
   destinations: Destination[];
@@ -2078,6 +2094,123 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { commentConfig: nextConfig };
     }),
 
+  // Private Backstage Chat (Host <-> Guests)
+  privateMessages: [
+    {
+      id: "priv-welcome",
+      sender: "System",
+      role: "system",
+      text: "Private Backstage Chat active. Messages here are only visible to the Host and Guests.",
+      timestamp: "Now",
+    },
+  ],
+  addPrivateMessage: (msg, broadcast = true) =>
+    set((s) => {
+      const entry = {
+        id: msg.id || `priv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        sender: msg.sender,
+        role: msg.role || "guest",
+        text: msg.text,
+        timestamp: msg.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      if (s.privateMessages.some((m) => m.id === entry.id)) return s;
+
+      if (broadcast && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("livestudio-send-private-chat", { detail: entry }));
+      }
+      return { privateMessages: [...s.privateMessages, entry] };
+    }),
+
+  // Media Stage Position / Slot Index (0 = Left/Top-Left/Hero, 1 = Right/Middle/Top-Right, etc.)
+  mediaSlotIndex: savedLayout.scenes?.find((s) => s.id === savedLayout.activeSceneId)?.mediaSlotIndex ?? 0,
+  setMediaSlotIndex: (slotIndex) =>
+    set((s) => {
+      const clamped = Math.max(0, Math.min(8, slotIndex));
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, mediaSlotIndex: clamped } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { mediaSlotIndex: clamped, scenes: nextScenes };
+    }),
+
+  moveParticipantOrder: (id, direction) =>
+    set((s) => {
+      const onStage = s.participants.filter((p) => p.status === "ON_STAGE");
+      const currentIdx = onStage.findIndex((p) => String(p.id) === String(id));
+      if (currentIdx === -1) return s;
+
+      const targetIdx = direction === "left" ? currentIdx - 1 : currentIdx + 1;
+      if (targetIdx < 0 || targetIdx >= onStage.length) return s;
+
+      // Swap positions in the main participants array
+      const idA = onStage[currentIdx].id;
+      const idB = onStage[targetIdx].id;
+      const fullList = [...s.participants];
+      const fullIdxA = fullList.findIndex((p) => p.id === idA);
+      const fullIdxB = fullList.findIndex((p) => p.id === idB);
+      if (fullIdxA !== -1 && fullIdxB !== -1) {
+        const temp = fullList[fullIdxA];
+        fullList[fullIdxA] = fullList[fullIdxB];
+        fullList[fullIdxB] = temp;
+      }
+
+      const nextOnStageIds = fullList.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, onStageParticipantIds: nextOnStageIds } : sc
+      );
+      persistStudioLayout({ scenes: nextScenes });
+      return { participants: fullList, scenes: nextScenes };
+    }),
+
+  // 1-Click Solo / Spotlight Memory State
+  soloTargetId: null,
+  preSoloSnapshot: null,
+  toggleSoloParticipant: (id) =>
+    set((s) => {
+      const targetStr = String(id);
+      // Agar pehle se Solo hai, toh wapas purana layout aur stage participants restore karein
+      if (s.soloTargetId && String(s.soloTargetId) === targetStr && s.preSoloSnapshot) {
+        const prevSet = new Set(s.preSoloSnapshot.onStageIds.map(String));
+        const restoredParticipants = s.participants.map((p) => ({
+          ...p,
+          status: (prevSet.has(String(p.id)) ? "ON_STAGE" : "BACKSTAGE") as any,
+        }));
+        return {
+          soloTargetId: null,
+          activeLayout: s.preSoloSnapshot.layout,
+          participants: restoredParticipants,
+          preSoloSnapshot: null,
+        };
+      }
+
+      // Naya Solo activate karein: current state snapshot me save karein
+      const currentOnStageIds = s.participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
+      const snapshot = s.preSoloSnapshot || {
+        layout: s.activeLayout,
+        onStageIds: currentOnStageIds,
+      };
+
+      if (targetStr === "active-media") {
+        return {
+          soloTargetId: "active-media",
+          preSoloSnapshot: snapshot,
+          activeLayout: "cinema",
+        };
+      }
+
+      const soloParticipants = s.participants.map((p) => ({
+        ...p,
+        status: (String(p.id) === targetStr ? "ON_STAGE" : "BACKSTAGE") as any,
+      }));
+
+      return {
+        soloTargetId: id,
+        preSoloSnapshot: snapshot,
+        activeLayout: "solo",
+        participants: soloParticipants,
+      };
+    }),
+
   destinations: [
     {
       id: "dest-1",
@@ -2305,6 +2438,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       activeBanner: nextBanner,
       activeTextCard: nextTextCard,
       activeExtraCameraDeviceId: scene.extraCameraDeviceId || null,
+      mediaSlotIndex: scene.mediaSlotIndex ?? 0,
       customLayoutConfig: {
         ...state.customLayoutConfig,
         heroParticipantId: scene.heroParticipantId ?? null,
@@ -2332,6 +2466,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     get().updateScene(id, {
       layout: state.activeLayout,
       splitRatio: state.layoutSplitRatio,
+      mediaSlotIndex: state.mediaSlotIndex ?? 0,
       onStageParticipantIds: onStageIds,
       expectedGuestSlots: existingScene?.expectedGuestSlots,
       autoAddGuestsToStage: existingScene?.autoAddGuestsToStage,

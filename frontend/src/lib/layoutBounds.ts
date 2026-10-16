@@ -499,7 +499,8 @@ export function calculateStageLayout(
   hasVisualMedia: boolean,
   splitRatio: number = 50,
   customConfig?: CustomLayoutConfig,
-  enforceReactionPiP: boolean = false
+  enforceReactionPiP: boolean = false,
+  mediaSlotIndex: number = 0
 ): StageLayoutResult {
   // If NO active visual media on stage, compute participant bounds directly
   if (!hasVisualMedia) {
@@ -512,7 +513,102 @@ export function calculateStageLayout(
     return { mediaBounds: null, participantBounds };
   }
 
-  // --- Visual Media (Video / Screen Share / Slide Deck) is present on stage ---
+  // Special Case: 2-Window (Cropped / Fit / Podcast / Interview / Side-by-Side) where Media is on one side and Speakers stack on the other side
+  if (
+    (layout === "cropped" || layout === "podcast" || layout === "interview" || layout === "side-by-side" || layout === "fit") &&
+    totalParticipants >= 1
+  ) {
+    const safeSplit = Math.max(20, Math.min(80, splitRatio || 50));
+    const isMediaOnRight = mediaSlotIndex >= 1; // 0 = Left Side, 1 = Right Side!
+
+    if (layout === "cropped" || layout === "podcast" || layout === "interview") {
+      const leftW = safeSplit;
+      const rightW = 100 - safeSplit;
+      const mediaBounds: ParticipantBounds = isMediaOnRight
+        ? { x: safeSplit, y: 0, width: rightW, height: 100, zIndex: 10, isLockedRatio: true }
+        : { x: 0, y: 0, width: leftW, height: 100, zIndex: 10, isLockedRatio: true };
+
+      const pX = isMediaOnRight ? 0 : safeSplit;
+      const pW = isMediaOnRight ? leftW : rightW;
+      const pH = 100 / totalParticipants;
+      const participantBounds: ParticipantBounds[] = [];
+      for (let i = 0; i < totalParticipants; i++) {
+        participantBounds.push({
+          x: pX,
+          y: i * pH,
+          width: pW,
+          height: pH,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+      }
+      return { mediaBounds, participantBounds };
+    } else {
+      // Fit / Side-by-Side (16:9 boxes)
+      const leftW = Math.max(15, safeSplit - 3);
+      const rightW = Math.max(15, 100 - safeSplit - 3);
+      const mW = isMediaOnRight ? rightW : leftW;
+      const mX = isMediaOnRight ? Math.min(85, safeSplit + 1) : 2;
+      const mH = Math.min(54, Math.max(26, mW * 0.96));
+      const mediaBounds: ParticipantBounds = {
+        x: mX,
+        y: Math.max(4, (100 - mH) / 2),
+        width: mW,
+        height: mH,
+        zIndex: 10,
+        isLockedRatio: true,
+      };
+
+      const pX = isMediaOnRight ? 2 : Math.min(85, safeSplit + 1);
+      const pW = isMediaOnRight ? leftW : rightW;
+      const participantBounds: ParticipantBounds[] = [];
+      if (totalParticipants === 1) {
+        const pH = Math.min(54, Math.max(26, pW * 0.96));
+        participantBounds.push({
+          x: pX,
+          y: Math.max(4, (100 - pH) / 2),
+          width: pW,
+          height: pH,
+          zIndex: 10,
+          isLockedRatio: true,
+        });
+      } else {
+        const pH = Math.max(20, (92 - (totalParticipants - 1) * 3) / totalParticipants);
+        for (let i = 0; i < totalParticipants; i++) {
+          participantBounds.push({
+            x: pX,
+            y: 4 + i * (pH + 3),
+            width: pW,
+            height: pH,
+            zIndex: 10,
+            isLockedRatio: true,
+          });
+        }
+      }
+      return { mediaBounds, participantBounds };
+    }
+  }
+
+  // Multi-Slot Layouts (three-equal, four-grid, five-grid, six-grid, nine-grid, speaker-large, screen-speaker, presentation, stacked):
+  // Calculate all (totalParticipants + 1) slot rectangles, and assign `mediaSlotIndex` to Media!
+  if (
+    ["three-equal", "four-grid", "five-grid", "six-grid", "nine-grid", "speaker-large", "screen-speaker", "presentation", "stacked"].includes(layout) &&
+    totalParticipants >= 1
+  ) {
+    const totalSlots = totalParticipants + 1;
+    const targetMediaSlot = Math.max(0, Math.min(totalSlots - 1, mediaSlotIndex || 0));
+
+    const allSlotBounds: ParticipantBounds[] = [];
+    for (let s = 0; s < totalSlots; s++) {
+      allSlotBounds.push(getDefaultSlotBounds(layout, s, totalSlots, splitRatio, customConfig));
+    }
+
+    const mediaBounds = allSlotBounds[targetMediaSlot];
+    const participantBounds = allSlotBounds.filter((_, idx) => idx !== targetMediaSlot);
+    return { mediaBounds, participantBounds };
+  }
+
+  // --- Fallback / Solo / Cinema / PiP / 0-participant Stage Layouts ---
   const safeSplit = Math.max(25, Math.min(75, splitRatio || 50));
   const participantBounds: ParticipantBounds[] = [];
 

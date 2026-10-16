@@ -139,6 +139,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     removeParticipant,
     toggleParticipantMic,
     activeMedia,
+    mediaSlotIndex,
+    activeExtraCameraDeviceId,
     isDrawingMode,
     setIsDrawingMode,
     isScenesPanelOpen,
@@ -153,6 +155,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
   }, [params.id, initStudio]);
 
+  // Auto-switch host video device when scene specifies an extra camera device ID
+  useEffect(() => {
+    if (activeExtraCameraDeviceId && setVideoDevice) {
+      setVideoDevice(activeExtraCameraDeviceId).catch((err) => {
+        console.warn("Failed to switch camera to scene device:", err);
+      });
+    }
+  }, [activeExtraCameraDeviceId, setVideoDevice]);
+
   const compositeVideoPubRef = React.useRef<any>(null);
   const compositeAudioPubRef = React.useRef<any>(null);
 
@@ -162,7 +173,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = Array.from(
       new Set([...participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id), id])
     );
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia, mediaSlotIndex);
   };
 
   const handleMoveToBackstage = (id: string | number) => {
@@ -171,21 +182,21 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     const nextOnStage = participants
       .filter((p) => p.status === "ON_STAGE" && String(p.id) !== String(id))
       .map((p) => p.id);
-    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
+    publishStageSync(nextOnStage, activeLayout, layoutSplitRatio, participantBounds, activeMedia, mediaSlotIndex);
   };
 
-  // Sync layout, freeform bounds, and active media changes to all guests
+  // Sync layout, freeform bounds, active media, and media slot position to all guests
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
         const onStageIds = participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
-        publishStageSync(onStageIds, activeLayout, layoutSplitRatio, participantBounds, activeMedia);
+        publishStageSync(onStageIds, activeLayout, layoutSplitRatio, participantBounds, activeMedia, mediaSlotIndex);
       } catch (err) {
         console.warn("Stage sync broadcast error:", err);
       }
     }, 150);
     return () => clearTimeout(timer);
-  }, [activeLayout, layoutSplitRatio, participantBounds, participants, activeMedia, publishStageSync]);
+  }, [activeLayout, layoutSplitRatio, participantBounds, participants, activeMedia, mediaSlotIndex, publishStageSync]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>(null);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
