@@ -687,6 +687,7 @@ function persistMediaLibrary(items: MediaFileItem[]) {
 export interface SavedStudioLayoutState {
   broadcastTitle?: string;
   activeLayout?: StudioLayout;
+  isStageCropped?: boolean;
   layoutSplitRatio?: number;
   participantBounds?: Record<string, ParticipantBounds>;
   customLayoutConfig?: CustomLayoutConfig;
@@ -1025,6 +1026,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     const nextActiveScene = nextScenes.find((s) => s.id === nextActiveSceneId);
     const nextLayout = saved.activeLayout || nextActiveScene?.layout || studioLayout;
+    const nextCropped =
+      saved.isStageCropped !== undefined
+        ? saved.isStageCropped
+        : nextActiveScene?.isStageCropped !== undefined
+        ? nextActiveScene.isStageCropped
+        : nextLayout === "cropped" || nextLayout === "podcast";
     const nextSplit = saved.layoutSplitRatio || nextActiveScene?.splitRatio || studioSplitRatio;
     const initialActiveMedia = healMediaItem(
       saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null
@@ -1034,6 +1041,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       currentStudioId: studioId,
       broadcastTitle: saved.broadcastTitle || studioTitle,
       activeLayout: nextLayout,
+      isStageCropped: nextCropped,
       layoutSplitRatio: nextSplit,
       customLayoutConfig: saved.customLayoutConfig || {
         mode: "solo",
@@ -1188,10 +1196,20 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
                 set((state) => {
                   if (state.currentStudioId !== studioId) return state;
+                  const resolvedLayout = cloud.activeLayout || cloudActiveScene?.layout || state.activeLayout;
+                  const resolvedCropped =
+                    cloud.isStageCropped !== undefined
+                      ? cloud.isStageCropped
+                      : cloudActiveScene?.isStageCropped !== undefined
+                      ? cloudActiveScene.isStageCropped
+                      : resolvedLayout === "cropped" || resolvedLayout === "podcast"
+                      ? true
+                      : state.isStageCropped;
                   return {
                     scenes: cloud.scenes || state.scenes,
                     activeSceneId: cloud.activeSceneId || state.activeSceneId,
-                    activeLayout: cloud.activeLayout || cloudActiveScene?.layout || state.activeLayout,
+                    activeLayout: resolvedLayout,
+                    isStageCropped: resolvedCropped,
                     layoutSplitRatio: cloud.layoutSplitRatio || cloudActiveScene?.splitRatio || state.layoutSplitRatio,
                     broadcastTitle: cloud.broadcastTitle || res.data.name || state.broadcastTitle,
                     tickerText: cloud.tickerText || state.tickerText,
@@ -1255,6 +1273,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   activeLayout: savedLayout.activeLayout || initialActiveScene?.layout || "speaker-large",
   isStageCropped:
+    savedLayout.isStageCropped ??
     savedLayout.scenes?.find((s) => s.id === savedLayout.activeSceneId)?.isStageCropped ??
     (savedLayout.activeLayout === "cropped" || savedLayout.activeLayout === "podcast"),
 
@@ -1269,12 +1288,22 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           };
         }
       });
+      currentTransforms["local-host"] = {
+        ...(currentTransforms["local-host"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: cropped ? "cover" : "contain",
+      };
+      currentTransforms["active-media"] = {
+        ...(currentTransforms["active-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: cropped ? "cover" : "contain",
+        panX: 0,
+        panY: 0,
+      };
       const nextScenes = s.scenes.map((sc) =>
         sc.id === s.activeSceneId
           ? { ...sc, isStageCropped: cropped, tileTransforms: currentTransforms }
           : sc
       );
-      persistStudioLayout({ scenes: nextScenes, tileTransforms: currentTransforms });
+      persistStudioLayout({ isStageCropped: cropped, scenes: nextScenes, tileTransforms: currentTransforms });
       return { isStageCropped: cropped, tileTransforms: currentTransforms, scenes: nextScenes };
     }),
 
@@ -1295,7 +1324,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     const currentTransforms = { ...get().tileTransforms };
     let hasTransformChanges = false;
-    if (layout === "cropped" || layout === "podcast") {
+    if (nextCropped) {
       get().participants.forEach((p) => {
         if (!p.isScreen) {
           currentTransforms[p.id] = {
@@ -1305,6 +1334,15 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           hasTransformChanges = true;
         }
       });
+      currentTransforms["local-host"] = {
+        ...(currentTransforms["local-host"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: "cover",
+      };
+      currentTransforms["active-media"] = {
+        ...(currentTransforms["active-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: "cover",
+      };
+      hasTransformChanges = true;
     } else if (layout === "side-by-side" || layout === "fit") {
       get().participants.forEach((p) => {
         currentTransforms[p.id] = {
@@ -1313,6 +1351,15 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         };
         hasTransformChanges = true;
       });
+      currentTransforms["local-host"] = {
+        ...(currentTransforms["local-host"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: "contain",
+      };
+      currentTransforms["active-media"] = {
+        ...(currentTransforms["active-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: "contain",
+      };
+      hasTransformChanges = true;
     }
 
     let activeSceneId = get().activeSceneId;
@@ -1321,11 +1368,23 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
 
     const updatedScenes = activeSceneId
-      ? get().scenes.map((s) => (s.id === activeSceneId ? { ...s, layout, splitRatio: defaultSplit, isStageCropped: nextCropped } : s))
+      ? get().scenes.map((s) =>
+          s.id === activeSceneId
+            ? {
+                ...s,
+                layout,
+                splitRatio: defaultSplit,
+                isStageCropped: nextCropped,
+                participantBounds: {},
+                ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
+              }
+            : s
+        )
       : get().scenes;
 
     persistStudioLayout({
       activeLayout: layout,
+      isStageCropped: nextCropped,
       layoutSplitRatio: defaultSplit,
       participantBounds: {},
       scenes: updatedScenes,
@@ -1397,9 +1456,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         nextBounds["screen-share"] = merged;
       }
 
-      persistStudioLayout({ participantBounds: nextBounds });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, participantBounds: nextBounds } : sc
+      );
+      persistStudioLayout({ participantBounds: nextBounds, scenes: nextScenes });
       return {
         participantBounds: nextBounds,
+        scenes: nextScenes,
       };
     }),
   resetParticipantBounds: (id) =>
@@ -1414,12 +1477,19 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       if (p?.isScreen || key.includes("screen")) {
         delete next["screen-share"];
       }
-      persistStudioLayout({ participantBounds: next });
-      return { participantBounds: next };
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, participantBounds: next } : sc
+      );
+      persistStudioLayout({ participantBounds: next, scenes: nextScenes });
+      return { participantBounds: next, scenes: nextScenes };
     }),
   resetAllParticipantBounds: () => {
-    persistStudioLayout({ participantBounds: {} });
-    set({ participantBounds: {}, selectedParticipantId: null });
+    const state = get();
+    const nextScenes = state.scenes.map((sc) =>
+      sc.id === state.activeSceneId ? { ...sc, participantBounds: {} } : sc
+    );
+    persistStudioLayout({ participantBounds: {}, scenes: nextScenes });
+    set({ participantBounds: {}, selectedParticipantId: null, scenes: nextScenes });
   },
   setAllParticipantBounds: (allBounds) => {
     const safeBounds = allBounds || {};
@@ -1470,8 +1540,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setCustomLayoutConfig: (config) =>
     set((s) => {
       const nextConfig = { ...s.customLayoutConfig, ...config };
-      persistStudioLayout({ customLayoutConfig: nextConfig, participantBounds: {} });
-      return { customLayoutConfig: nextConfig, participantBounds: {} };
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId
+          ? { ...sc, customLayoutConfig: nextConfig, heroParticipantId: nextConfig.heroParticipantId, participantBounds: {} }
+          : sc
+      );
+      persistStudioLayout({ customLayoutConfig: nextConfig, participantBounds: {}, scenes: nextScenes });
+      return { customLayoutConfig: nextConfig, participantBounds: {}, scenes: nextScenes };
     }),
 
   micEnabled: true,
@@ -1692,8 +1767,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set((s) => {
       const key = String(id);
       const isScreen = key.includes("screen");
+      const defaultFit = isScreen ? "contain" : key === "active-media" ? (s.isStageCropped ? "cover" : "contain") : "cover";
       const current: TileTransform = s.tileTransforms[key] || {
-        fitMode: (isScreen ? "contain" : "cover") as "contain" | "cover",
+        fitMode: defaultFit as "contain" | "cover",
         zoom: 1,
         panX: 0,
         panY: 0,
@@ -1705,17 +1781,30 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         ...s.tileTransforms,
         [key]: { ...current, ...updates },
       };
-      persistStudioLayout({ tileTransforms: nextTransforms });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId
+          ? {
+              ...sc,
+              tileTransforms: nextTransforms,
+              ...(key === "active-media" && updates.isTransparentBg !== undefined
+                ? { isTransparentMedia: Boolean(updates.isTransparentBg) }
+                : {}),
+            }
+          : sc
+      );
+      persistStudioLayout({ tileTransforms: nextTransforms, scenes: nextScenes });
       return {
         tileTransforms: nextTransforms,
+        scenes: nextScenes,
       };
     }),
   resetTileTransform: (id) =>
     set((s) => {
       const key = String(id);
       const isScreen = key.includes("screen");
+      const defaultFit = isScreen ? "contain" : key === "active-media" ? (s.isStageCropped ? "cover" : "contain") : "cover";
       const defaultTransform: TileTransform = {
-        fitMode: (isScreen ? "contain" : "cover") as "contain" | "cover",
+        fitMode: defaultFit as "contain" | "cover",
         zoom: 1,
         panX: 0,
         panY: 0,
@@ -1727,9 +1816,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         ...s.tileTransforms,
         [key]: defaultTransform,
       };
-      persistStudioLayout({ tileTransforms: nextTransforms });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, tileTransforms: nextTransforms } : sc
+      );
+      persistStudioLayout({ tileTransforms: nextTransforms, scenes: nextScenes });
       return {
         tileTransforms: nextTransforms,
+        scenes: nextScenes,
       };
     }),
 
@@ -1897,16 +1990,23 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   toggleStageOverlay: (overlay) =>
     set((s) => {
       const next = s.activeStageOverlay?.id === overlay.id ? null : overlay;
-      persistStudioLayout({ activeStageOverlay: next });
-      return { activeStageOverlay: next };
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, stageOverlay: next } : sc
+      );
+      persistStudioLayout({ activeStageOverlay: next, scenes: nextScenes });
+      return { activeStageOverlay: next, scenes: nextScenes };
     }),
   updateStageOverlay: (updates) =>
     set((s) => {
       if (!s.activeStageOverlay) return {};
       const updated = { ...s.activeStageOverlay, ...updates };
-      persistStudioLayout({ activeStageOverlay: updated });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, stageOverlay: updated } : sc
+      );
+      persistStudioLayout({ activeStageOverlay: updated, scenes: nextScenes });
       return {
         activeStageOverlay: updated,
+        scenes: nextScenes,
         overlayHistory: s.overlayHistory.map((item) => (item.id === updated.id ? updated : item)),
       };
     }),
@@ -1914,9 +2014,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set((s) => {
       if (!s.activeStageOverlay) return {};
       const updated = { ...s.activeStageOverlay, isShowing: !s.activeStageOverlay.isShowing };
-      persistStudioLayout({ activeStageOverlay: updated });
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, stageOverlay: updated } : sc
+      );
+      persistStudioLayout({ activeStageOverlay: updated, scenes: nextScenes });
       return {
         activeStageOverlay: updated,
+        scenes: nextScenes,
       };
     }),
   saveToOverlayHistory: (overlay) =>
@@ -2475,12 +2579,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       }
     });
 
-    if (scene.isTransparentMedia !== undefined) {
-      currentTransforms["active-media"] = {
-        ...(currentTransforms["active-media"] || { fitMode: "contain", zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
-        isTransparentBg: Boolean(scene.isTransparentMedia),
-      };
-    }
+    const savedSceneMediaFit = scene.tileTransforms?.["active-media"]?.fitMode;
+    currentTransforms["active-media"] = {
+      ...(currentTransforms["active-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+      fitMode: targetCropped ? "cover" : (savedSceneMediaFit || "contain"),
+      ...(scene.isTransparentMedia !== undefined ? { isTransparentBg: Boolean(scene.isTransparentMedia) } : {}),
+    };
 
     const nextBgUrl = scene.backgroundUrl !== undefined ? scene.backgroundUrl : state.activeBackgroundUrl;
     const nextBgType = scene.backgroundType || state.activeBackgroundType;
@@ -2517,6 +2621,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     persistStudioLayout({
       activeSceneId: id,
       activeLayout: targetLayout,
+      isStageCropped: targetCropped,
       layoutSplitRatio: targetSplit,
       participantBounds: nextBounds,
       tileTransforms: currentTransforms,

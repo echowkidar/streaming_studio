@@ -685,13 +685,17 @@ class StageBroadcaster {
       const stageTiles = container.querySelectorAll("[data-stage-tile]");
       const store = useStudioStore.getState();
       const isFullBleed =
+        store.isStageCropped ||
         store.activeLayout === "cropped" ||
         store.activeLayout === "podcast" ||
+        store.activeLayout === "interview" ||
         store.activeLayout === "cinema" ||
+        store.activeLayout === "screen-full" ||
         store.activeLayout === "solo" ||
         (store.activeLayout === "custom" &&
           (store.customLayoutConfig?.mode === "solo" ||
             store.customLayoutConfig?.mode === "cinema" ||
+            store.customLayoutConfig?.mode === "cropped" ||
             store.customLayoutConfig?.mode === "podcast"));
 
       const nextLayouts: CachedTileLayout[] = [];
@@ -706,7 +710,11 @@ class StageBroadcaster {
         let h = tileRect.height * scaleY;
 
         if (isFullBleed) {
-          // Snap flush to edge borders to eliminate any sub-pixel/margin gaps in canvas recording
+          // Snap flush to edge borders and round internal seams to eliminate any sub-pixel/margin gaps in canvas recording
+          x = Math.round(x);
+          y = Math.round(y);
+          w = Math.ceil(w);
+          h = Math.ceil(h);
           if (x < 35) {
             w += x;
             x = 0;
@@ -958,16 +966,22 @@ class StageBroadcaster {
       ctx.save();
       const currentStore = useStudioStore.getState();
       const isFullBleed =
+        currentStore.isStageCropped ||
         currentStore.activeLayout === "cropped" ||
         currentStore.activeLayout === "podcast" ||
+        currentStore.activeLayout === "interview" ||
         currentStore.activeLayout === "cinema" ||
+        currentStore.activeLayout === "screen-full" ||
         currentStore.activeLayout === "solo" ||
         (currentStore.activeLayout === "custom" &&
           (currentStore.customLayoutConfig?.mode === "solo" ||
             currentStore.customLayoutConfig?.mode === "cinema" ||
+            currentStore.customLayoutConfig?.mode === "cropped" ||
             currentStore.customLayoutConfig?.mode === "podcast"));
 
-      if (!isFullBleed && !tile.isTransparentCard) {
+      const isFloatingPipTile = (tile.zIndex || 10) >= 25 && w < W * 0.5 && h < H * 0.5;
+
+      if ((!isFullBleed || isFloatingPipTile) && !tile.isTransparentCard) {
         const radius =
           currentStore.activeLayout === "custom" &&
           currentStore.customLayoutConfig?.borderRadius !== undefined
@@ -990,7 +1004,8 @@ class StageBroadcaster {
         const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
         const mediaImg = el.querySelector("img") as HTMLImageElement | null;
 
-        const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: "contain", zoom: 1, panX: 0, panY: 0 };
+        const defaultMediaFit = currentStore.isStageCropped ? "cover" : "contain";
+        const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: defaultMediaFit, zoom: 1, panX: 0, panY: 0 };
         const isCover = (tile.fitMode === "cover" || mediaTf.fitMode === "cover");
         const zoom = Math.max(1, mediaTf.zoom || 1);
         const panX = mediaTf.panX || 0;

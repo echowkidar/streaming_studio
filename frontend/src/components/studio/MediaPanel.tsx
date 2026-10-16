@@ -16,6 +16,7 @@ import {
   ExternalLink,
   Layers,
   Repeat,
+  GripVertical,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -42,6 +43,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [autoRepeat, setAutoRepeat] = useState(true);
+  const [draggingMediaId, setDraggingMediaId] = useState<string | null>(null);
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
     return mediaLibrary && mediaLibrary.length > 0 ? mediaLibrary : [
@@ -77,12 +79,13 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   });
 
   React.useEffect(() => {
-    if (mediaLibrary && mediaLibrary.length > 0) {
+    if (mediaLibrary) {
       setMediaList((prev) => {
+        const libIds = new Set(mediaLibrary.map((m) => m.id));
         const prevIds = new Set(prev.map((p) => p.id));
         const newOnes = mediaLibrary.filter((m) => !prevIds.has(m.id));
-        if (newOnes.length > 0) return [...newOnes, ...prev];
-        return prev;
+        const retainedPrev = prev.filter((p) => libIds.has(p.id) || p.url?.startsWith("blob:"));
+        return [...newOnes, ...retainedPrev];
       });
     }
   }, [mediaLibrary]);
@@ -570,26 +573,52 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         </div>
       )}
 
+      {/* Drag-to-Scene Helper Banner */}
+      <div className="px-3 py-1.5 bg-indigo-950/30 border-b border-white/5 flex items-center justify-between text-[10px] text-indigo-200/90 shrink-0">
+        <span className="flex items-center gap-1.5 truncate">
+          <GripVertical className="w-3 h-3 text-cyan-400 shrink-0" />
+          <span>Drag any media onto a <strong>Scene</strong> or <strong>Stage</strong></span>
+        </span>
+        <span className="text-[9px] font-mono text-cyan-400 shrink-0 ml-1">Drag & Drop</span>
+      </div>
+
       {/* Media Items List */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
         {mediaList.map((item) => {
           const isPlaying = activeMedia?.id === item.id;
           const isOverlaying = activeStageOverlay?.id === item.id;
           const isCompatibleWithOverlay = item.type === "video" || item.type === "image";
+          const isDragging = draggingMediaId === item.id;
 
           return (
             <div
               key={item.id}
+              draggable
+              onDragStart={(e) => {
+                setDraggingMediaId(item.id);
+                const payloadItem: MediaFileItem = {
+                  ...item,
+                  loop: item.loop ?? autoRepeat,
+                };
+                const jsonStr = JSON.stringify({ type: "livestudio-media", media: payloadItem });
+                e.dataTransfer.setData("application/x-livestudio-media", jsonStr);
+                e.dataTransfer.setData("text/plain", jsonStr);
+                e.dataTransfer.effectAllowed = "copyMove";
+              }}
+              onDragEnd={() => setDraggingMediaId(null)}
+              title="Drag to any Scene card on the left or onto the Live Stage"
               className={cn(
-                "p-2.5 rounded-xl border text-xs transition-all flex items-center justify-between group",
+                "p-2.5 rounded-xl border text-xs transition-all flex items-center justify-between group cursor-grab active:cursor-grabbing",
+                isDragging && "opacity-60 border-cyan-400 ring-1 ring-cyan-400/50 scale-[0.98]",
                 isPlaying
                   ? "bg-indigo-500/15 border-indigo-500 shadow-md shadow-indigo-500/10"
                   : isOverlaying
                   ? "bg-purple-500/15 border-purple-500 shadow-md shadow-purple-500/10"
-                  : "bg-surface border-white/5 hover:border-white/10"
+                  : "bg-surface border-white/5 hover:border-indigo-500/40"
               )}
             >
-              <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <GripVertical className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 shrink-0 transition-colors" />
                 <div
                   className={cn(
                     "p-2 rounded-lg border",

@@ -58,11 +58,14 @@ export function VideoTrackView({
     isStageCropped ||
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
+    activeLayout === "interview" ||
     activeLayout === "cinema" ||
+    activeLayout === "screen-full" ||
     activeLayout === "solo" ||
     (activeLayout === "custom" &&
       (customLayoutConfig?.mode === "solo" ||
         customLayoutConfig?.mode === "cinema" ||
+        customLayoutConfig?.mode === "cropped" ||
         customLayoutConfig?.mode === "podcast"));
 
   const tileId = String(id || name || "tile");
@@ -277,10 +280,10 @@ export function VideoTrackView({
           borderColor: activeThemeColor,
           boxShadow: `0 0 24px ${activeThemeColor}70`,
         } : {}),
-        ...(activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
-          ? { borderRadius: `${customLayoutConfig.borderRadius}px` }
-          : isFullBleedLayout
+        ...(isFullBleedLayout
           ? { borderRadius: "0px" }
+          : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+          ? { borderRadius: `${customLayoutConfig.borderRadius}px` }
           : {}),
       }}
       className={cn(

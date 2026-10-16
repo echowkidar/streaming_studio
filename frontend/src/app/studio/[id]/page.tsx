@@ -121,6 +121,8 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     setTitle,
     activeLayout,
     setLayout,
+    isStageCropped,
+    tileTransforms,
     layoutSplitRatio,
     participantBounds,
     isLive,
@@ -196,7 +198,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       }
     }, 150);
     return () => clearTimeout(timer);
-  }, [activeLayout, layoutSplitRatio, participantBounds, participants, activeMedia, mediaSlotIndex, publishStageSync]);
+  }, [activeLayout, isStageCropped, tileTransforms, layoutSplitRatio, participantBounds, participants, activeMedia, mediaSlotIndex, publishStageSync]);
 
   const [activeTab, setActiveTab] = useState<"chat" | "brand" | "media" | "layout" | null>(null);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);

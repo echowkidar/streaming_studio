@@ -540,6 +540,8 @@ export function useLiveKit({
                       senderId: newRoom.localParticipant.identity,
                       stageParticipantIds: onStageIds.map(String),
                       activeLayout: currentStore.activeLayout,
+                      isStageCropped: currentStore.isStageCropped,
+                      customLayoutConfig: currentStore.customLayoutConfig,
                       layoutSplitRatio: currentStore.layoutSplitRatio,
                       mediaSlotIndex: currentStore.mediaSlotIndex ?? 0,
                       participantBounds: currentStore.participantBounds || {},
@@ -598,6 +600,12 @@ export function useLiveKit({
                 try {
                   if (data.activeLayout) {
                     useStudioStore.getState().setLayout(data.activeLayout);
+                  }
+                  if (typeof data.isStageCropped === "boolean") {
+                    useStudioStore.getState().setIsStageCropped(data.isStageCropped);
+                  }
+                  if (data.customLayoutConfig && typeof data.customLayoutConfig === "object") {
+                    useStudioStore.getState().setCustomLayoutConfig(data.customLayoutConfig);
                   }
                   if (typeof data.layoutSplitRatio === "number") {
                     useStudioStore.getState().setLayoutSplitRatio(data.layoutSplitRatio);
@@ -1103,6 +1111,8 @@ export function useLiveKit({
         let activeM = media;
         let mSlotIndex = slotIndex;
         let tTransforms = undefined;
+        let isCropped = false;
+        let customCfg = undefined;
         if (typeof window !== "undefined") {
           try {
             const st = useStudioStore.getState();
@@ -1112,6 +1122,8 @@ export function useLiveKit({
             if (activeM === undefined) activeM = st.activeMedia;
             if (mSlotIndex === undefined) mSlotIndex = st.mediaSlotIndex;
             tTransforms = st.tileTransforms;
+            isCropped = st.isStageCropped;
+            customCfg = st.customLayoutConfig;
           } catch {
             // ignore
           }
@@ -1121,6 +1133,8 @@ export function useLiveKit({
           senderId: roomRef.current.localParticipant.identity,
           stageParticipantIds: stageParticipantIds.map(String),
           activeLayout: activeL,
+          isStageCropped: isCropped,
+          customLayoutConfig: customCfg,
           layoutSplitRatio: splitR ?? 50,
           mediaSlotIndex: mSlotIndex ?? 0,
           participantBounds: pBounds || {},

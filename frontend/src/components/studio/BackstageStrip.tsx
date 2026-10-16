@@ -52,6 +52,8 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
     setTileTransform,
     customLayoutConfig,
     setCustomLayoutConfig,
+    nextSlide,
+    prevSlide,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | number | null>(null);
@@ -393,12 +395,41 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
           )}
 
           {/* Bottom StreamYard Slide Navigation Pill on Card */}
-          <div className="absolute bottom-1 inset-x-1.5 z-20 flex items-center justify-between bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-white/10 text-[9px]">
-            <span className="font-semibold text-slate-300 truncate max-w-[90px]">{activeMedia.name || "Media"}</span>
-            <div className="flex items-center gap-1 text-slate-400">
-              <span className="hover:text-white px-0.5">‹</span>
-              <span className="hover:text-white px-0.5">›</span>
-            </div>
+          <div className="absolute bottom-1 inset-x-1.5 z-40 flex items-center justify-between bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-white/10 text-[9px] pointer-events-auto">
+            <span className="font-semibold text-slate-300 truncate max-w-[85px]">{activeMedia.name || "Media"}</span>
+            {activeMedia.slides && activeMedia.slides.length > 1 ? (
+              <div className="flex items-center gap-1 text-slate-300" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    prevSlide();
+                  }}
+                  disabled={(activeMedia.currentSlideIndex || 0) <= 0}
+                  className="hover:text-white px-1 rounded hover:bg-white/10 disabled:opacity-30 font-bold"
+                  title="Previous Slide"
+                >
+                  ‹
+                </button>
+                <span className="text-[8px] font-mono text-cyan-300">
+                  {(activeMedia.currentSlideIndex || 0) + 1}/{activeMedia.slides.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    nextSlide();
+                  }}
+                  disabled={(activeMedia.currentSlideIndex || 0) >= activeMedia.slides.length - 1}
+                  className="hover:text-white px-1 rounded hover:bg-white/10 disabled:opacity-30 font-bold"
+                  title="Next Slide"
+                >
+                  ›
+                </button>
+              </div>
+            ) : (
+              <span className="text-[8px] font-mono text-emerald-400 uppercase">{activeMedia.type}</span>
+            )}
           </div>
 
           {/* Hover Remove Pill */}

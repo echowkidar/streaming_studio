@@ -301,6 +301,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [editName, setEditName] = useState("");
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [mediaDropTargetSceneId, setMediaDropTargetSceneId] = useState<string | null>(null);
+  const [isNewSceneDropTarget, setIsNewSceneDropTarget] = useState(false);
+  const [recentlyAddedMediaSceneId, setRecentlyAddedMediaSceneId] = useState<string | null>(null);
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
   const [layoutPickerSceneId, setLayoutPickerSceneId] = useState<string | null>(null);
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -353,11 +356,25 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
   const handleAttachMedia = (sceneId: string, mediaItem: any | null) => {
     const targetScene = scenes.find((s) => s.id === sceneId);
+    const isTargetFullBleed =
+      targetScene?.isStageCropped ??
+      (targetScene?.layout === "cropped" || targetScene?.layout === "podcast");
+
+    const nextTransforms = targetScene?.tileTransforms ? { ...targetScene.tileTransforms } : {};
+    if (mediaItem) {
+      nextTransforms["active-media"] = {
+        ...(nextTransforms["active-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+        fitMode: isTargetFullBleed ? "cover" : (nextTransforms["active-media"]?.fitMode || "contain"),
+      };
+    }
+
     const updates: Partial<StudioScene> = {
       activeMedia: mediaItem,
+      ...(mediaItem ? { tileTransforms: nextTransforms } : {}),
     };
-    if (mediaItem && targetScene && targetScene.layout === "solo") {
-      updates.layout = mediaItem.type === "video" ? "cinema" : "presentation";
+    // Only auto-switch a solo scene to presentation if a slide deck/image is attached
+    if (mediaItem && targetScene && targetScene.layout === "solo" && (mediaItem.type === "pdf" || mediaItem.type === "image")) {
+      updates.layout = "presentation";
     }
     updateScene(sceneId, updates);
 
@@ -365,6 +382,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
       setActiveMedia(mediaItem);
       if (updates.layout) {
         setLayout(updates.layout);
+      }
+      if (mediaItem && useStudioStore.getState().isStageCropped) {
+        useStudioStore.getState().setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: 0 });
       }
     }
     setMediaPickerSceneId(null);
@@ -588,18 +608,75 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     setEditingId(null);
   };
 
+  const isMediaDragEvent = (e: React.DragEvent): boolean => {
+    return (
+      e.dataTransfer.types.includes("application/x-livestudio-media") ||
+      (draggedIdx === null && e.dataTransfer.types.includes("text/plain"))
+    );
+  };
+
+  const extractDroppedMedia = (e: React.DragEvent): any | null => {
+    const raw =
+      e.dataTransfer.getData("application/x-livestudio-media") ||
+      e.dataTransfer.getData("text/plain");
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.type === "livestudio-media" && parsed.media?.id && parsed.media?.url) {
+        return parsed.media;
+      }
+      if (parsed?.id && parsed?.url && parsed?.type) {
+        return parsed;
+      }
+    } catch {
+      // Not JSON (e.g. plain scene index number)
+    }
+    return null;
+  };
+
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIdx(index);
     e.dataTransfer.setData("text/plain", String(index));
   };
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragOver = (e: React.DragEvent, index: number, sceneId?: string) => {
     e.preventDefault();
+    if (isMediaDragEvent(e) && sceneId) {
+      e.dataTransfer.dropEffect = "copy";
+      if (mediaDropTargetSceneId !== sceneId) {
+        setMediaDropTargetSceneId(sceneId);
+      }
+      return;
+    }
     setDragOverIdx(index);
   };
 
-  const handleDrop = (e: React.DragEvent, targetIndex: number) => {
+  const handleDragLeave = (e: React.DragEvent, sceneId?: string) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      if (sceneId && mediaDropTargetSceneId === sceneId) {
+        setMediaDropTargetSceneId(null);
+      }
+      setDragOverIdx(null);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIndex: number, sceneId?: string) => {
     e.preventDefault();
+    e.stopPropagation();
+    setMediaDropTargetSceneId(null);
+
+    const droppedMedia = extractDroppedMedia(e);
+    if (droppedMedia && sceneId) {
+      handleAttachMedia(sceneId, droppedMedia);
+      setRecentlyAddedMediaSceneId(sceneId);
+      setTimeout(() => {
+        setRecentlyAddedMediaSceneId((curr) => (curr === sceneId ? null : curr));
+      }, 2200);
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      return;
+    }
+
     if (draggedIdx !== null && draggedIdx !== targetIndex) {
       reorderScenes(draggedIdx, targetIndex);
     }
@@ -654,19 +731,23 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
       </div>
     );
 
+    const isCroppedScene = Boolean(scene.isStageCropped || layout === "cropped" || layout === "podcast");
+
     // 1. Solo Speaker
     if (layout === "solo") {
       return (
-        <div className="absolute inset-0 p-1 flex items-center justify-center">
-          <div className="w-[88%] h-[88%]">
-            {hasMedia ? renderMediaTile() : renderCameraTile()}
+        <div className={cn("absolute inset-0 flex items-center justify-center", isCroppedScene ? "p-0" : "p-1")}>
+          <div className={isCroppedScene ? "w-full h-full" : "w-[88%] h-[88%]"}>
+            {hasMedia
+              ? renderMediaTile(isCroppedScene ? "rounded-none border-0" : "")
+              : renderCameraTile(undefined, isCroppedScene ? "rounded-none border-0" : "")}
           </div>
         </div>
       );
     }
 
-    // 2. 2-Person Fit (16:9 widescreen boxes)
-    if (layout === "side-by-side" || layout === "fit") {
+    // 2. 2-Person Fit (16:9 widescreen boxes, or full-bleed when isStageCropped is true)
+    if ((layout === "side-by-side" || layout === "fit") && !isCroppedScene) {
       const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center gap-1">
@@ -675,6 +756,30 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           </div>
           <div className="w-[46%] h-[80%]">
             {hasMedia ? (isMediaRight ? renderMediaTile() : renderCameraTile()) : renderCameraTile()}
+          </div>
+        </div>
+      );
+    }
+
+    if ((layout === "side-by-side" || layout === "fit") && isCroppedScene) {
+      const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="w-full h-full flex divide-x divide-white/25 overflow-hidden">
+            <div className="flex-1 h-full">
+              {hasMedia
+                ? isMediaRight
+                  ? renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+                : renderMediaTile("rounded-none border-0")
+                : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
+            </div>
+            <div className="flex-1 h-full">
+              {hasMedia
+                ? isMediaRight
+                  ? renderMediaTile("rounded-none border-0")
+                  : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+                : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
+            </div>
           </div>
         </div>
       );
@@ -1006,16 +1111,45 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         </div>
       </div>
 
-      {/* ─── "+ New scene" Button ──────────────────────────── */}
+      {/* ─── "+ New scene" Button (Also accepts dropped Media to create a new Media Scene) ──────────────────────────── */}
       <div className="p-2.5 pb-2 shrink-0">
         <button
           type="button"
           onClick={handleOpenAddSceneModal}
-          className="w-full py-2 px-3 rounded-lg border border-white/15 hover:border-indigo-500/50 bg-white/5 hover:bg-indigo-600/20 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm group active:scale-95"
-          title="Save current stage layout or create a new scene"
+          onDragOver={(e) => {
+            if (isMediaDragEvent(e)) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              setIsNewSceneDropTarget(true);
+            }
+          }}
+          onDragLeave={() => setIsNewSceneDropTarget(false)}
+          onDrop={(e) => {
+            setIsNewSceneDropTarget(false);
+            const droppedMedia = extractDroppedMedia(e);
+            if (droppedMedia) {
+              e.preventDefault();
+              e.stopPropagation();
+              const created = addScene({
+                layout: droppedMedia.type === "pdf" || droppedMedia.type === "image" ? "presentation" : "solo",
+                activeMedia: droppedMedia,
+              });
+              setRecentlyAddedMediaSceneId(created.id);
+              setTimeout(() => {
+                setRecentlyAddedMediaSceneId((curr) => (curr === created.id ? null : curr));
+              }, 2200);
+            }
+          }}
+          className={cn(
+            "w-full py-2 px-3 rounded-lg border text-white font-medium text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm group active:scale-95",
+            isNewSceneDropTarget
+              ? "border-cyan-400 bg-cyan-500/25 ring-2 ring-cyan-400/50 scale-[1.02]"
+              : "border-white/15 hover:border-indigo-500/50 bg-white/5 hover:bg-indigo-600/20"
+          )}
+          title="Click to create a new scene, or drag & drop media here to create a new media scene"
         >
           <Plus className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
-          <span>New scene</span>
+          <span>{isNewSceneDropTarget ? "Drop to Create Scene" : "New scene"}</span>
         </button>
       </div>
 
@@ -1024,6 +1158,8 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         {scenes.map((scene, index) => {
           const isActive = activeSceneId === scene.id;
           const isDragTarget = dragOverIdx === index;
+          const isMediaDropTarget = mediaDropTargetSceneId === scene.id;
+          const isRecentlyAdded = recentlyAddedMediaSceneId === scene.id;
           const effectiveSceneMedia = scene.activeMedia || (isActive ? activeMedia : null);
 
           return (
@@ -1031,13 +1167,16 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               key={scene.id}
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
-              onDragOver={(e) => handleDragOver(e, index)}
-              onDrop={(e) => handleDrop(e, index)}
+              onDragOver={(e) => handleDragOver(e, index, scene.id)}
+              onDragLeave={(e) => handleDragLeave(e, scene.id)}
+              onDrop={(e) => handleDrop(e, index, scene.id)}
               onClick={() => switchScene(scene.id)}
               className={cn(
                 "group relative rounded-xl border transition-all duration-150 cursor-pointer bg-[#11121d] shadow-md",
                 activeMenuId === scene.id ? "overflow-visible z-30" : "overflow-hidden",
-                isActive
+                isMediaDropTarget
+                  ? "border-cyan-400 ring-2 ring-cyan-400/70 shadow-[0_0_20px_rgba(34,211,238,0.35)] scale-[1.02]"
+                  : isActive
                   ? "border-indigo-500 ring-1 ring-indigo-500/50 shadow-indigo-500/20"
                   : "border-white/10 hover:border-white/25",
                 isDragTarget && "border-cyan-400 scale-[1.02]"
@@ -1069,6 +1208,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   <div className="px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
                     <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
                   </div>
+                  {scene.isStageCropped && scene.layout !== "cropped" && scene.layout !== "podcast" && (
+                    <div
+                      className="px-1 py-0.5 rounded bg-emerald-950/90 backdrop-blur-xs text-[6.5px] font-bold text-emerald-300 border border-emerald-500/40 pointer-events-none shadow-sm"
+                      title="Full Fill: ON (No black bars)"
+                    >
+                      FILL
+                    </div>
+                  )}
                   {(scene.expectedGuestSlots || 0) > 0 && (
                     <div
                       className="px-1 py-0.5 rounded bg-indigo-950/90 backdrop-blur-xs text-[7px] font-bold text-indigo-300 border border-indigo-500/40 pointer-events-none shadow-sm flex items-center gap-0.5"
@@ -1079,6 +1226,24 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                     </div>
                   )}
                 </div>
+
+                {/* Drag-Over Visual Overlay when dragging Media from Media Library */}
+                {isMediaDropTarget && (
+                  <div className="absolute inset-0 z-30 bg-cyan-950/80 backdrop-blur-xs border-2 border-dashed border-cyan-300 flex flex-col items-center justify-center gap-1 text-center p-1 pointer-events-none animate-in fade-in duration-100">
+                    <Clapperboard className="w-4 h-4 text-cyan-300 animate-bounce" />
+                    <span className="text-[9px] font-bold text-white leading-tight">
+                      Drop to Add Media
+                    </span>
+                  </div>
+                )}
+
+                {/* Confirmation Toast Badge after dropping media */}
+                {isRecentlyAdded && !isMediaDropTarget && (
+                  <div className="absolute inset-x-2 top-1/2 -translate-y-1/2 z-30 bg-emerald-600/95 text-white text-[9px] font-bold py-1 px-2 rounded-lg shadow-xl flex items-center justify-center gap-1 pointer-events-none animate-in zoom-in-95 duration-150">
+                    <Check className="w-3 h-3" />
+                    <span>Media Attached!</span>
+                  </div>
+                )}
 
                 {/* Media Label Badge on thumbnail with 1-click Change Media */}
                 {effectiveSceneMedia && (

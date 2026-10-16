@@ -108,8 +108,9 @@ export const StagePreview: React.FC = () => {
     isSceneTransitioning,
   } = useStudioStore();
 
+  const defaultMediaFit: "contain" | "cover" = isStageCropped ? "cover" : "contain";
   const mediaTransform = tileTransforms["active-media"] || {
-    fitMode: "contain",
+    fitMode: defaultMediaFit,
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -117,7 +118,7 @@ export const StagePreview: React.FC = () => {
     flipH: false,
     flipV: false,
   };
-  const mediaFitMode = (mediaTransform.fitMode as "contain" | "cover") || "contain";
+  const mediaFitMode = (mediaTransform.fitMode as "contain" | "cover") || defaultMediaFit;
   const mediaZoom = Math.max(1, mediaTransform.zoom || 1);
   const mediaPanX = mediaTransform.panX || 0;
   const mediaPanY = mediaTransform.panY || 0;
@@ -399,12 +400,17 @@ export const StagePreview: React.FC = () => {
     isStageCropped ||
     activeLayout === "cropped" ||
     activeLayout === "podcast" ||
+    activeLayout === "interview" ||
     activeLayout === "cinema" ||
+    activeLayout === "screen-full" ||
     activeLayout === "solo" ||
     (activeLayout === "custom" &&
       (customLayoutConfig?.mode === "solo" ||
         customLayoutConfig?.mode === "cinema" ||
+        customLayoutConfig?.mode === "cropped" ||
         customLayoutConfig?.mode === "podcast"));
+
+  const [isMediaDragOverStage, setIsMediaDragOverStage] = useState(false);
 
   const isSoloOrCinema =
     activeLayout === "solo" ||
@@ -958,9 +964,12 @@ export const StagePreview: React.FC = () => {
         data-participant-fit={mediaFitMode}
         data-transparent-card={isTransparentCard ? "true" : "false"}
         className={cn(
-          "relative w-full h-full rounded-2xl overflow-hidden flex items-center justify-center group select-none transition-all",
+          "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all",
+          isFullBleedLayout ? "rounded-none" : "rounded-2xl",
           isTransparentCard
             ? "bg-transparent border-0 shadow-none"
+            : isFullBleedLayout
+            ? "bg-black border-0 shadow-none"
             : "bg-black/95 border border-indigo-500/30 shadow-2xl"
         )}
       >
@@ -1259,16 +1268,25 @@ export const StagePreview: React.FC = () => {
               setSelectedParticipantId("active-media");
             }}
             className={cn(
-              "rounded-2xl overflow-visible select-none transition-shadow group/mediatile",
+              "overflow-visible select-none transition-shadow group/mediatile",
+              isFullBleedLayout ? "rounded-none" : "rounded-2xl",
               isMediaSelected
-                ? "ring-2 ring-indigo-500 border-indigo-400 shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer"
-                : mediaTransform.isTransparentBg
-                ? "border-0 hover:ring-1 hover:ring-white/20 cursor-pointer"
+                ? cn(
+                    "ring-2 ring-indigo-500 ring-inset shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer",
+                    !isFullBleedLayout && "border-indigo-400"
+                  )
+                : mediaTransform.isTransparentBg || isFullBleedLayout
+                ? "border-0 cursor-pointer"
                 : "border border-white/10 hover:border-indigo-400/50 cursor-pointer"
             )}
           >
             {/* Inner Media Content */}
-            <div className="w-full h-full rounded-2xl overflow-hidden relative pointer-events-auto">
+            <div
+              className={cn(
+                "w-full h-full overflow-hidden relative pointer-events-auto",
+                isFullBleedLayout ? "rounded-none" : "rounded-2xl"
+              )}
+            >
               {renderMediaTile()}
             </div>
 
@@ -1763,6 +1781,8 @@ export const StagePreview: React.FC = () => {
               : calculatedBounds;
           const isSelected = String(selectedParticipantId) === String(p.id);
           const isThisDragging = activeDragState?.participantId === p.id;
+          const isFloatingPipTile = (bounds.zIndex || 10) >= 25 && bounds.width < 50 && bounds.height < 50;
+          const tileIsFullBleed = isFullBleedLayout && !isFloatingPipTile;
 
           return (
             <div
@@ -1775,7 +1795,7 @@ export const StagePreview: React.FC = () => {
                 height: `${bounds.height}%`,
                 zIndex: isSelected ? 35 : (bounds.zIndex || 10),
                 padding:
-                  activeLayout === "custom" && customLayoutConfig?.gap !== undefined
+                  !tileIsFullBleed && activeLayout === "custom" && customLayoutConfig?.gap !== undefined
                     ? `${customLayoutConfig.gap / 2}px`
                     : undefined,
                 transition: isThisDragging ? "none" : "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -1791,7 +1811,7 @@ export const StagePreview: React.FC = () => {
                 isSelected
                   ? cn(
                       "ring-2 ring-indigo-500",
-                      isFullBleedLayout ? "rounded-none" : "rounded-2xl",
+                      tileIsFullBleed ? "rounded-none ring-inset" : "rounded-2xl",
                       "shadow-[0_0_25px_rgba(99,102,241,0.5)]",
                       isPipMode ? "cursor-move" : "cursor-pointer"
                     )
@@ -1802,7 +1822,7 @@ export const StagePreview: React.FC = () => {
               <div
                 className={cn(
                   "w-full h-full overflow-hidden relative pointer-events-auto transition-all",
-                  isFullBleedLayout
+                  tileIsFullBleed
                     ? isSelected
                       ? "border border-indigo-400 rounded-none bg-[#0c0c14]"
                       : "border-0 rounded-none bg-[#0c0c14]"
@@ -1810,15 +1830,15 @@ export const StagePreview: React.FC = () => {
                         "border rounded-2xl bg-[#0c0c14]",
                         isSelected
                           ? "border-indigo-400"
-                          : "border-white/10 hover:border-indigo-400/50"
+                          : "border-white/15 hover:border-indigo-400/50 shadow-xl"
                       )
                 )}
                 style={{
                   borderRadius:
-                    activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
-                      ? `${customLayoutConfig.borderRadius}px`
-                      : isFullBleedLayout
+                    tileIsFullBleed
                       ? "0px"
+                      : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                      ? `${customLayoutConfig.borderRadius}px`
                       : undefined,
                   boxShadow:
                     activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
@@ -2042,7 +2062,7 @@ export const StagePreview: React.FC = () => {
                     height: `${emptySlotBounds.height}%`,
                     zIndex: 5,
                     padding:
-                      activeLayout === "custom" && customLayoutConfig?.gap !== undefined
+                      !isFullBleedLayout && activeLayout === "custom" && customLayoutConfig?.gap !== undefined
                         ? `${customLayoutConfig.gap / 2}px`
                         : undefined,
                     transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -2052,10 +2072,10 @@ export const StagePreview: React.FC = () => {
                   <div
                     style={{
                       borderRadius:
-                        activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
-                          ? `${customLayoutConfig.borderRadius}px`
-                          : isFullBleedLayout
+                        isFullBleedLayout
                           ? "0px"
+                          : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                          ? `${customLayoutConfig.borderRadius}px`
                           : undefined,
                     }}
                     className={cn(
@@ -2187,7 +2207,77 @@ export const StagePreview: React.FC = () => {
         ref={stageContainerRef}
         id="livestudio-stage-container"
         onClick={() => setSelectedParticipantId(null)}
-        className="relative rounded-2xl overflow-hidden border border-white/10 bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage"
+        onDragOver={(e) => {
+          if (
+            e.dataTransfer.types.includes("application/x-livestudio-media") ||
+            e.dataTransfer.types.includes("text/plain")
+          ) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            if (!isMediaDragOverStage) setIsMediaDragOverStage(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setIsMediaDragOverStage(false);
+          }
+        }}
+        onDrop={(e) => {
+          setIsMediaDragOverStage(false);
+          const rawMedia =
+            e.dataTransfer.getData("application/x-livestudio-media") ||
+            e.dataTransfer.getData("text/plain");
+          if (!rawMedia) return;
+          try {
+            const parsed = JSON.parse(rawMedia);
+            const mediaItem = parsed?.type === "livestudio-media" ? parsed.media : (parsed?.id && parsed?.url ? parsed : null);
+            if (mediaItem && mediaItem.id && mediaItem.url) {
+              e.preventDefault();
+              e.stopPropagation();
+              // Determine target slot if dropped on a multi-slot stage layout
+              if (stageContainerRef.current && totalPlannedSlots >= 1 && !isSoloOrCinema && mediaItem.type !== "audio") {
+                const rect = stageContainerRef.current.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  const pctX = ((e.clientX - rect.left) / rect.width) * 100;
+                  const pctY = ((e.clientY - rect.top) / rect.height) * 100;
+                  if (
+                    activeLayout === "cropped" ||
+                    activeLayout === "podcast" ||
+                    activeLayout === "side-by-side" ||
+                    activeLayout === "fit" ||
+                    activeLayout === "interview"
+                  ) {
+                    setMediaSlotIndex(pctX >= (layoutSplitRatio || 50) ? 1 : 0);
+                  } else if (activeLayout === "stacked" || activeLayout === "presentation") {
+                    setMediaSlotIndex(pctY >= (layoutSplitRatio || 50) ? 1 : 0);
+                  } else {
+                    const totalSlots = totalPlannedSlots + 1;
+                    for (let s = 0; s < totalSlots; s++) {
+                      const sb = getDefaultSlotBounds(activeLayout, s, totalSlots, layoutSplitRatio, customLayoutConfig, isStageCropped);
+                      if (pctX >= sb.x && pctX <= sb.x + sb.width && pctY >= sb.y && pctY <= sb.y + sb.height) {
+                        setMediaSlotIndex(s);
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              setActiveMedia({
+                ...mediaItem,
+                loop: mediaItem.loop ?? true,
+              });
+              if (isStageCropped) {
+                setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: 0 });
+              }
+            }
+          } catch {
+            // ignore non-JSON text drops
+          }
+        }}
+        className={cn(
+          "relative rounded-2xl overflow-hidden border bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage transition-all",
+          isMediaDragOverStage ? "border-cyan-400 ring-2 ring-cyan-400/50" : "border-white/10"
+        )}
         style={{
           width: stageBox ? `${stageBox.width}px` : "100%",
           height: stageBox ? `${stageBox.height}px` : undefined,
@@ -2751,6 +2841,21 @@ export const StagePreview: React.FC = () => {
               </p>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Drag-and-Drop Media Target Overlay on Stage */}
+      {isMediaDragOverStage && (
+        <div className="absolute inset-0 z-50 bg-indigo-950/60 backdrop-blur-xs border-4 border-dashed border-cyan-400 rounded-2xl flex flex-col items-center justify-center gap-2 pointer-events-none animate-in fade-in duration-150">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl">
+            <MonitorUp className="w-6 h-6 animate-bounce" />
+          </div>
+          <span className="text-sm font-bold text-white tracking-wide drop-shadow">
+            Drop Media to Present on Stage & Save to Current Scene
+          </span>
+          <span className="text-[11px] text-cyan-200 font-medium">
+            Release mouse on Left, Right, or any Grid Slot to place media there
+          </span>
         </div>
       )}
 

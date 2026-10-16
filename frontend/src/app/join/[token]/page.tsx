@@ -47,6 +47,9 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const participantBounds = useStudioStore((s) => s.participantBounds) || {};
   const activeLayout = useStudioStore((s) => s.activeLayout) || "side-by-side";
   const activeMedia = useStudioStore((s) => s.activeMedia);
+  const isStageCropped = useStudioStore((s) => s.isStageCropped);
+  const mediaSlotIndex = useStudioStore((s) => s.mediaSlotIndex);
+  const fairUseConfig = useStudioStore((s) => s.fairUseConfig);
   const customLayoutConfig = useStudioStore((s) => s.customLayoutConfig);
   const tileTransforms = useStudioStore((s) => s.tileTransforms) || {};
   const privateMessages = useStudioStore((s) => s.privateMessages);
@@ -1270,7 +1273,8 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                   {/* Desktop / 16:9 Broadcast Stage: On-stage participants with real-time sync of custom layout & bounds */}
                   <div
                     className={cn(
-                      "w-full h-full p-2 relative select-none",
+                      "w-full h-full relative select-none",
+                      isStageCropped || activeLayout === "cropped" || activeLayout === "podcast" ? "p-0" : "p-2",
                       mobileViewMode === "fill" ? "hidden sm:block" : "block"
                     )}
                   >
@@ -1279,12 +1283,22 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                         activeMedia &&
                           (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
                       );
+                      const isFullBleedGuest =
+                        isStageCropped ||
+                        activeLayout === "cropped" ||
+                        activeLayout === "podcast" ||
+                        activeLayout === "interview" ||
+                        activeLayout === "solo" ||
+                        activeLayout === "cinema";
                       const stageLayoutResult = calculateStageLayout(
                         activeLayout,
                         onStageParticipants.length,
                         hasVisualMedia,
                         layoutSplitRatio,
-                        customLayoutConfig
+                        customLayoutConfig,
+                        Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
+                        mediaSlotIndex,
+                        isStageCropped
                       );
 
                       return (
@@ -1297,7 +1311,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                 : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
                             );
                             const mBounds = participantBounds["active-media"] || defaultMediaBounds;
-                            const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || "contain";
+                            const mediaFit = (tileTransforms["active-media"]?.fitMode as any) || (isStageCropped ? "cover" : "contain");
                             const mediaTf = tileTransforms["active-media"];
                             const panX = mediaTf?.panX || 0;
                             const panY = mediaTf?.panY || 0;
@@ -1319,7 +1333,10 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                   zIndex: mBounds.zIndex || 10,
                                   transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
                                 }}
-                                className="rounded-2xl overflow-hidden border border-indigo-500/40 bg-black/95 shadow-2xl flex items-center justify-center relative"
+                                className={cn(
+                                  "overflow-hidden bg-black/95 flex items-center justify-center relative",
+                                  isFullBleedGuest ? "rounded-none border-0" : "rounded-2xl border border-indigo-500/40 shadow-2xl"
+                                )}
                               >
                                 {activeMedia.type === "video" && (
                                   <video
@@ -1365,7 +1382,8 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                               idx,
                               onStageParticipants.length,
                               layoutSplitRatio,
-                              customLayoutConfig
+                              customLayoutConfig,
+                              isStageCropped
                             );
                             const bounds =
                               participantBounds[p.id] ||
@@ -1385,7 +1403,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                             zIndex: bounds.zIndex || 10,
                             transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
                           }}
-                          className="rounded-2xl overflow-hidden border border-white/10"
+                          className={cn(
+                            "overflow-hidden",
+                            isFullBleedGuest && !((bounds.zIndex || 10) >= 25 && bounds.width < 50)
+                              ? "rounded-none border-0"
+                              : "rounded-2xl border border-white/10"
+                          )}
                         >
                           <VideoTrackView
                             id={p.id}
