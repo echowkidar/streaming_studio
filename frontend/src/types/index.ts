@@ -139,11 +139,14 @@ export interface BrandAsset {
   settings?: Record<string, unknown>;
 }
 
+export type BannerStylePreset = "default" | "classic" | "minimal" | "block" | "bubble";
+
 export interface LowerThirdBanner {
   id: string;
   title: string;
   subtitle?: string;
   themeColor?: string;
+  style?: BannerStylePreset;
   isShowing: boolean;
   isTicker?: boolean;
 }
@@ -213,4 +216,3 @@ export interface StageOverlayAsset {
   isShowing: boolean;
   showBackdrop?: boolean;
 }
-

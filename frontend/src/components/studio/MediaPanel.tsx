@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/Badge";
 import { useStudioStore, MediaFileItem, persistStudioLayout } from "@/stores/studio.store";
 import { StageOverlayAsset } from "@/types";
 import { cn } from "@/lib/utils";
+import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 
 interface MediaPanelProps {
   studioId?: string;
@@ -43,6 +44,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [autoRepeat, setAutoRepeat] = useState(true);
+  const [isSlideCreatorOpen, setIsSlideCreatorOpen] = useState(false);
   const [draggingMediaId, setDraggingMediaId] = useState<string | null>(null);
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
@@ -459,6 +461,16 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
             <span>Repeat</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setIsSlideCreatorOpen(true)}
+            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white flex items-center gap-1 shadow-sm transition-all"
+            title="Create 1080p Slide Deck in App with Speaker Notes"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Slides</span>
+          </button>
+
           <Button
             variant="primary"
             size="sm"
@@ -713,6 +725,14 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         <span>VPS Disk Protection Active</span>
         <span className="text-emerald-400 font-mono">Quota Enforced</span>
       </div>
+
+      <SlideDeckCreatorModal
+        isOpen={isSlideCreatorOpen}
+        onClose={() => setIsSlideCreatorOpen(false)}
+        onDeckCreated={(deck) => {
+          setMediaList((prev) => [deck, ...prev]);
+        }}
+      />
     </div>
   );
 };

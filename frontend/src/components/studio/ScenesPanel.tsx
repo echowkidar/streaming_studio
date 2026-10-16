@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout } from "@/stores/studio.store";
+import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -306,6 +307,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [recentlyAddedMediaSceneId, setRecentlyAddedMediaSceneId] = useState<string | null>(null);
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
   const [layoutPickerSceneId, setLayoutPickerSceneId] = useState<string | null>(null);
+  const [slideCreatorSceneId, setSlideCreatorSceneId] = useState<string | null>(null);
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleSelectSceneLayout = (sceneId: string, layout: StudioLayout) => {
@@ -1659,6 +1661,18 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                     <button
                       type="button"
                       onClick={() => {
+                        setSlideCreatorSceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 font-medium"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Create Slide Deck in App</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
                         handleStartRename(scene);
                         setActiveMenuId(null);
                       }}
@@ -1999,6 +2013,20 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               </div>
             </div>
 
+            {/* Create Slide Deck in App Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const sId = mediaPickerSceneId;
+                setMediaPickerSceneId(null);
+                setSlideCreatorSceneId(sId);
+              }}
+              className="w-full mt-2 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-600/30 to-indigo-600/30 border border-cyan-400/50 hover:border-cyan-400 text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
+            >
+              <Layers className="w-4 h-4 text-cyan-400" />
+              <span>Create Custom Slide Deck in App</span>
+            </button>
+
             {/* Upload from Computer */}
             <input
               ref={mediaFileInputRef}
@@ -2228,6 +2256,12 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         </div>,
         document.body
       )}
+
+      <SlideDeckCreatorModal
+        isOpen={Boolean(slideCreatorSceneId)}
+        onClose={() => setSlideCreatorSceneId(null)}
+        targetSceneId={slideCreatorSceneId}
+      />
     </aside>
   );
 };

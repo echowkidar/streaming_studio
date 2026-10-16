@@ -97,7 +97,8 @@ export class StudioStageRecorder {
           ? document.getElementById('livestudio-stage-container')
           : null);
 
-      // 1. Ensure stage broadcaster compositing is running
+      // 1. Ensure stage broadcaster compositing is running and mark local recorder active
+      stageBroadcaster.setLocalRecordingActive(true);
       let stream = stageBroadcaster.getCompositeStream();
 
       if (!stream || stream.getVideoTracks().length === 0) {
@@ -307,6 +308,7 @@ export class StudioStageRecorder {
   }
 
   private cleanup() {
+    stageBroadcaster.setLocalRecordingActive(false);
     this.isRecording = false;
     this.isPaused = false;
     if (this.timerInterval) {

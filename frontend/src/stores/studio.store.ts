@@ -89,6 +89,8 @@ export interface FairUseConfig {
   autoAudioDucking: boolean;
   /** Target media volume (0-100) while someone is speaking */
   duckingVolumePct: number;
+  /** Dynamic toggle to allow host to temporarily bypass ducking */
+  duckingActive?: boolean;
   /** Applies subtle scale/contrast/frame transform to avoid raw visual hash match */
   visualTransformFilter: boolean;
   /** Mirrors video horizontally in canvas output */
@@ -104,6 +106,11 @@ export interface FairUseConfig {
   badgeText: string;
   /** Dynamic procedural film-grain / micro-noise layer mutating pixel hashes */
   filmGrainOverlay: boolean;
+  grainIntensity?: "random" | "light" | "medium" | "strong";
+  /** Subtle zoom breathing effect (1.00x-1.04x) defeating DCT hash match */
+  isBreathingEnabled?: boolean;
+  /** Enable audio fair-use spectral transformation on MP3/audio files */
+  enableAudioFairUse?: boolean;
   /** Purani movies jaisi random bareek vertical scratches & traveling lines */
   vintageLinesOverlay?: boolean;
   vintageLinesIntensity?: "light" | "medium" | "strong";
@@ -202,6 +209,9 @@ export interface LogoConfig {
   isTransparentBg: boolean;
   fontSize: "small" | "medium" | "large";
   position?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  mode?: "text" | "image" | "both";
+  imageUrl?: string;
+  heightPx?: number; // 24 to 88
 }
 
 export interface ChromaKeyConfig {
@@ -304,6 +314,9 @@ interface StudioState {
   setBackground: (url: string | null, type?: "image" | "video") => void;
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
+  bannerPresets: LowerThirdBanner[];
+  addBannerPreset: (preset: LowerThirdBanner) => void;
+  removeBannerPreset: (id: string) => void;
   setTicker: (text: string, show: boolean) => void;
 
   // Stage Live Overlay & Floating Assets (StreamYard parity)
@@ -709,6 +722,7 @@ export interface SavedStudioLayoutState {
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
   commentConfig?: CommentConfig;
+  bannerPresets?: LowerThirdBanner[];
   scenes?: StudioScene[];
   activeSceneId?: string | null;
   isScenesPanelOpen?: boolean;
@@ -1079,6 +1093,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         isTransparentBg: false,
         fontSize: "medium",
         position: "top-right",
+        mode: "text",
+        imageUrl: "",
+        heightPx: 42,
       },
       showLogo: saved.showLogo ?? true,
       logoPosition: saved.logoPosition || "top-right",
@@ -1247,6 +1264,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     enabled: true,
     enforceReactionPiP: true,
     autoAudioDucking: true,
+    duckingActive: true,
     duckingVolumePct: 18,
     visualTransformFilter: true,
     mirrorMediaVideo: false,
@@ -1256,6 +1274,9 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     showFairUseBadge: true,
     badgeText: "LIVE COMMENTARY & REVIEW • FAIR USE",
     filmGrainOverlay: true,
+    grainIntensity: "random",
+    isBreathingEnabled: true,
+    enableAudioFairUse: true,
     vintageLinesOverlay: true, // Default Old-Movie Bareek Lines ON!
     vintageLinesIntensity: "medium",
     idleMediaGuardSec: 60,
@@ -1853,6 +1874,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     bgOpacity: 75,
     isTransparentBg: false,
     fontSize: "medium",
+    position: "top-right",
+    mode: "text",
+    imageUrl: "",
+    heightPx: 42,
     ...(savedLayout.logoConfig || {}),
   },
   setLogoConfig: (updates) =>
@@ -1950,6 +1975,52 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       );
       persistStudioLayout({ activeBanner: banner, scenes: nextScenes });
       return { activeBanner: banner, scenes: nextScenes };
+    }),
+  bannerPresets: savedLayout.bannerPresets || [
+    {
+      id: "preset-breaking-news",
+      title: "BREAKING NEWS",
+      subtitle: "Live coverage and real-time updates",
+      themeColor: "#ef4444",
+      style: "block",
+      isShowing: false,
+    },
+    {
+      id: "preset-welcome",
+      title: "WELCOME TO THE STREAM",
+      subtitle: "Drop your questions & comments in the chat!",
+      themeColor: "#3b82f6",
+      style: "classic",
+      isShowing: false,
+    },
+    {
+      id: "preset-minimal-topic",
+      title: "TODAY'S SPECIAL GUEST",
+      subtitle: "Deep-dive discussion & Q&A session",
+      themeColor: "#8b5cf6",
+      style: "minimal",
+      isShowing: false,
+    },
+    {
+      id: "preset-social",
+      title: "FOLLOW US @STREAMSTUDIO",
+      subtitle: "Subscribe for weekly technical live deep-dives",
+      themeColor: "#10b981",
+      style: "bubble",
+      isShowing: false,
+    },
+  ],
+  addBannerPreset: (preset) =>
+    set((s) => {
+      const next = [preset, ...s.bannerPresets.filter((b) => b.id !== preset.id)];
+      persistStudioLayout({ bannerPresets: next });
+      return { bannerPresets: next };
+    }),
+  removeBannerPreset: (id) =>
+    set((s) => {
+      const next = s.bannerPresets.filter((b) => b.id !== id);
+      persistStudioLayout({ bannerPresets: next });
+      return { bannerPresets: next };
     }),
   setTicker: (text, show) => {
     persistStudioLayout({ tickerText: text, showTicker: show });

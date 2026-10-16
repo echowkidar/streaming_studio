@@ -152,7 +152,14 @@ export const BrandPanel: React.FC = () => {
     setLogoConfig,
     chromaKeyConfig,
     setChromaKeyConfig,
+    bannerPresets,
+    addBannerPreset,
+    removeBannerPreset,
   } = useStudioStore();
+
+  const [activeCategory, setActiveCategory] = useState<"all" | "brand" | "banners" | "overlays" | "backgrounds" | "chroma">("all");
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const fullFrameFileInputRef = useRef<HTMLInputElement>(null);
 
   const [logoTextInput, setLogoTextInput] = useState(logoUrl || "LIVESTUDIO");
   const [customBgInput, setCustomBgInput] = useState("");
@@ -625,8 +632,35 @@ export const BrandPanel: React.FC = () => {
 
   return (
     <div className="h-full overflow-y-auto p-4 space-y-6 custom-scrollbar text-xs">
-      {/* 1. Brand Color Theme */}
-      <div className="space-y-3">
+      {/* StreamYard Pro Category Filter Bar (Sticky) */}
+      <div className="sticky top-0 z-20 -mx-4 -mt-4 px-4 py-2.5 bg-[#0b0b14]/95 backdrop-blur-md border-b border-white/10 flex items-center gap-1.5 overflow-x-auto no-scrollbar shadow-lg">
+        {[
+          { id: "all", label: "All" },
+          { id: "brand", label: "Brand / Logo" },
+          { id: "banners", label: "Banners" },
+          { id: "overlays", label: "Overlays" },
+          { id: "backgrounds", label: "Stage Bg" },
+          { id: "chroma", label: "Chroma" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveCategory(tab.id as any)}
+            className={cn(
+              "px-2.5 py-1 rounded-md text-[11px] font-medium transition-all whitespace-nowrap",
+              activeCategory === tab.id
+                ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/30"
+                : "bg-white/5 text-slate-400 hover:text-white hover:bg-white/10"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 1. Brand Color Theme & 2. Watermark Logo */}
+      {(activeCategory === "all" || activeCategory === "brand") && (
+        <>
+          <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
             <Palette className="w-3.5 h-3.5 text-indigo-400" />
@@ -736,7 +770,98 @@ export const BrandPanel: React.FC = () => {
         </div>
 
         <div className="space-y-2.5">
-          {/* Watermark Text Input */}
+          {/* Logo Mode Switcher (Text Badge / Image PNG / Both) */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400 font-medium">Logo Display Mode</span>
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-black/40 rounded-lg border border-white/5">
+              {[
+                { id: "text", label: "Text Badge" },
+                { id: "image", label: "Image (PNG)" },
+                { id: "both", label: "Both" },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setLogoConfig({ mode: m.id as any })}
+                  className={cn(
+                    "py-1 rounded text-[10px] font-medium transition-all text-center",
+                    (logoConfig?.mode || "text") === m.id
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Logo Image Upload (when mode is image or both) */}
+          {((logoConfig?.mode || "text") === "image" || (logoConfig?.mode || "text") === "both") && (
+            <div className="space-y-2 p-2.5 rounded-xl bg-black/40 border border-white/5">
+              <span className="text-[10px] text-slate-300 font-medium">Custom Logo Image (PNG / SVG)</span>
+              {logoConfig?.imageUrl ? (
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-24 bg-black/60 rounded-lg border border-white/10 p-1 flex items-center justify-center overflow-hidden">
+                    <img src={logoConfig.imageUrl} alt="Logo preview" className="max-h-full max-w-full object-contain" />
+                  </div>
+                  <div className="flex flex-col gap-1 flex-1">
+                    <button
+                      onClick={() => logoFileInputRef.current?.click()}
+                      className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-white text-[10px] hover:bg-white/10 text-center"
+                    >
+                      Change Image
+                    </button>
+                    <button
+                      onClick={() => setLogoConfig({ imageUrl: "" })}
+                      className="px-2.5 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] hover:bg-red-500/20 text-center"
+                    >
+                      Remove Image
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => logoFileInputRef.current?.click()}
+                  className="w-full py-3 rounded-lg border border-dashed border-white/20 bg-white/5 hover:bg-white/10 flex flex-col items-center justify-center gap-1 text-slate-300 transition-colors"
+                >
+                  <Upload className="w-4 h-4 text-indigo-400" />
+                  <span className="text-[11px] font-medium">Upload Transparent PNG/SVG</span>
+                  <span className="text-[9px] text-slate-500">Transparent PNG/SVG recommended</span>
+                </button>
+              )}
+              <input
+                ref={logoFileInputRef}
+                type="file"
+                accept="image/png,image/svg+xml,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const url = URL.createObjectURL(file);
+                  setLogoConfig({ imageUrl: url, mode: "image" });
+                }}
+              />
+
+              {/* Logo Height Slider */}
+              <div className="space-y-1 pt-1.5 border-t border-white/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">Logo Height</span>
+                  <span className="text-[10px] font-mono text-indigo-400 font-semibold">{logoConfig?.heightPx || 42}px</span>
+                </div>
+                <input
+                  type="range"
+                  min="24"
+                  max="88"
+                  value={logoConfig?.heightPx || 42}
+                  onChange={(e) => setLogoConfig({ heightPx: Number(e.target.value) })}
+                  className="w-full accent-indigo-500 cursor-pointer h-1.5 bg-white/10 rounded-lg"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Watermark Text Input (when mode is text or both) */}
+          {((logoConfig?.mode || "text") !== "image") && (
           <div className="space-y-1">
             <span className="text-[10px] text-slate-400">Logo / Brand Text</span>
             <input
@@ -751,6 +876,7 @@ export const BrandPanel: React.FC = () => {
               className="w-full h-8 px-3 rounded-lg bg-surface border border-white/10 text-white font-mono uppercase text-xs focus:border-indigo-500 outline-none"
             />
           </div>
+          )}
 
           {/* Text Color Selection */}
           <div className="space-y-1">
@@ -970,8 +1096,11 @@ export const BrandPanel: React.FC = () => {
           </div>
         </div>
       </div>
+      </>
+      )}
 
       {/* 3. Stage Virtual Backgrounds (Images & Continuous 1-2 Min Looping Videos) */}
+      {(activeCategory === "all" || activeCategory === "backgrounds") && (
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
@@ -1362,8 +1491,10 @@ export const BrandPanel: React.FC = () => {
           </Button>
         </div>
       </div>
+      )}
 
       {/* 4. Live Stage Overlays & Floating Media (StreamYard Parity) */}
+      {(activeCategory === "all" || activeCategory === "overlays") && (
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
@@ -1394,6 +1525,49 @@ export const BrandPanel: React.FC = () => {
               </button>
             </div>
           )}
+        </div>
+
+        {/* Full-Frame 16:9 Transparent PNG Frame (StreamYard Parity) */}
+        <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-300">16:9 Full-Frame Broadcast Frame</span>
+            {activeOverlayUrl && (
+              <button
+                onClick={() => setOverlay(null)}
+                className="text-[9px] text-rose-400 hover:text-rose-300 font-semibold"
+              >
+                Clear Frame
+              </button>
+            )}
+          </div>
+          {activeOverlayUrl ? (
+            <div className="relative rounded-lg overflow-hidden border border-indigo-500/40 bg-black aspect-video flex items-center justify-center">
+              <img src={activeOverlayUrl} alt="Active 16:9 Frame" className="w-full h-full object-contain" />
+              <div className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-emerald-500 text-white text-[8px] font-bold">
+                LIVE FRAME
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => fullFrameFileInputRef.current?.click()}
+              className="w-full py-2.5 rounded-lg border border-dashed border-white/20 bg-white/5 hover:bg-white/10 flex items-center justify-center gap-2 text-slate-300 transition-colors"
+            >
+              <Upload className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-[10px] font-medium">+ Upload 16:9 Frame (1920x1080 PNG)</span>
+            </button>
+          )}
+          <input
+            ref={fullFrameFileInputRef}
+            type="file"
+            accept="image/png,image/webp,image/svg+xml"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const url = URL.createObjectURL(file);
+              setOverlay(url);
+            }}
+          />
         </div>
 
         {/* Hidden File Input for Overlay Upload */}
@@ -1792,9 +1966,12 @@ export const BrandPanel: React.FC = () => {
           )}
         </div>
       </div>
+      )}
 
-      {/* 5. Lower-Third Banners */}
-      <div className="space-y-3 pt-3 border-t border-white/5">
+      {/* 5. Lower-Third Banners & News Ticker */}
+      {(activeCategory === "all" || activeCategory === "banners") && (
+        <>
+          <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
             <LayoutTemplate className="w-3.5 h-3.5 text-indigo-400" />
@@ -1817,39 +1994,122 @@ export const BrandPanel: React.FC = () => {
         <div className="space-y-1.5">
           <span className="text-[10px] text-slate-400">Quick Presets (Click to Show / Hide)</span>
           <div className="space-y-1">
-            {lowerThirdPresets.map((preset, idx) => {
+            {bannerPresets.map((preset) => {
               const isThisActive = activeBanner?.title === preset.title && activeBanner?.isShowing;
               return (
                 <div
-                  key={idx}
-                  onClick={() => handleApplyPreset(preset)}
+                  key={preset.id}
                   className={cn(
-                    "p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all",
+                    "p-2 rounded-xl border flex items-center justify-between transition-all",
                     isThisActive
                       ? "border-indigo-500 bg-indigo-500/15 text-white shadow-md ring-1 ring-indigo-500/30"
                       : "border-white/5 bg-surface hover:border-white/15 text-slate-300"
                   )}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-1.5 h-6 rounded-full shrink-0" style={{ backgroundColor: preset.color }} />
+                  <div
+                    onClick={() => {
+                      if (isThisActive) {
+                        setBanner(null);
+                      } else {
+                        setBanner({
+                          id: preset.id,
+                          title: preset.title,
+                          subtitle: preset.subtitle,
+                          themeColor: preset.themeColor || activeThemeColor,
+                          style: preset.style || "classic",
+                          isShowing: true,
+                        });
+                        setBannerTitle(preset.title);
+                        if (preset.subtitle) setBannerSubtitle(preset.subtitle);
+                      }
+                    }}
+                    className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                  >
+                    <div
+                      className="w-1.5 h-6 rounded-full shrink-0"
+                      style={{ backgroundColor: preset.themeColor || activeThemeColor }}
+                    />
                     <div className="min-w-0">
-                      <div className="font-semibold text-[11px] truncate">{preset.title}</div>
+                      <div className="font-semibold text-[11px] truncate flex items-center gap-1.5">
+                        <span>{preset.title}</span>
+                        {preset.style && (
+                          <span className="text-[8px] font-mono uppercase px-1 py-0.2 rounded bg-white/10 text-slate-400">
+                            {preset.style}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[9px] text-slate-400 truncate">{preset.subtitle}</div>
                     </div>
                   </div>
-                  <span
-                    className={cn(
-                      "text-[9px] font-bold uppercase px-2 py-0.5 rounded transition-colors",
-                      isThisActive
-                        ? "bg-rose-500/25 text-rose-300 border border-rose-500/40"
-                        : "bg-white/5 text-indigo-400 hover:bg-white/10"
-                    )}
-                  >
-                    {isThisActive ? "Hide (Live)" : "Show"}
-                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => {
+                        if (isThisActive) {
+                          setBanner(null);
+                        } else {
+                          setBanner({
+                            id: preset.id,
+                            title: preset.title,
+                            subtitle: preset.subtitle,
+                            themeColor: preset.themeColor || activeThemeColor,
+                            style: preset.style || "classic",
+                            isShowing: true,
+                          });
+                          setBannerTitle(preset.title);
+                          if (preset.subtitle) setBannerSubtitle(preset.subtitle);
+                        }
+                      }}
+                      className={cn(
+                        "text-[9px] font-bold uppercase px-2 py-0.5 rounded transition-colors",
+                        isThisActive
+                          ? "bg-rose-500/25 text-rose-300 border border-rose-500/40"
+                          : "bg-white/5 text-indigo-400 hover:bg-white/10"
+                      )}
+                    >
+                      {isThisActive ? "Hide" : "Show"}
+                    </button>
+                    <button
+                      onClick={() => removeBannerPreset(preset.id)}
+                      className="p-1 text-slate-500 hover:text-red-400 transition-colors"
+                      title="Delete preset"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Banner Visual Style Selector */}
+        <div className="space-y-1.5 pt-1">
+          <span className="text-[10px] text-slate-400 font-medium">Banner Visual Style</span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[
+              { id: "classic", name: "Classic", desc: "Rounded card + accent bar" },
+              { id: "minimal", name: "Minimal", desc: "Clean translucent underline" },
+              { id: "block", name: "Block Tag", desc: "Bold solid theme banner" },
+              { id: "bubble", name: "Bubble", desc: "Modern pill capsule" },
+            ].map((st) => (
+              <button
+                key={st.id}
+                onClick={() => {
+                  if (activeBanner?.isShowing) {
+                    setBanner({ ...activeBanner, style: st.id as any });
+                  }
+                }}
+                className={cn(
+                  "p-2 rounded-lg border text-left transition-all",
+                  (activeBanner?.style || "classic") === st.id
+                    ? "border-indigo-500 bg-indigo-500/20 text-white shadow-sm ring-1 ring-indigo-500/40"
+                    : "border-white/5 bg-black/30 hover:border-white/20 text-slate-400"
+                )}
+              >
+                <div className="font-semibold text-[11px] text-slate-200">{st.name}</div>
+                <div className="text-[9px] text-slate-500">{st.desc}</div>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -1891,17 +2151,59 @@ export const BrandPanel: React.FC = () => {
                 >
                   Update
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-xs h-8 px-2.5 flex items-center gap-1"
+                  onClick={() => {
+                    if (!bannerTitle.trim()) return;
+                    addBannerPreset({
+                      id: "custom-" + Date.now(),
+                      title: bannerTitle,
+                      subtitle: bannerSubtitle,
+                      themeColor: activeThemeColor,
+                      style: activeBanner?.style || "classic",
+                      isShowing: false,
+                    });
+                  }}
+                  title="Save custom headline into Quick Presets list"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Save
+                </Button>
               </>
             ) : (
-              <Button
-                variant="primary"
-                size="sm"
-                className="w-full text-xs h-8"
-                onClick={handleUpdateBanner}
-              >
-                <Eye className="w-3.5 h-3.5 mr-1.5" />
-                Show on Stage
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="flex-1 text-xs h-8"
+                  onClick={handleUpdateBanner}
+                >
+                  <Eye className="w-3.5 h-3.5 mr-1.5" />
+                  Show on Stage
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="text-xs h-8 px-2.5 flex items-center gap-1"
+                  onClick={() => {
+                    if (!bannerTitle.trim()) return;
+                    addBannerPreset({
+                      id: "custom-" + Date.now(),
+                      title: bannerTitle,
+                      subtitle: bannerSubtitle,
+                      themeColor: activeThemeColor,
+                      style: activeBanner?.style || "classic",
+                      isShowing: false,
+                    });
+                  }}
+                  title="Save custom headline into Quick Presets list"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Save Preset
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -2161,8 +2463,11 @@ export const BrandPanel: React.FC = () => {
           Update & Push Ticker Live
         </Button>
       </div>
+      </>
+      )}
 
       {/* 6. Chroma Key (Green Screen) StreamYard Parity */}
+      {(activeCategory === "all" || activeCategory === "chroma") && (
       <div className="space-y-3 pt-3 border-t border-white/5">
         <div className="flex items-center justify-between">
           <h4 className="font-semibold text-slate-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
@@ -2422,6 +2727,7 @@ export const BrandPanel: React.FC = () => {
           )}
         </div>
       </div>
+      )}
       {/* Hidden File Input for Modal Upload */}
       <input
         ref={modalFileInputRef}

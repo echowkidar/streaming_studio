@@ -38,6 +38,9 @@ import {
   ShieldAlert,
   MonitorUp,
   Trash2,
+  Play,
+  Pause,
+  RotateCw,
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
@@ -140,6 +143,153 @@ export const StagePreview: React.FC = () => {
   React.useEffect(() => {
     setMediaLoadError(false);
   }, [activeMedia?.id, activeMedia?.url]);
+
+  // Media Transport state for active stage video
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
+  const [videoSpeed, setVideoSpeed] = useState(1.0);
+
+  // Media Transport state for active background audio
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(true);
+  const [audioSpeed, setAudioSpeed] = useState(1.0);
+
+  const formatMediaTime = (sec: number): string => {
+    if (isNaN(sec) || sec < 0) return "0:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  useEffect(() => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!videoEl) return;
+    const updateTime = () => setVideoCurrentTime(videoEl.currentTime);
+    const updateDuration = () => setVideoDuration(videoEl.duration || 0);
+    const onPlay = () => setIsVideoPlaying(true);
+    const onPause = () => setIsVideoPlaying(false);
+    const onRate = () => setVideoSpeed(videoEl.playbackRate);
+
+    videoEl.addEventListener("timeupdate", updateTime);
+    videoEl.addEventListener("durationchange", updateDuration);
+    videoEl.addEventListener("loadedmetadata", updateDuration);
+    videoEl.addEventListener("play", onPlay);
+    videoEl.addEventListener("pause", onPause);
+    videoEl.addEventListener("ratechange", onRate);
+
+    setIsVideoPlaying(!videoEl.paused);
+    setVideoCurrentTime(videoEl.currentTime || 0);
+    setVideoDuration(videoEl.duration || 0);
+    setVideoSpeed(videoEl.playbackRate || 1.0);
+
+    return () => {
+      videoEl.removeEventListener("timeupdate", updateTime);
+      videoEl.removeEventListener("durationchange", updateDuration);
+      videoEl.removeEventListener("loadedmetadata", updateDuration);
+      videoEl.removeEventListener("play", onPlay);
+      videoEl.removeEventListener("pause", onPause);
+      videoEl.removeEventListener("ratechange", onRate);
+    };
+  }, [activeMedia?.id, activeMedia?.url]);
+
+  useEffect(() => {
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (!audioEl) return;
+    const updateTime = () => setAudioCurrentTime(audioEl.currentTime);
+    const updateDuration = () => setAudioDuration(audioEl.duration || 0);
+    const onPlay = () => setIsAudioPlaying(true);
+    const onPause = () => setIsAudioPlaying(false);
+    const onRate = () => setAudioSpeed(audioEl.playbackRate);
+
+    audioEl.addEventListener("timeupdate", updateTime);
+    audioEl.addEventListener("durationchange", updateDuration);
+    audioEl.addEventListener("loadedmetadata", updateDuration);
+    audioEl.addEventListener("play", onPlay);
+    audioEl.addEventListener("pause", onPause);
+    audioEl.addEventListener("ratechange", onRate);
+
+    setIsAudioPlaying(!audioEl.paused);
+    setAudioCurrentTime(audioEl.currentTime || 0);
+    setAudioDuration(audioEl.duration || 0);
+    setAudioSpeed(audioEl.playbackRate || 1.0);
+
+    return () => {
+      audioEl.removeEventListener("timeupdate", updateTime);
+      audioEl.removeEventListener("durationchange", updateDuration);
+      audioEl.removeEventListener("loadedmetadata", updateDuration);
+      audioEl.removeEventListener("play", onPlay);
+      audioEl.removeEventListener("pause", onPause);
+      audioEl.removeEventListener("ratechange", onRate);
+    };
+  }, [activeMedia?.id, activeMedia?.url]);
+
+  const handleTogglePlayVideo = () => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!videoEl) return;
+    if (videoEl.paused) {
+      videoEl.play().catch(() => {});
+      setIsVideoPlaying(true);
+    } else {
+      videoEl.pause();
+      setIsVideoPlaying(false);
+    }
+  };
+
+  const handleSeekVideo = (time: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!videoEl) return;
+    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, time));
+    setVideoCurrentTime(videoEl.currentTime);
+  };
+
+  const handleSkipVideo = (deltaSec: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!videoEl) return;
+    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, videoEl.currentTime + deltaSec));
+    setVideoCurrentTime(videoEl.currentTime);
+  };
+
+  const handleChangeVideoSpeed = (rate: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (!videoEl) return;
+    videoEl.playbackRate = rate;
+    setVideoSpeed(rate);
+  };
+
+  const handleTogglePlayAudio = () => {
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (!audioEl) return;
+    if (audioEl.paused) {
+      audioEl.play().catch(() => {});
+      setIsAudioPlaying(true);
+    } else {
+      audioEl.pause();
+      setIsAudioPlaying(false);
+    }
+  };
+
+  const handleSeekAudio = (time: number) => {
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (!audioEl) return;
+    audioEl.currentTime = Math.max(0, Math.min(audioEl.duration || 0, time));
+    setAudioCurrentTime(audioEl.currentTime);
+  };
+
+  const handleSkipAudio = (deltaSec: number) => {
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (!audioEl) return;
+    audioEl.currentTime = Math.max(0, Math.min(audioEl.duration || 0, audioEl.currentTime + deltaSec));
+    setAudioCurrentTime(audioEl.currentTime);
+  };
+
+  const handleChangeAudioSpeed = (rate: number) => {
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (!audioEl) return;
+    audioEl.playbackRate = rate;
+    setAudioSpeed(rate);
+  };
 
   const handleToggleMediaCrop = () => {
     if (mediaFitMode === "contain") {
@@ -290,31 +440,42 @@ export const StagePreview: React.FC = () => {
     setTileTransform("active-media", { panY: nextPanY });
   };
 
-  // Sync active media video & audio elements with store isMuted and volume
+  // Sync active media video & audio elements with store isMuted and volume (clamped to 0.0-1.0 for HTML elements)
   React.useEffect(() => {
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (videoEl && activeMedia) {
       videoEl.muted = Boolean(activeMedia.isMuted);
       if (typeof activeMedia.volume === "number") {
-        videoEl.volume = activeMedia.volume;
+        videoEl.volume = Math.min(1, Math.max(0, activeMedia.volume > 1 ? activeMedia.volume / 100 : activeMedia.volume));
       }
     }
     const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
     if (audioEl && activeMedia) {
       audioEl.muted = Boolean(activeMedia.isMuted);
       if (typeof activeMedia.volume === "number") {
-        audioEl.volume = activeMedia.volume;
+        audioEl.volume = Math.min(1, Math.max(0, activeMedia.volume > 1 ? activeMedia.volume / 100 : activeMedia.volume));
       }
     }
   }, [activeMedia?.isMuted, activeMedia?.volume]);
 
-  // Enforce Fair-Use Speed & 8-12s Random Jerk/Pause even during local Studio Preview
+  // Enforce Fair-Use Speed, Unlinked Pitch & 8-12s Random Jerk/Pause even during local Studio Preview
   useEffect(() => {
-    if (!activeMedia || activeMedia.type !== "video" || !fairUseConfig?.enabled) return;
+    if (!activeMedia || !fairUseConfig?.enabled) return;
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (videoEl) {
       videoEl.playbackRate = fairUseConfig.playbackRate || 1.04;
+      (videoEl as any).preservesPitch = false;
+      (videoEl as any).mozPreservesPitch = false;
+      (videoEl as any).webkitPreservesPitch = false;
     }
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (audioEl) {
+      audioEl.playbackRate = fairUseConfig.playbackRate || 1.04;
+      (audioEl as any).preservesPitch = false;
+      (audioEl as any).mozPreservesPitch = false;
+      (audioEl as any).webkitPreservesPitch = false;
+    }
+    if (activeMedia.type !== "video") return;
     if (!fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
 
     let timer: NodeJS.Timeout;
@@ -1017,7 +1178,7 @@ export const StagePreview: React.FC = () => {
               id="livestudio-active-media-video"
               src={activeMedia.url}
               autoPlay
-              controls={mediaFitMode === "contain" && mediaZoom === 1}
+              controls={false}
               playsInline
               loop={activeMedia.loop ?? true}
               muted={activeMedia.isMuted ?? false}
@@ -1030,7 +1191,7 @@ export const StagePreview: React.FC = () => {
                   mediaZoom > 1 ? `scale(${mediaZoom})` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: "center center",
+                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
@@ -1052,7 +1213,7 @@ export const StagePreview: React.FC = () => {
                   mediaZoom > 1 ? `scale(${mediaZoom})` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: "center center",
+                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
@@ -1193,6 +1354,130 @@ export const StagePreview: React.FC = () => {
             <p className="text-xs text-slate-200 leading-relaxed font-sans">
               {activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0]}
             </p>
+          </div>
+        )}
+
+        {/* Custom Broadcast Media Transport Bar for Video (Overlayed at bottom of video tile in all Fit/Cropped/Zoom modes) */}
+        {activeMedia.type === "video" && (
+          <div
+            className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            {/* Play/Pause */}
+            <button
+              type="button"
+              onClick={handleTogglePlayVideo}
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+              title={isVideoPlaying ? "Pause Video" : "Play Video"}
+            >
+              {isVideoPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+            </button>
+
+            {/* Skip -10s */}
+            <button
+              type="button"
+              onClick={() => handleSkipVideo(-10)}
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+              title="Skip back 10 seconds"
+            >
+              -10s
+            </button>
+
+            {/* Current Time / Total Duration */}
+            <span className="text-[10px] font-mono text-slate-300 min-w-[65px] text-center select-none">
+              {formatMediaTime(videoCurrentTime)} / {formatMediaTime(videoDuration)}
+            </span>
+
+            {/* Interactive Timeline Seekbar */}
+            <input
+              type="range"
+              min="0"
+              max={videoDuration || 100}
+              step="0.5"
+              value={videoCurrentTime}
+              onChange={(e) => handleSeekVideo(Number(e.target.value))}
+              className="w-24 sm:w-36 md:w-48 h-1 accent-indigo-400 bg-white/20 rounded cursor-pointer"
+              title="Seek timeline"
+            />
+
+            {/* Skip +10s */}
+            <button
+              type="button"
+              onClick={() => handleSkipVideo(10)}
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+              title="Skip forward 10 seconds"
+            >
+              +10s
+            </button>
+
+            {/* Speed Selector */}
+            <select
+              value={videoSpeed}
+              onChange={(e) => handleChangeVideoSpeed(Number(e.target.value))}
+              className="bg-black/60 border border-white/15 rounded px-1 py-0.5 text-[10px] text-indigo-300 font-mono focus:outline-none cursor-pointer"
+              title="Playback Speed"
+            >
+              <option value="0.75">0.75x</option>
+              <option value="1">1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+            </select>
+
+            {/* Loop Toggle */}
+            <button
+              type="button"
+              onClick={() =>
+                setActiveMedia({
+                  ...activeMedia,
+                  loop: !(activeMedia.loop ?? true),
+                })
+              }
+              className={cn(
+                "p-1 rounded text-[10px] transition-colors border",
+                (activeMedia.loop ?? true)
+                  ? "bg-indigo-600/30 text-indigo-300 border-indigo-400/50"
+                  : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
+              )}
+              title={(activeMedia.loop ?? true) ? "Loop ON" : "Loop OFF"}
+            >
+              <Repeat className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Volume & Mute */}
+            <button
+              type="button"
+              onClick={toggleMediaMute}
+              className={cn(
+                "p-1 rounded text-[10px] transition-colors",
+                activeMedia.isMuted ? "text-rose-400" : "text-emerald-400 hover:text-emerald-300"
+              )}
+              title={activeMedia.isMuted ? "Unmute" : "Mute"}
+            >
+              {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </button>
+
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="5"
+              value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
+              onChange={(e) => {
+                const vol = Number(e.target.value);
+                setActiveMedia({
+                  ...activeMedia,
+                  volume: vol,
+                  isMuted: vol === 0,
+                });
+              }}
+              className="w-14 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
+              title={`Volume: ${activeMedia.volume ?? 100}%`}
+            />
+            <span className="text-[10px] font-mono text-emerald-300 font-bold min-w-[28px] text-right">
+              {activeMedia.volume ?? 100}%
+            </span>
           </div>
         )}
       </div>
@@ -1545,6 +1830,32 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
+                {/* Volume Slider (0% - 200%) */}
+                {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+                  <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      step="5"
+                      value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
+                      onChange={(e) => {
+                        const vol = Number(e.target.value);
+                        setActiveMedia({
+                          ...activeMedia,
+                          volume: vol,
+                          isMuted: vol === 0,
+                        });
+                      }}
+                      className="w-14 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
+                      title={`Volume: ${activeMedia.volume ?? 100}%`}
+                    />
+                    <span className="text-[10px] font-mono font-bold text-emerald-300 min-w-[28px] text-center">
+                      {activeMedia.volume ?? 100}%
+                    </span>
+                  </div>
+                )}
+
                 {/* YouTube Fair-Use & Anti-Reused Content Protection Controls */}
                 <button
                   type="button"
@@ -1563,6 +1874,25 @@ export const StagePreview: React.FC = () => {
 
                 {fairUseConfig?.enabled && (
                   <>
+                    {/* Inline Auto-Ducking ON/OFF Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          duckingActive: !(fairUseConfig?.duckingActive ?? true),
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        (fairUseConfig?.duckingActive ?? true)
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Toggle auto-ducking when mic is active"
+                    >
+                      <span>Duck {(fairUseConfig?.duckingActive ?? true) ? "ON" : "OFF"}</span>
+                    </button>
+
                     {/* 8-12s Random Jerk / Frame-Skip / Pause Selector */}
                     <select
                       value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
@@ -1620,6 +1950,43 @@ export const StagePreview: React.FC = () => {
                       title="Toggle Dynamic Film-Grain Adjustment Layer"
                     >
                       <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
+                    </button>
+
+                    {/* Grain Intensity Selector */}
+                    <select
+                      value={fairUseConfig?.grainIntensity || "random"}
+                      onChange={(e) =>
+                        setFairUseConfig({
+                          grainIntensity: e.target.value as any,
+                          filmGrainOverlay: true,
+                        })
+                      }
+                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
+                      title="Dynamic Grain Intensity Mode"
+                    >
+                      <option value="random">🎲 Random Grain</option>
+                      <option value="light">Light Grain</option>
+                      <option value="medium">Medium Grain</option>
+                      <option value="strong">Strong Grain</option>
+                    </select>
+
+                    {/* Subtle Zoom Breathing Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          isBreathingEnabled: !fairUseConfig?.isBreathingEnabled,
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        fairUseConfig?.isBreathingEnabled
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Subtle Zoom Breathing (1.00x–1.04x) continuously shifts DCT block boundaries"
+                    >
+                      <span>Breath {fairUseConfig?.isBreathingEnabled ? "ON" : "OFF"}</span>
                     </button>
 
                     {/* Mirror Video Toggle */}
@@ -2353,7 +2720,8 @@ export const StagePreview: React.FC = () => {
       {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
         <div
           className={cn(
-            "absolute top-3 left-1/2 -translate-x-1/2 z-30 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto",
+            "absolute left-1/2 -translate-x-1/2 z-30 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto",
+            hasVisualMedia ? "top-14" : "top-3",
             selectedParticipantId !== null
               ? "opacity-0 pointer-events-none"
               : "opacity-0 group-hover/stage:opacity-100 hover:opacity-100"
@@ -2565,56 +2933,132 @@ export const StagePreview: React.FC = () => {
       {/* Watermark Logo Overlay */}
       {showLogo && (
         <div className={cn("absolute z-30 pointer-events-none transition-all", logoPositionClasses[logoPosition])}>
-          <div 
-            className={cn(
-              "px-3.5 py-1.5 flex items-center gap-2 transition-all select-none",
-              logoConfig?.isTransparentBg
-                ? "bg-transparent border-0 shadow-none"
-                : "rounded-xl backdrop-blur-md border shadow-xl"
-            )}
-            style={
-              logoConfig?.isTransparentBg
-                ? undefined
-                : {
-                    backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
-                    borderColor: `${activeThemeColor}50`,
-                  }
-            }
-          >
-            <span 
-              className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0" 
-              style={{ backgroundColor: activeThemeColor }} 
-            />
-            <span 
+          {logoConfig?.mode === "image" && logoConfig?.imageUrl ? (
+            <div className="p-1">
+              <img
+                src={logoConfig.imageUrl}
+                alt="Logo"
+                style={{ height: `${logoConfig.heightPx || 40}px` }}
+                className="w-auto object-contain drop-shadow-lg"
+              />
+            </div>
+          ) : logoConfig?.mode === "both" && logoConfig?.imageUrl ? (
+            <div
               className={cn(
-                "font-bold tracking-wider uppercase font-mono drop-shadow-md",
-                logoConfig?.fontSize === "small" && "text-[10px]",
-                logoConfig?.fontSize === "large" && "text-sm font-black",
-                (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+                "px-3 py-1 flex items-center gap-2.5 transition-all select-none",
+                logoConfig?.isTransparentBg
+                  ? "bg-transparent border-0 shadow-none"
+                  : "rounded-xl backdrop-blur-md border shadow-xl"
               )}
-              style={{ color: logoConfig?.textColor || "#ffffff" }}
+              style={
+                logoConfig?.isTransparentBg
+                  ? undefined
+                  : {
+                      backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
+                      borderColor: `${activeThemeColor}50`,
+                    }
+              }
             >
-              {logoConfig?.text || logoUrl}
-            </span>
-          </div>
+              <img
+                src={logoConfig.imageUrl}
+                alt="Logo"
+                style={{ height: `${Math.min(logoConfig.heightPx || 36, 44)}px` }}
+                className="w-auto object-contain drop-shadow"
+              />
+              <span
+                className={cn(
+                  "font-bold tracking-wider uppercase font-mono drop-shadow-md",
+                  logoConfig?.fontSize === "small" && "text-[10px]",
+                  logoConfig?.fontSize === "large" && "text-sm font-black",
+                  (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+                )}
+                style={{ color: logoConfig?.textColor || "#ffffff" }}
+              >
+                {logoConfig?.text || logoUrl}
+              </span>
+            </div>
+          ) : (
+            <div 
+              className={cn(
+                "px-3.5 py-1.5 flex items-center gap-2 transition-all select-none",
+                logoConfig?.isTransparentBg
+                  ? "bg-transparent border-0 shadow-none"
+                  : "rounded-xl backdrop-blur-md border shadow-xl"
+              )}
+              style={
+                logoConfig?.isTransparentBg
+                  ? undefined
+                  : {
+                      backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
+                      borderColor: `${activeThemeColor}50`,
+                    }
+              }
+            >
+              <span 
+                className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0" 
+                style={{ backgroundColor: activeThemeColor }} 
+              />
+              <span 
+                className={cn(
+                  "font-bold tracking-wider uppercase font-mono drop-shadow-md",
+                  logoConfig?.fontSize === "small" && "text-[10px]",
+                  logoConfig?.fontSize === "large" && "text-sm font-black",
+                  (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+                )}
+                style={{ color: logoConfig?.textColor || "#ffffff" }}
+              >
+                {logoConfig?.text || logoUrl}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
       {/* Lower-Third Banner */}
       {activeBanner && activeBanner.isShowing && (
         <div className={cn(
-          "absolute left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300",
+          "absolute left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300 pointer-events-none select-none",
           showTicker ? "bottom-16" : "bottom-10"
         )}>
-          <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
-            <div className="w-2.5" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
-            <div className="px-5 py-2.5">
+          {activeBanner.style === "minimal" ? (
+            <div className="backdrop-blur-md bg-black/60 px-5 py-2 rounded-lg border-b-2" style={{ borderBottomColor: activeBanner.themeColor || activeThemeColor }}>
               <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
               {activeBanner.subtitle && (
-                <p className="text-xs font-medium" style={{ color: activeThemeColor }}>{activeBanner.subtitle}</p>
+                <p className="text-xs font-medium" style={{ color: activeBanner.themeColor || activeThemeColor }}>{activeBanner.subtitle}</p>
               )}
             </div>
-          </div>
+          ) : activeBanner.style === "block" ? (
+            <div className="shadow-2xl flex flex-col overflow-hidden rounded-md">
+              <div className="px-5 py-1.5 font-bold text-sm text-white uppercase tracking-wider" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }}>
+                {activeBanner.title}
+              </div>
+              {activeBanner.subtitle && (
+                <div className="px-5 py-1 text-xs font-semibold text-slate-200 bg-black/85">
+                  {activeBanner.subtitle}
+                </div>
+              )}
+            </div>
+          ) : activeBanner.style === "bubble" ? (
+            <div className="rounded-full shadow-2xl flex items-center gap-3 px-5 py-2 border border-white/20 backdrop-blur-md bg-black/80">
+              <span className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
+              <div>
+                <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
+                {activeBanner.subtitle && (
+                  <p className="text-[11px] font-medium text-slate-300">{activeBanner.subtitle}</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
+              <div className="w-2.5" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
+              <div className="px-5 py-2.5">
+                <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
+                {activeBanner.subtitle && (
+                  <p className="text-xs font-medium" style={{ color: activeBanner.themeColor || activeThemeColor }}>{activeBanner.subtitle}</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2779,30 +3223,147 @@ export const StagePreview: React.FC = () => {
             loop={activeMedia.loop ?? true}
             muted={activeMedia.isMuted ?? false}
           />
-          <div className="absolute top-6 left-6 z-30 animate-in fade-in">
-            <div className="px-3 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-cyan-500/40 flex items-center gap-2.5 shadow-xl">
-              <span className={cn("w-2 h-2 rounded-full", activeMedia.isMuted ? "bg-rose-400" : "bg-cyan-400 animate-ping")} />
-              <span className="text-[11px] font-medium text-cyan-200 truncate max-w-[160px]">
-                🎵 {activeMedia.name}
-              </span>
-              <button
-                type="button"
-                onClick={toggleMediaMute}
-                className={cn(
-                  "p-1 rounded text-[10px] flex items-center gap-1 transition-colors",
-                  activeMedia.isMuted ? "text-rose-400 hover:text-rose-300" : "text-cyan-300 hover:text-cyan-200"
-                )}
-                title={activeMedia.isMuted ? "Unmute Background Audio" : "Mute Background Audio"}
-              >
-                {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-              </button>
-              <button
-                onClick={() => setActiveMedia(null)}
-                className="text-[10px] text-slate-400 hover:text-rose-400 font-bold ml-1 transition-colors"
-                title="Stop Audio"
-              >
-                ✕
-              </button>
+          <div className="absolute top-5 left-5 z-40 animate-in fade-in max-w-[92%] sm:max-w-md">
+            <div className="px-3.5 py-2 rounded-2xl bg-[#0c0d1a]/95 backdrop-blur-md border border-cyan-500/50 shadow-2xl space-y-2 text-white">
+              {/* Header: Title + Mute + Close */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", activeMedia.isMuted ? "bg-rose-400" : "bg-cyan-400 animate-pulse")} />
+                  <span className="text-xs font-bold text-cyan-200 truncate">
+                    🎵 {activeMedia.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleMediaMute}
+                    className={cn(
+                      "p-1 rounded-lg text-xs flex items-center gap-1 transition-colors border",
+                      activeMedia.isMuted
+                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                        : "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+                    )}
+                    title={activeMedia.isMuted ? "Unmute Background Audio" : "Mute Background Audio"}
+                  >
+                    {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => setActiveMedia(null)}
+                    className="p-1 rounded-lg bg-white/5 hover:bg-rose-600 text-slate-400 hover:text-white text-xs transition-colors"
+                    title="Stop Audio"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Transport Controls Row */}
+              <div className="flex items-center gap-1.5 text-xs">
+                {/* Play/Pause */}
+                <button
+                  type="button"
+                  onClick={handleTogglePlayAudio}
+                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                  title={isAudioPlaying ? "Pause Audio" : "Play Audio"}
+                >
+                  {isAudioPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+                </button>
+
+                {/* Skip -10s */}
+                <button
+                  type="button"
+                  onClick={() => handleSkipAudio(-10)}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+                  title="Skip back 10 seconds"
+                >
+                  -10s
+                </button>
+
+                {/* Time Display */}
+                <span className="text-[10px] font-mono text-slate-300 min-w-[62px] text-center select-none">
+                  {formatMediaTime(audioCurrentTime)} / {formatMediaTime(audioDuration)}
+                </span>
+
+                {/* Seekbar */}
+                <input
+                  type="range"
+                  min="0"
+                  max={audioDuration || 100}
+                  step="0.5"
+                  value={audioCurrentTime}
+                  onChange={(e) => handleSeekAudio(Number(e.target.value))}
+                  className="flex-1 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                  title="Seek audio track"
+                />
+
+                {/* Skip +10s */}
+                <button
+                  type="button"
+                  onClick={() => handleSkipAudio(10)}
+                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+                  title="Skip forward 10 seconds"
+                >
+                  +10s
+                </button>
+
+                {/* Speed */}
+                <select
+                  value={audioSpeed}
+                  onChange={(e) => handleChangeAudioSpeed(Number(e.target.value))}
+                  className="bg-black/60 border border-white/15 rounded px-1 py-0.5 text-[9px] text-cyan-300 font-mono focus:outline-none cursor-pointer"
+                  title="Playback Speed"
+                >
+                  <option value="0.75">0.75x</option>
+                  <option value="1">1.0x</option>
+                  <option value="1.25">1.25x</option>
+                  <option value="1.5">1.5x</option>
+                </select>
+
+                {/* Loop */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveMedia({
+                      ...activeMedia,
+                      loop: !(activeMedia.loop ?? true),
+                    })
+                  }
+                  className={cn(
+                    "p-1 rounded text-[10px] transition-colors border",
+                    (activeMedia.loop ?? true)
+                      ? "bg-cyan-600/30 text-cyan-300 border-cyan-400/50"
+                      : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
+                  )}
+                  title={(activeMedia.loop ?? true) ? "Loop ON" : "Loop OFF"}
+                >
+                  <Repeat className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Volume Slider Row */}
+              <div className="flex items-center gap-2 pt-0.5 border-t border-white/10 text-xs">
+                <span className="text-[10px] text-slate-400 font-medium">Vol:</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  step="5"
+                  value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
+                  onChange={(e) => {
+                    const vol = Number(e.target.value);
+                    setActiveMedia({
+                      ...activeMedia,
+                      volume: vol,
+                      isMuted: vol === 0,
+                    });
+                  }}
+                  className="flex-1 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                  title={`Audio Volume: ${activeMedia.volume ?? 100}%`}
+                />
+                <span className="text-[10px] font-mono text-cyan-300 font-bold min-w-[32px] text-right">
+                  {activeMedia.volume ?? 100}%
+                </span>
+              </div>
             </div>
           </div>
         </>
