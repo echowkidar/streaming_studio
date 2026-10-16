@@ -225,8 +225,26 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
           }
         })
         .catch((err) => {
-          console.warn("Could not access camera/mic for preview:", err);
-          setMediaError("Please allow Camera & Microphone access to test your devices.");
+          console.warn("Could not access camera/mic for preview, attempting audio-only fallback:", err);
+          // Fallback: If camera is absent or unavailable, request audio only so guest can test mic and join
+          return navigator.mediaDevices
+            ?.getUserMedia({
+              video: false,
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            })
+            .then((s) => {
+              stream = s;
+              setLocalStream(s);
+              setCamOn(false);
+            })
+            .catch((audioErr) => {
+              console.warn("Could not access microphone for preview:", audioErr);
+              setMediaError("Please allow Microphone access to test your audio device and join.");
+            });
         });
     }
 

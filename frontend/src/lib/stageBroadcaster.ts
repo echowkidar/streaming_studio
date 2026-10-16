@@ -795,7 +795,10 @@ class StageBroadcaster {
           (p.audioTrack as any)?.mediaStreamTrack ||
           (p.audioTrack instanceof MediaStreamTrack ? p.audioTrack : null);
 
-        const isAudible = p.status === "ON_STAGE" && p.micOn !== false;
+        const isHost = Boolean(p.isLocal || p.role === "host" || p.role === "HOST");
+        // Host mic is audible whenever Host Mic is ON (even if Host tile is backstage during Media+Guest 2-window swap!)
+        // Guest mic is audible only when Guest is ON_STAGE and Guest Mic is ON.
+        const isAudible = (p.status === "ON_STAGE" || isHost) && p.micOn !== false;
         if (isAudible && p.isSpeaking) {
           isAnyParticipantSpeaking = true;
         }

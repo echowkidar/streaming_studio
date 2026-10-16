@@ -232,13 +232,29 @@ export function useLiveKit({
       const isHostRole = parsedRole === "host" || parsedRole === "co_host";
       const remoteStatus = storeStatus || (existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE"));
 
-      const isRemoteCamActive = remote.isCameraEnabled || !!remoteCamTrack;
-      const isRemoteMicActive =
-        storeMicOn !== undefined
-          ? storeMicOn
-          : existing?.micOn !== undefined
-          ? existing.micOn
-          : (remote.isMicrophoneEnabled ?? (!!remoteAudio && !remote.getTrackPublication(Track.Source.Microphone)?.isMuted));
+      const camPub = remote.getTrackPublication(Track.Source.Camera);
+      const micPub = remote.getTrackPublication(Track.Source.Microphone);
+
+      const isRemoteCamActive =
+        remote.isCameraEnabled && !!remoteCamTrack && !camPub?.isMuted;
+
+      // LiveKit's real hardware/publication state is the primary source of truth!
+      const isRemoteMicActive = micPub
+        ? !micPub.isMuted && remote.isMicrophoneEnabled !== false
+        : Boolean(remote.isMicrophoneEnabled && remoteAudio);
+
+      // Keep studioStore in sync when remote guest mutes/unmutes from their own phone
+      if (typeof window !== "undefined") {
+        try {
+          const stP = useStudioStore.getState().participants.find((p) => String(p.id) === remote.identity);
+          if (stP && (stP.micOn !== isRemoteMicActive || stP.camOn !== isRemoteCamActive)) {
+            useStudioStore.getState().updateParticipant(remote.identity, {
+              micOn: isRemoteMicActive,
+              camOn: isRemoteCamActive,
+            });
+          }
+        } catch {}
+      }
 
       // DOM audio element silence sync: mute or unmute attached audio tags directly
       remote.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
@@ -561,10 +577,16 @@ export function useLiveKit({
           }
         })
         .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication?: RemoteTrackPublication, participant?: RemoteParticipant) => {
-          // Auto-play remote audio through browser speaker
+          // Auto-play remote audio through browser speaker by appending hidden <audio> to document.body
           if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).attach === "function") {
             try {
               const el = (track as RemoteAudioTrack).attach();
+              el.autoplay = true;
+              (el as any).playsInline = true;
+              el.style.display = "none";
+              if (typeof document !== "undefined" && !el.parentElement) {
+                document.body.appendChild(el);
+              }
               const targetId = participant ? participant.identity : "";
               if (targetId && el) {
                 const pInStore = useStudioStore.getState().participants.find((p) => String(p.id) === targetId);
@@ -572,6 +594,7 @@ export function useLiveKit({
                   el.muted = true;
                 }
               }
+              newRoom.startAudio().catch(() => {});
             } catch (e) {
               console.warn("Audio attach error:", e);
             }
@@ -581,7 +604,8 @@ export function useLiveKit({
         .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
           if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).detach === "function") {
             try {
-              (track as RemoteAudioTrack).detach();
+              const els = (track as RemoteAudioTrack).detach();
+              els.forEach((el) => el.remove());
             } catch (e) {
               console.warn("Audio detach error:", e);
             }
@@ -608,19 +632,33 @@ export function useLiveKit({
       // 4. Connect to Room naturally without artificial timeout
       await newRoom.connect(livekitWsUrl, token, { autoSubscribe: true });
 
-      // 5. Automatically enable Local Camera & Microphone
+      // 5. Enable Microphone & Camera independently (If Camera fails or is absent, Mic still works 100%!)
+      let micStarted = false;
+      let camStarted = false;
+
       try {
-        await newRoom.localParticipant.setCameraEnabled(true);
         await newRoom.localParticipant.setMicrophoneEnabled(true, {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         });
-        setCamEnabled(true);
-        setMicEnabled(true);
-      } catch (mediaErr) {
-        console.warn("Camera/mic access warning:", mediaErr);
+        micStarted = newRoom.localParticipant.isMicrophoneEnabled;
+      } catch (micErr) {
+        console.warn("Microphone access warning:", micErr);
+        micStarted = false;
       }
+
+      try {
+        await newRoom.localParticipant.setCameraEnabled(true);
+        camStarted = newRoom.localParticipant.isCameraEnabled;
+      } catch (camErr) {
+        console.warn("Camera access warning (Continuing in Audio-Only / Avatar mode):", camErr);
+        camStarted = false;
+      }
+
+      setMicEnabled(micStarted);
+      setCamEnabled(camStarted);
+      newRoom.startAudio().catch(() => {});
 
       syncParticipants(newRoom);
     } catch (err: unknown) {
@@ -649,7 +687,8 @@ export function useLiveKit({
 
   const toggleMicrophone = useCallback(async () => {
     if (!roomRef.current) return false;
-    const nextState = !micEnabled;
+    const currentActualMic = roomRef.current.localParticipant.isMicrophoneEnabled;
+    const nextState = !currentActualMic;
     try {
       await roomRef.current.localParticipant.setMicrophoneEnabled(nextState, {
         echoCancellation: true,
@@ -658,12 +697,26 @@ export function useLiveKit({
       });
       setMicEnabled(nextState);
       syncParticipants(roomRef.current);
+
+      // Broadcast mic status change to Host & all participants via DataChannel for 0ms instant UI sync
+      if (roomRef.current.state === "connected") {
+        const localId = roomRef.current.localParticipant.identity;
+        useStudioStore.getState().updateParticipant(localId, { micOn: nextState });
+        const payload = JSON.stringify({
+          type: "REMOTE_MUTE",
+          targetId: localId,
+          micOn: nextState,
+        });
+        roomRef.current.localParticipant
+          .publishData(new TextEncoder().encode(payload), { reliable: true })
+          .catch(() => {});
+      }
       return nextState;
     } catch (err) {
       console.error("Failed to toggle microphone:", err);
-      return micEnabled;
+      return currentActualMic;
     }
-  }, [micEnabled, syncParticipants]);
+  }, [syncParticipants]);
 
   const toggleScreenShare = useCallback(async () => {
     if (!roomRef.current) return false;

@@ -94,10 +94,16 @@ export function VideoTrackView({
   }, [track, mediaStream]);
 
   const explicitFitMode = tileTransforms[tileId]?.fitMode;
-  // If user hasn't explicitly set fitMode:
-  // Screen shares & vertical mobile phone streams automatically default to "contain" (safe fit, no cropping!)
-  // Horizontal cameras/phones default to "cover" (full frame fill)
-  const effectiveFitMode = explicitFitMode || (isScreen || detectedPortrait ? "contain" : "cover");
+  const isCroppedStageLayout =
+    activeLayout === "cropped" ||
+    activeLayout === "podcast" ||
+    (activeLayout === "custom" &&
+      (customLayoutConfig?.mode === "cropped" || customLayoutConfig?.mode === "podcast"));
+
+  // In Cropped/Podcast layout, fill the vertical split column edge-to-edge ("cover") unless user explicitly clicked Fit!
+  const effectiveFitMode =
+    explicitFitMode ||
+    (isScreen ? "contain" : isCroppedStageLayout ? "cover" : detectedPortrait ? "contain" : "cover");
 
   const transform = tileTransforms[tileId] || {
     fitMode: effectiveFitMode,

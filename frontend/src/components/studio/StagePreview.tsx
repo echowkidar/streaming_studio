@@ -1056,14 +1056,13 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
-        {/* Dynamic Film Grain Adjustment Layer (Anti-Fingerprint Hash Mutator) */}
+        {/* Dynamic Film Grain Adjustment Layer (Clean Cinema Texture without 3px Grid Mesh) */}
         {fairUseConfig?.enabled && (fairUseConfig?.filmGrainOverlay ?? true) && (
           <div
-            className="absolute inset-0 pointer-events-none z-15 mix-blend-overlay opacity-35 select-none"
+            className="absolute inset-0 pointer-events-none z-15 mix-blend-overlay opacity-15 select-none"
             style={{
-              backgroundImage: `radial-gradient(rgba(255,255,255,0.18) 1px, transparent 0), radial-gradient(rgba(0,0,0,0.18) 1px, transparent 0)`,
-              backgroundSize: "3px 3px",
-              backgroundPosition: "0 0, 1.5px 1.5px",
+              backgroundImage: `radial-gradient(rgba(255,255,255,0.12) 0.5px, transparent 0)`,
+              backgroundSize: "17px 23px",
             }}
           />
         )}
