@@ -142,7 +142,7 @@ export const StagePreview: React.FC = () => {
 
   const handleMediaZoomIn = () => {
     const nextZoom = Math.min(3.0, Number((mediaZoom + 0.25).toFixed(2)));
-    setTileTransform("active-media", { zoom: nextZoom, fitMode: "cover" });
+    setTileTransform("active-media", { zoom: nextZoom });
   };
 
   const handleMediaZoomOut = () => {
@@ -1310,31 +1310,51 @@ export const StagePreview: React.FC = () => {
                   <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
                 </button>
 
-                {/* Additional Crop & Zoom Controls */}
+                {/* Always-Visible Media Zoom Controls (Works in both Fit & Cropped modes) */}
+                <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
+                  <button
+                    type="button"
+                    onClick={handleMediaZoomOut}
+                    disabled={mediaZoom <= 1}
+                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-3 h-3 text-cyan-400" />
+                  </button>
+                  <input
+                    type="range"
+                    min="100"
+                    max="300"
+                    step="10"
+                    value={Math.round(mediaZoom * 100)}
+                    onChange={(e) => {
+                      const nextZ = Number((Number(e.target.value) / 100).toFixed(2));
+                      setTileTransform("active-media", {
+                        zoom: nextZ,
+                        panX: nextZ <= 1 && mediaFitMode === "contain" ? 0 : mediaPanX,
+                        panY: nextZ <= 1 && mediaFitMode === "contain" ? 0 : mediaPanY,
+                      });
+                    }}
+                    className="w-14 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                    title={`Zoom Level: ${Math.round(mediaZoom * 100)}%`}
+                  />
+                  <span className="text-[10px] font-mono font-bold text-cyan-300 min-w-[30px] text-center">
+                    {Math.round(mediaZoom * 100)}%
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleMediaZoomIn}
+                    disabled={mediaZoom >= 3}
+                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-3 h-3 text-cyan-400" />
+                  </button>
+                </div>
+
+                {/* Pan Alignment Controls (Shown when Cropped or Zoomed > 100%) */}
                 {(mediaFitMode === "cover" || mediaZoom > 1) && (
                   <>
-                    <button
-                      type="button"
-                      onClick={handleMediaZoomOut}
-                      disabled={mediaZoom <= 1}
-                      className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                      title="Zoom Out"
-                    >
-                      <ZoomOut className="w-3 h-3" />
-                    </button>
-                    <span className="text-[10px] font-mono font-bold text-slate-200">
-                      {Math.round(mediaZoom * 100)}%
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleMediaZoomIn}
-                      disabled={mediaZoom >= 3}
-                      className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                      title="Zoom In"
-                    >
-                      <ZoomIn className="w-3 h-3" />
-                    </button>
-
                     <div className="flex items-center gap-0.5 bg-white/5 rounded border border-white/10 px-0.5">
                       <button
                         type="button"
@@ -1403,12 +1423,11 @@ export const StagePreview: React.FC = () => {
                       value={Math.round(mediaPanY)}
                       onChange={(e) => {
                         setTileTransform("active-media", {
-                          fitMode: "cover",
                           panY: Number(e.target.value),
                         });
                       }}
                       className="w-14 h-1 accent-amber-400 bg-white/20 rounded cursor-pointer"
-                      title={`Position: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
+                      title={`Pan Y: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
                     />
 
                     <button

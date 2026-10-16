@@ -123,6 +123,8 @@ export interface StudioScene {
   expectedGuestSlots?: number;
   /** Automatically promote connecting guests into this scene's open guest slots */
   autoAddGuestsToStage?: boolean;
+  /** Jab Guest connect ho to 2-window/media scene me Host ki jagah Guest aa jaye */
+  replaceHostOnGuestJoin?: boolean;
   activeMedia?: MediaFileItem | null;
   /** StreamYard Paid Plan: Auto-switch to another scene when video ends */
   nextSceneIdOnMediaEnd?: string | null;
@@ -257,6 +259,7 @@ interface StudioState {
   preAddGuestSlotToScene: (sceneId?: string) => void;
   removeGuestSlotFromScene: (sceneId?: string) => void;
   setAutoAddGuestsToStage: (enabled: boolean, sceneId?: string) => void;
+  setReplaceHostOnGuestJoin: (enabled: boolean, sceneId?: string) => void;
   assignParticipantToSlot: (slotIndex: number, participantId: string | number | null, sceneId?: string) => void;
 
   // Branding & Overlays
@@ -756,62 +759,84 @@ const initialActiveSceneId: string | null =
 function reconcileParticipantsWithScene(
   incomingParticipants: Participant[],
   existingParticipants: Participant[],
-  activeScene?: StudioScene
+  activeScene?: StudioScene,
+  forceEvaluateBackstageGuests: boolean = false
 ): Participant[] {
   const existingStatusMap = new Map(existingParticipants.map((p) => [String(p.id), p.status]));
   const explicitSceneIds = activeScene?.onStageParticipantIds
     ? new Set(activeScene.onStageParticipantIds.map(String))
     : null;
 
-  const expectedGuests = activeScene?.expectedGuestSlots ?? 0;
-  const shouldAutoAdd = activeScene?.autoAddGuestsToStage ?? (expectedGuests > 0);
+  const rawExpectedGuests = activeScene?.expectedGuestSlots ?? 0;
+  const shouldAutoAdd = activeScene?.autoAddGuestsToStage ?? (rawExpectedGuests > 0);
+  // Agar Auto-Stage ON hai to chahe Guest Slots 0 bhi likha ho, kam se kam 1 Guest zaroor stage par aayega!
+  const effectiveExpectedGuests = shouldAutoAdd
+    ? Math.max(1, rawExpectedGuests)
+    : rawExpectedGuests;
+
+  const shouldReplaceHost = Boolean(activeScene?.replaceHostOnGuestJoin);
 
   // Count how many remote guests are already on stage
   let currentOnStageGuests = 0;
   incomingParticipants.forEach((p) => {
-    const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
+    const isHostOrScreen = p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen;
     const prevStatus = existingStatusMap.get(String(p.id));
     if (!isHostOrScreen && (prevStatus === "ON_STAGE" || explicitSceneIds?.has(String(p.id)))) {
       currentOnStageGuests++;
     }
   });
 
-  // Check if this is a media-only scene (explicitly empty stage with no guest slots)
   const isMediaOnlyScene =
     Array.isArray(activeScene?.onStageParticipantIds) &&
     activeScene!.onStageParticipantIds!.length === 0 &&
-    expectedGuests === 0;
+    effectiveExpectedGuests === 0 &&
+    !shouldAutoAdd;
 
-  const reconciled = incomingParticipants.map((p) => {
+  // Step 1: Pehle sabhi participants (Guests + Host) ka status decide karein
+  const interim = incomingParticipants.map((p) => {
     const idStr = String(p.id);
-    const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
-
-    // 1. Preserve existing status if participant was already in the room
+    const isHostOrScreen = p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen;
     const existingStatus = existingStatusMap.get(idStr);
-    if (existingStatus) {
+
+    // Agar naya Guest connect hua hai (ya user ne abhi Auto-Stage ON kiya hai)
+    if (!isHostOrScreen) {
+      if (existingStatus === "ON_STAGE" || explicitSceneIds?.has(idStr)) {
+        return { ...p, status: "ON_STAGE" as const };
+      }
+      // Naya guest hai (!existingStatus) ya forceEvaluateBackstageGuests true hai
+      if (shouldAutoAdd && (!existingStatus || forceEvaluateBackstageGuests) && currentOnStageGuests < effectiveExpectedGuests) {
+        currentOnStageGuests++;
+        return { ...p, status: "ON_STAGE" as const };
+      }
+      return { ...p, status: (existingStatus || p.status || "BACKSTAGE") as any };
+    }
+
+    // Host ya Screen Share ke liye
+    if (existingStatus && !forceEvaluateBackstageGuests) {
       return { ...p, status: existingStatus };
     }
-
-    // 2. If scene explicitly lists this participant ID
-    if (explicitSceneIds?.has(idStr)) {
-      return { ...p, status: "ON_STAGE" as const };
-    }
-
-    // 3. Host or Screen Share defaults to ON_STAGE unless in a Media-Only (Intro/Flyer) scene
-    if (isHostOrScreen) {
-      return { ...p, status: isMediaOnlyScene ? ("BACKSTAGE" as const) : ("ON_STAGE" as const) };
-    }
-
-    // 4. StreamYard Auto-Slot Fill: New Guest connects while broadcast/recording or pre-show is active!
-    if (shouldAutoAdd && currentOnStageGuests < expectedGuests) {
-      currentOnStageGuests++;
-      return { ...p, status: "ON_STAGE" as const };
-    }
-
-    return { ...p, status: (p.status || "BACKSTAGE") as any };
+    return { ...p, status: isMediaOnlyScene ? ("BACKSTAGE" as const) : ("ON_STAGE" as const) };
   });
 
-  // Sort on-stage participants according to fixed slotAssignments if defined on scene
+  // Step 2: "Guest Replaces Host" Logic
+  // Agar koi Remote Guest ON_STAGE hai aur replaceHostOnGuestJoin ON hai, to Host ko BACKSTAGE karein.
+  // Aur agar saare Guests chale gaye (0 guests on stage), to Host ko wapas ON_STAGE le aayein!
+  const anyRemoteGuestOnStage = interim.some(
+    (p) => !(p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen) && p.status === "ON_STAGE"
+  );
+
+  const reconciled = interim.map((p) => {
+    const isLocalHost = (p.role === "host" || p.role === "HOST" || p.isLocal) && !p.isScreen;
+    if (isLocalHost && shouldReplaceHost) {
+      return {
+        ...p,
+        status: anyRemoteGuestOnStage ? ("BACKSTAGE" as const) : ("ON_STAGE" as const),
+      };
+    }
+    return p;
+  });
+
+  // Step 3: Sort on-stage participants according to fixed slotAssignments if defined
   const slotMap = activeScene?.slotAssignments;
   if (slotMap && Object.keys(slotMap).length > 0) {
     const assignedSlotByParticipant = new Map<string, number>();
@@ -1415,7 +1440,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { participants: merged };
     }),
   removeParticipant: (id) =>
-    set((s) => ({ participants: s.participants.filter((p) => p.id !== id) })),
+    set((s) => {
+      const remaining = s.participants.filter((p) => p.id !== id);
+      const activeScene = s.scenes.find((sc) => sc.id === s.activeSceneId);
+      const nextParticipants = reconcileParticipantsWithScene(remaining, remaining, activeScene, true);
+      return { participants: nextParticipants };
+    }),
   updateParticipant: (id, updates) =>
     set((s) => ({
       participants: s.participants.map((p) => (p.id === id ? { ...p, ...updates } : p)),
@@ -1469,8 +1499,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         const nextSlots = Math.min(8, (sc.expectedGuestSlots || 0) + 1);
         return { ...sc, expectedGuestSlots: nextSlots, autoAddGuestsToStage: true };
       });
+      const updatedActive = nextScenes.find((sc) => sc.id === s.activeSceneId);
+      const nextParticipants = reconcileParticipantsWithScene(s.participants, s.participants, updatedActive, true);
       persistStudioLayout({ scenes: nextScenes });
-      return { scenes: nextScenes };
+      return { scenes: nextScenes, participants: nextParticipants };
     }),
   removeGuestSlotFromScene: (sceneId) =>
     set((s) => {
@@ -1488,11 +1520,35 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set((s) => {
       const targetId = sceneId || s.activeSceneId;
       if (!targetId) return s;
-      const nextScenes = s.scenes.map((sc) =>
-        sc.id === targetId ? { ...sc, autoAddGuestsToStage: enabled } : sc
-      );
+      const nextScenes = s.scenes.map((sc) => {
+        if (sc.id !== targetId) return sc;
+        // Jab Auto-Stage ON karein aur Guest Slots 0 ho, to automatically Guest Slots ko 1 kar dein!
+        const nextSlots = enabled ? Math.max(1, sc.expectedGuestSlots || 1) : sc.expectedGuestSlots;
+        return { ...sc, autoAddGuestsToStage: enabled, expectedGuestSlots: nextSlots };
+      });
+      const updatedActive = nextScenes.find((sc) => sc.id === s.activeSceneId);
+      const nextParticipants = reconcileParticipantsWithScene(s.participants, s.participants, updatedActive, true);
       persistStudioLayout({ scenes: nextScenes });
-      return { scenes: nextScenes };
+      return { scenes: nextScenes, participants: nextParticipants };
+    }),
+  setReplaceHostOnGuestJoin: (enabled, sceneId) =>
+    set((s) => {
+      const targetId = sceneId || s.activeSceneId;
+      if (!targetId) return s;
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === targetId
+          ? {
+              ...sc,
+              replaceHostOnGuestJoin: enabled,
+              // Replace Host ON karne par Auto-Stage aur 1 Guest Slot bhi auto-enable kar dein
+              ...(enabled ? { autoAddGuestsToStage: true, expectedGuestSlots: Math.max(1, sc.expectedGuestSlots || 1) } : {}),
+            }
+          : sc
+      );
+      const updatedActive = nextScenes.find((sc) => sc.id === s.activeSceneId);
+      const nextParticipants = reconcileParticipantsWithScene(s.participants, s.participants, updatedActive, true);
+      persistStudioLayout({ scenes: nextScenes });
+      return { scenes: nextScenes, participants: nextParticipants };
     }),
   assignParticipantToSlot: (slotIndex, participantId, sceneId) =>
     set((s) => {
@@ -2173,28 +2229,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         : 50);
 
     // StreamYard Scene Participant Reconciliation:
-    // Supports Media-Only scenes (onStageParticipantIds: []) AND auto-promoting connected guests if scene has expectedGuestSlots
-    let nextParticipants = state.participants;
-    if (Array.isArray(scene.onStageParticipantIds)) {
-      const targetIds = new Set(scene.onStageParticipantIds.map(String));
-      const expectedGuests = scene.expectedGuestSlots ?? 0;
-      let filledGuests = 0;
-
-      nextParticipants = state.participants.map((p) => {
-        const isHostOrScreen = p.role === "host" || p.isLocal || p.isScreen;
-        if (targetIds.has(String(p.id))) {
-          if (!isHostOrScreen) filledGuests++;
-          return { ...p, status: "ON_STAGE" as const };
-        }
-        if (!isHostOrScreen && scene.autoAddGuestsToStage && filledGuests < expectedGuests) {
-          filledGuests++;
-          return { ...p, status: "ON_STAGE" as const };
-        }
-        return { ...p, status: "BACKSTAGE" as const };
-      });
-    } else {
-      nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene);
-    }
+    // Supports Media-Only scenes, auto-promoting connected guests, and replaceHostOnGuestJoin
+    const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
 
     // 2. Apply Fit/Cover transforms based on scene layout
     const currentTransforms = { ...state.tileTransforms };

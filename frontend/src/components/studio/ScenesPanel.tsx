@@ -274,6 +274,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     preAddGuestSlotToScene,
     removeGuestSlotFromScene,
     setAutoAddGuestsToStage,
+    setReplaceHostOnGuestJoin,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -1253,6 +1254,26 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                         )}
                       >
                         {scene.autoAddGuestsToStage ? "ON" : "OFF"}
+                      </span>
+                    </button>
+
+                    {/* Guest Replaces Host in 2-Window / Media Scene */}
+                    <button
+                      type="button"
+                      onClick={() => setReplaceHostOnGuestJoin(!scene.replaceHostOnGuestJoin, scene.id)}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center justify-between text-[11px]"
+                      title="When a guest joins, automatically replace Host on stage with the Guest (ideal for Media + Guest 2-window layouts)"
+                    >
+                      <span>Guest Replaces Host</span>
+                      <span
+                        className={cn(
+                          "px-1.5 py-0.2 rounded text-[9px] font-bold",
+                          scene.replaceHostOnGuestJoin
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                            : "bg-white/10 text-slate-400"
+                        )}
+                      >
+                        {scene.replaceHostOnGuestJoin ? "ON" : "OFF"}
                       </span>
                     </button>
 
