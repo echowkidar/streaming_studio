@@ -3,6 +3,8 @@
 import React, { useRef, useState, useEffect } from "react";
 import {
   Video,
+  Mic,
+  MicOff,
   Volume2,
   VolumeX,
   EyeOff,
@@ -88,6 +90,7 @@ export const StagePreview: React.FC = () => {
     setTileTransform,
     isDrawingMode,
     toggleMediaMute,
+    toggleParticipantMic,
     scenes,
     activeSceneId,
     fairUseConfig,
@@ -1755,6 +1758,22 @@ export const StagePreview: React.FC = () => {
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
                     {p.name || "Guest"}
                   </span>
+
+                  {/* Mic Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => toggleParticipantMic(p.id)}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
+                      p.micOn
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                        : "bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30"
+                    )}
+                    title={p.micOn ? "Mute participant microphone" : "Unmute participant microphone"}
+                  >
+                    {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
+                    <span>{p.micOn ? "Mic ON" : "Muted"}</span>
+                  </button>
 
                   <span className="w-px h-3 bg-white/20" />
 

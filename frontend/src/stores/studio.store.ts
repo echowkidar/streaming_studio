@@ -253,6 +253,7 @@ interface StudioState {
   addParticipant: (participant: Participant) => void;
   removeParticipant: (id: string | number) => void;
   updateParticipant: (id: string | number, updates: Partial<Participant>) => void;
+  toggleParticipantMic: (id: string | number) => void;
   moveToStage: (id: string | number) => void;
   moveToBackstage: (id: string | number) => void;
   setStageParticipants: (stageIds: (string | number)[]) => void;
@@ -1450,6 +1451,28 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set((s) => ({
       participants: s.participants.map((p) => (p.id === id ? { ...p, ...updates } : p)),
     })),
+  toggleParticipantMic: (id) =>
+    set((s) => {
+      const target = s.participants.find((p) => String(p.id) === String(id));
+      const nextMicOn = target ? !target.micOn : false;
+      const isLocalUser = target?.isLocal || String(id).includes("host") || String(id).includes("local");
+
+      // Event dispatch karein taaki useLiveKit turant Guest ko LiveKit DataChannel se remote mute bhej de
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("livestudio-toggle-participant-mic", {
+            detail: { participantId: String(id), micOn: nextMicOn, isLocal: Boolean(isLocalUser) },
+          })
+        );
+      }
+
+      return {
+        micEnabled: isLocalUser ? nextMicOn : s.micEnabled,
+        participants: s.participants.map((p) =>
+          String(p.id) === String(id) ? { ...p, micOn: nextMicOn } : p
+        ),
+      };
+    }),
   moveToStage: (id) =>
     set((s) => {
       const nextParticipants = s.participants.map((p) =>

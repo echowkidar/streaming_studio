@@ -43,6 +43,7 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
     activeMedia,
     setActiveMedia,
     toggleMediaMute,
+    toggleParticipantMic,
     tileTransforms,
     setTileTransform,
     customLayoutConfig,
@@ -110,18 +111,23 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
 
             {/* Top Quick Status Bar on Card */}
             <div className="absolute top-1.5 left-1.5 right-1.5 z-20 flex items-center justify-between pointer-events-auto">
-              {/* Mic Status */}
-              <div
+              {/* Mic Status / Toggle Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleParticipantMic(p.id);
+                }}
                 className={cn(
-                  "p-1 rounded-md backdrop-blur-md border text-[10px]",
+                  "p-1 rounded-md backdrop-blur-md border text-[10px] transition-all hover:scale-105 active:scale-95 cursor-pointer",
                   p.micOn
-                    ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
-                    : "bg-rose-500/20 border-rose-500/30 text-rose-400"
+                    ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/40"
+                    : "bg-rose-500/20 border-rose-500/30 text-rose-400 hover:bg-rose-500/40"
                 )}
-                title={p.micOn ? "Microphone active" : "Microphone muted"}
+                title={p.micOn ? "Click to Mute Participant" : "Click to Unmute Participant"}
               >
                 {p.micOn ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
-              </div>
+              </button>
 
               {/* Cam / Screen Status */}
               <div className="flex items-center gap-1">
@@ -173,6 +179,27 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
                   className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center justify-between text-slate-200 hover:bg-white/10"
                 >
                   <span>{isOnStage ? "Remove to Backstage" : "Add to Stage"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleParticipantMic(p.id);
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-slate-200 hover:bg-white/10"
+                >
+                  {p.micOn ? (
+                    <>
+                      <MicOff className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Mute Participant</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Unmute Participant</span>
+                    </>
+                  )}
                 </button>
 
                 <button

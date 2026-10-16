@@ -137,6 +137,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     moveToStage,
     moveToBackstage,
     removeParticipant,
+    toggleParticipantMic,
     activeMedia,
     isDrawingMode,
     setIsDrawingMode,
@@ -691,11 +692,23 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleParticipantMic(p.id)}
+                    className={cn(
+                      "p-1.5 rounded-lg border transition-all cursor-pointer",
+                      p.micOn
+                        ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30"
+                        : "bg-rose-500/15 border-rose-500/30 text-rose-400 hover:bg-rose-500/30"
+                    )}
+                    title={p.micOn ? "Mute participant" : "Unmute participant"}
+                  >
+                    {p.micOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                  </button>
                   <button
                     onClick={() => handleMoveToBackstage(p.id)}
-                    className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
+                    className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 px-1.5 py-1 rounded hover:bg-white/5 transition-colors"
                     title="Remove to backstage"
                   >
                     Down
@@ -726,14 +739,29 @@ export default function StudioPage({ params }: { params: { id: string } }) {
                     </div>
                     <span className="text-xs text-slate-300 truncate">{p.name}</span>
                   </div>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="h-6 px-2 text-[10px]"
-                    onClick={() => handleMoveToStage(p.id)}
-                  >
-                    Add to Stage
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleParticipantMic(p.id)}
+                      className={cn(
+                        "p-1.5 rounded-lg border transition-all cursor-pointer",
+                        p.micOn
+                          ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30"
+                          : "bg-rose-500/15 border-rose-500/30 text-rose-400 hover:bg-rose-500/30"
+                      )}
+                      title={p.micOn ? "Mute participant" : "Unmute participant"}
+                    >
+                      {p.micOn ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                    </button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={() => handleMoveToStage(p.id)}
+                    >
+                      Add to Stage
+                    </Button>
+                  </div>
                 </div>
               ))
             )}

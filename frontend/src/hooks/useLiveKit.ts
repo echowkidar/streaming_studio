@@ -215,21 +215,39 @@ export function useLiveKit({
         // ignore
       }
 
-      const isRemoteCamActive = remote.isCameraEnabled || !!remoteCamTrack;
-      const isRemoteMicActive = remote.isMicrophoneEnabled || !!remoteAudio;
-
       // StreamYard rule: preserve existing status if host placed them ON_STAGE/BACKSTAGE,
       // otherwise check studio store, then default new guests to BACKSTAGE
       let storeStatus: Participant["status"] | undefined = undefined;
+      let storeMicOn: boolean | undefined = undefined;
       if (typeof window !== "undefined") {
         try {
           const stP = useStudioStore.getState().participants.find((p) => String(p.id) === remote.identity);
-          if (stP) storeStatus = stP.status;
+          if (stP) {
+            storeStatus = stP.status;
+            storeMicOn = stP.micOn;
+          }
         } catch {}
       }
       const existing = participantsRef.current.find((p) => p.id === remote.identity);
       const isHostRole = parsedRole === "host" || parsedRole === "co_host";
       const remoteStatus = storeStatus || (existing ? existing.status : (isHostRole ? "ON_STAGE" : "BACKSTAGE"));
+
+      const isRemoteCamActive = remote.isCameraEnabled || !!remoteCamTrack;
+      const isRemoteMicActive =
+        storeMicOn !== undefined
+          ? storeMicOn
+          : existing?.micOn !== undefined
+          ? existing.micOn
+          : (remote.isMicrophoneEnabled ?? (!!remoteAudio && !remote.getTrackPublication(Track.Source.Microphone)?.isMuted));
+
+      // DOM audio element silence sync: mute or unmute attached audio tags directly
+      remote.audioTrackPublications.forEach((pub: RemoteTrackPublication) => {
+        if (pub.audioTrack && Array.isArray((pub.audioTrack as any).attachedElements)) {
+          (pub.audioTrack as any).attachedElements.forEach((el: HTMLMediaElement) => {
+            el.muted = !isRemoteMicActive;
+          });
+        }
+      });
 
       // Remote Participant Camera Tile
       list.push({
@@ -495,15 +513,53 @@ export function useLiveKit({
                 }
               }
             }
+
+            if (data.type === "REMOTE_MUTE") {
+              const targetId = String(data.targetId || "");
+              const shouldMicBeOn = Boolean(data.micOn);
+
+              // Agar ye command is user (Guest) ke liye hai, toh apna local mic mute/unmute karein
+              if (newRoom.localParticipant && String(newRoom.localParticipant.identity) === targetId) {
+                newRoom.localParticipant.setMicrophoneEnabled(shouldMicBeOn).catch(() => {});
+                setMicEnabled(shouldMicBeOn);
+              }
+
+              // Remote participant ke audio elements ko mute/unmute karein
+              const remoteP = newRoom.remoteParticipants.get(targetId);
+              if (remoteP) {
+                remoteP.audioTrackPublications.forEach((pub) => {
+                  if (pub.audioTrack && Array.isArray((pub.audioTrack as any).attachedElements)) {
+                    (pub.audioTrack as any).attachedElements.forEach((el: HTMLMediaElement) => {
+                      el.muted = !shouldMicBeOn;
+                    });
+                  }
+                });
+              }
+
+              // Sabhi participants ke UI aur store me mic status update karein
+              participantsRef.current = participantsRef.current.map((p) =>
+                String(p.id) === targetId ? { ...p, micOn: shouldMicBeOn } : p
+              );
+              setLiveParticipants([...participantsRef.current]);
+              useStudioStore.getState().updateParticipant(targetId, { micOn: shouldMicBeOn });
+              return;
+            }
           } catch (e) {
             console.warn("Failed to parse LiveKit data message:", e);
           }
         })
-        .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+        .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication?: RemoteTrackPublication, participant?: RemoteParticipant) => {
           // Auto-play remote audio through browser speaker
           if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).attach === "function") {
             try {
-              (track as RemoteAudioTrack).attach();
+              const el = (track as RemoteAudioTrack).attach();
+              const targetId = participant ? participant.identity : "";
+              if (targetId && el) {
+                const pInStore = useStudioStore.getState().participants.find((p) => String(p.id) === targetId);
+                if (pInStore && pInStore.micOn === false) {
+                  el.muted = true;
+                }
+              }
             } catch (e) {
               console.warn("Audio attach error:", e);
             }
@@ -655,6 +711,70 @@ export function useLiveKit({
       disconnect();
     };
   }, [roomName, participantName, role, autoConnect]);
+
+  // Listen for participant mic toggle events (Host or local UI toggling any participant's mic)
+  useEffect(() => {
+    const handleToggleParticipantMic = (e: Event) => {
+      const customEvent = e as CustomEvent<{ participantId: string; micOn: boolean; isLocal: boolean }>;
+      const { participantId, micOn, isLocal } = customEvent.detail || {};
+      if (!participantId) return;
+
+      const currentRoom = roomRef.current;
+      if (!currentRoom) return;
+
+      // 1. Agar local participant hai
+      const isActuallyLocal =
+        isLocal ||
+        (currentRoom.localParticipant && String(currentRoom.localParticipant.identity) === participantId);
+
+      if (isActuallyLocal) {
+        currentRoom.localParticipant.setMicrophoneEnabled(micOn).catch((err) => {
+          console.warn("Failed to set local microphone enabled:", err);
+        });
+        setMicEnabled(micOn);
+      } else {
+        // 2. Agar remote participant hai (Host muting a guest)
+        // A. Host ke browser me guest ke audio element ko turant mute/unmute karein
+        const remoteP = currentRoom.remoteParticipants.get(participantId);
+        if (remoteP) {
+          remoteP.audioTrackPublications.forEach((pub) => {
+            if (pub.audioTrack && Array.isArray((pub.audioTrack as any).attachedElements)) {
+              (pub.audioTrack as any).attachedElements.forEach((el: HTMLMediaElement) => {
+                el.muted = !micOn;
+              });
+            }
+          });
+        }
+
+        // B. Guest ko LiveKit DataChannel se signal bhejein taaki guest ka local mic hardware/client side band ho jaye
+        if (currentRoom.localParticipant && currentRoom.state === "connected") {
+          try {
+            const payload = JSON.stringify({
+              type: "REMOTE_MUTE",
+              targetId: participantId,
+              micOn,
+            });
+            currentRoom.localParticipant
+              .publishData(new TextEncoder().encode(payload), { reliable: true })
+              .catch((err) => console.warn("Failed to publish REMOTE_MUTE:", err));
+          } catch (err) {
+            console.warn("REMOTE_MUTE publish error:", err);
+          }
+        }
+      }
+
+      // Live participants state aur ref update karein
+      participantsRef.current = participantsRef.current.map((p) =>
+        String(p.id) === participantId ? { ...p, micOn } : p
+      );
+      setLiveParticipants([...participantsRef.current]);
+    };
+
+    window.addEventListener("livestudio-toggle-participant-mic", handleToggleParticipantMic);
+    return () => {
+      window.removeEventListener("livestudio-toggle-participant-mic", handleToggleParticipantMic);
+    };
+  }, []);
 
   // Broadcast stage sync across room
   const publishStageSync = useCallback(
