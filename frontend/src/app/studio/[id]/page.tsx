@@ -1465,7 +1465,12 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       </div>
 
       {/* Device Settings Modal */}
-      <DeviceSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <DeviceSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSelectAudioDevice={setAudioDevice}
+        onSelectVideoDevice={setVideoDevice}
+      />
 
       {/* Local Participant ISO Recording Manager Modal */}
       <LocalRecordingManager isOpen={isIsoModalOpen} onClose={() => setIsIsoModalOpen(false)} />

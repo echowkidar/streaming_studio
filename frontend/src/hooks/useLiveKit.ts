@@ -16,6 +16,108 @@ import {
 import { Participant } from "@/types";
 import { useStudioStore } from "@/stores/studio.store";
 
+export interface PreferredHardwareDevices {
+  audioDeviceId: string;
+  audioLabel: string;
+  videoDeviceId: string;
+  videoLabel: string;
+  speakerDeviceId: string;
+  speakerLabel: string;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+}
+
+export const PREFERRED_DEVICES_STORAGE_KEY = "livestudio_preferred_devices";
+
+export function loadPreferredDevices(): PreferredHardwareDevices {
+  const defaults: PreferredHardwareDevices = {
+    audioDeviceId: "",
+    audioLabel: "",
+    videoDeviceId: "",
+    videoLabel: "",
+    speakerDeviceId: "",
+    speakerLabel: "",
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  };
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = localStorage.getItem(PREFERRED_DEVICES_STORAGE_KEY);
+    return raw ? { ...defaults, ...JSON.parse(raw) } : defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+export function savePreferredDevices(updates: Partial<PreferredHardwareDevices>): PreferredHardwareDevices {
+  const current = loadPreferredDevices();
+  const next = { ...current, ...updates };
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(PREFERRED_DEVICES_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
+  }
+  return next;
+}
+
+/**
+ * Resolves the concrete hardware deviceId (avoids Windows 'default'/'communications' virtual IDs
+ * so connecting a Bluetooth speaker/headset never hijacks the selected PC microphone!)
+ */
+export async function resolveLockedHardwareDevice(
+  kind: "audioinput" | "videoinput" | "audiooutput",
+  preferredId?: string,
+  preferredLabel?: string
+): Promise<MediaDeviceInfo | null> {
+  if (typeof window === "undefined" || !navigator.mediaDevices?.enumerateDevices) return null;
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const list = all.filter((d) => d.kind === kind && d.deviceId);
+    if (list.length === 0) return null;
+
+    // 1. Exact hardware deviceId match (excluding virtual 'default' / 'communications' if concrete exists)
+    if (preferredId && preferredId !== "default" && preferredId !== "communications") {
+      const exactId = list.find((d) => d.deviceId === preferredId);
+      if (exactId) return exactId;
+    }
+
+    // 2. Match by hardware label (survives browser restarts & USB/Bluetooth re-enumeration)
+    if (preferredLabel) {
+      const cleanPref = preferredLabel
+        .replace(/^(Default|Communications)\s*-\s*/i, "")
+        .trim()
+        .toLowerCase();
+      const byLabel = list.find(
+        (d) =>
+          d.deviceId !== "default" &&
+          d.deviceId !== "communications" &&
+          d.label.toLowerCase().includes(cleanPref)
+      );
+      if (byLabel) return byLabel;
+    }
+
+    // 3. If user selected "default", resolve it to the underlying physical device so Bluetooth won't hijack it later
+    const defaultEntry = list.find((d) => d.deviceId === "default");
+    if (defaultEntry && defaultEntry.label) {
+      const cleanDef = defaultEntry.label.replace(/^Default\s*-\s*/i, "").trim().toLowerCase();
+      const concreteMatch = list.find(
+        (d) =>
+          d.deviceId !== "default" &&
+          d.deviceId !== "communications" &&
+          d.label.toLowerCase().includes(cleanDef)
+      );
+      if (concreteMatch) return concreteMatch;
+    }
+
+    // 4. First physical non-virtual device
+    return list.find((d) => d.deviceId !== "default" && d.deviceId !== "communications") || list[0];
+  } catch {
+    return null;
+  }
+}
+
 interface UseLiveKitOptions {
   roomName: string;
   participantName: string;
@@ -632,27 +734,46 @@ export function useLiveKit({
       // 4. Connect to Room naturally without artificial timeout
       await newRoom.connect(livekitWsUrl, token, { autoSubscribe: true });
 
-      // 5. Enable Microphone & Camera independently (If Camera fails or is absent, Mic still works 100%!)
+      // 5. Enable Microphone & Camera independently using saved/locked Hardware Device ID
+      const prefs = loadPreferredDevices();
+      const lockedMic = await resolveLockedHardwareDevice("audioinput", prefs.audioDeviceId, prefs.audioLabel);
+      const lockedCam = await resolveLockedHardwareDevice("videoinput", prefs.videoDeviceId, prefs.videoLabel);
+
       let micStarted = false;
       let camStarted = false;
 
+      // A. Start Microphone (Independent of Camera!)
       try {
         await newRoom.localParticipant.setMicrophoneEnabled(true, {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: prefs.echoCancellation,
+          noiseSuppression: prefs.noiseSuppression,
+          autoGainControl: prefs.autoGainControl,
+          ...(lockedMic?.deviceId ? { deviceId: lockedMic.deviceId } : {}),
         });
         micStarted = newRoom.localParticipant.isMicrophoneEnabled;
+        if (lockedMic) {
+          savePreferredDevices({ audioDeviceId: lockedMic.deviceId, audioLabel: lockedMic.label });
+        }
       } catch (micErr) {
-        console.warn("Microphone access warning:", micErr);
-        micStarted = false;
+        console.warn("Primary mic failed, retrying with fallback audioinput:", micErr);
+        try {
+          await newRoom.localParticipant.setMicrophoneEnabled(true);
+          micStarted = newRoom.localParticipant.isMicrophoneEnabled;
+        } catch {}
       }
 
+      // B. Start Camera (Independent of Microphone!)
       try {
-        await newRoom.localParticipant.setCameraEnabled(true);
+        await newRoom.localParticipant.setCameraEnabled(
+          true,
+          lockedCam?.deviceId ? { deviceId: lockedCam.deviceId } : undefined
+        );
         camStarted = newRoom.localParticipant.isCameraEnabled;
+        if (lockedCam) {
+          savePreferredDevices({ videoDeviceId: lockedCam.deviceId, videoLabel: lockedCam.label });
+        }
       } catch (camErr) {
-        console.warn("Camera access warning (Continuing in Audio-Only / Avatar mode):", camErr);
+        console.warn("Camera unavailable, continuing in Audio-Only mode:", camErr);
         camStarted = false;
       }
 
@@ -748,24 +869,121 @@ export function useLiveKit({
     }
   }, [facingMode, syncParticipants]);
 
-  // Device switcher callbacks
+  // Device switcher callbacks with Hardware Lock & Persistence
   const setAudioDevice = useCallback(async (deviceId: string) => {
-    if (!roomRef.current) return;
     try {
-      await roomRef.current.switchActiveDevice("audioinput", deviceId);
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const target = all.find((d) => d.kind === "audioinput" && d.deviceId === deviceId);
+      // Resolve virtual 'default'/'communications' to concrete hardware deviceId
+      const resolved = await resolveLockedHardwareDevice(
+        "audioinput",
+        deviceId,
+        target?.label
+      );
+      const finalId = resolved?.deviceId || deviceId;
+      const finalLabel = resolved?.label || target?.label || "";
+
+      const prefs = savePreferredDevices({
+        audioDeviceId: finalId,
+        audioLabel: finalLabel,
+      });
+
+      if (roomRef.current) {
+        await roomRef.current.switchActiveDevice("audioinput", finalId);
+        // Ensure microphone track stays active & unmuted after device switch
+        if (micEnabled) {
+          await roomRef.current.localParticipant.setMicrophoneEnabled(true, {
+            deviceId: finalId,
+            echoCancellation: prefs.echoCancellation,
+            noiseSuppression: prefs.noiseSuppression,
+            autoGainControl: prefs.autoGainControl,
+          });
+        }
+        syncParticipants(roomRef.current);
+      }
     } catch (e) {
       console.warn("Failed to switch audio device:", e);
     }
-  }, []);
+  }, [micEnabled, syncParticipants]);
 
   const setVideoDevice = useCallback(async (deviceId: string) => {
-    if (!roomRef.current) return;
     try {
-      await roomRef.current.switchActiveDevice("videoinput", deviceId);
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const target = all.find((d) => d.kind === "videoinput" && d.deviceId === deviceId);
+      const resolved = await resolveLockedHardwareDevice(
+        "videoinput",
+        deviceId,
+        target?.label
+      );
+      const finalId = resolved?.deviceId || deviceId;
+      const finalLabel = resolved?.label || target?.label || "";
+
+      savePreferredDevices({
+        videoDeviceId: finalId,
+        videoLabel: finalLabel,
+      });
+
+      if (roomRef.current) {
+        await roomRef.current.switchActiveDevice("videoinput", finalId);
+        syncParticipants(roomRef.current);
+      }
     } catch (e) {
       console.warn("Failed to switch video device:", e);
     }
-  }, []);
+  }, [syncParticipants]);
+
+  // Anti-Bluetooth Hijack Guard: When Bluetooth connects/disconnects, keep the user's selected PC Mic locked!
+  useEffect(() => {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.addEventListener) return;
+
+    let debounceTimer: NodeJS.Timeout;
+    const handleHardwareDeviceChange = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        const currentRoom = roomRef.current;
+        if (!currentRoom || currentRoom.state !== "connected") return;
+
+        const prefs = loadPreferredDevices();
+        if (!prefs.audioDeviceId && !prefs.audioLabel) return;
+
+        // Check if user's locked microphone (e.g. Realtek Audio) is still present
+        const lockedMic = await resolveLockedHardwareDevice(
+          "audioinput",
+          prefs.audioDeviceId,
+          prefs.audioLabel
+        );
+
+        if (lockedMic) {
+          try {
+            console.log(`[HardwareLock] Re-asserting locked microphone: ${lockedMic.label}`);
+            await currentRoom.switchActiveDevice("audioinput", lockedMic.deviceId);
+
+            // Check if Windows muted or ended the track during Bluetooth profile switch
+            const micPub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
+            const rawTrack = micPub?.audioTrack?.mediaStreamTrack;
+            if (micEnabled && (!rawTrack || rawTrack.readyState === "ended" || rawTrack.muted)) {
+              await currentRoom.localParticipant.setMicrophoneEnabled(false);
+              await currentRoom.localParticipant.setMicrophoneEnabled(true, {
+                deviceId: lockedMic.deviceId,
+                echoCancellation: prefs.echoCancellation,
+                noiseSuppression: prefs.noiseSuppression,
+                autoGainControl: prefs.autoGainControl,
+              });
+            }
+            syncParticipants(currentRoom);
+          } catch (err) {
+            console.warn("[HardwareLock] Mic re-assertion warning:", err);
+          }
+        }
+      }, 650);
+    };
+
+    navigator.mediaDevices.addEventListener("devicechange", handleHardwareDeviceChange);
+    return () => {
+      clearTimeout(debounceTimer);
+      navigator.mediaDevices.removeEventListener("devicechange", handleHardwareDeviceChange);
+    };
+  }, [micEnabled, syncParticipants]);
 
   // Connect on mount / when room parameters change
   useEffect(() => {
