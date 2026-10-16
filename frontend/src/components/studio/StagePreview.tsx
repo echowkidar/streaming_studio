@@ -50,6 +50,8 @@ import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds, getLayoutExpectedSlots, calculateStageLayout } from "@/lib/layoutBounds";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { StageTelestrator } from "./StageTelestrator";
+import { TacticalMapStageCanvas, TacticalMapModal } from "./TacticalMapModal";
+import { YouTubeLibraryModal, extractYouTubeVideoId } from "./YouTubeLibraryModal";
 
 export const StagePreview: React.FC = () => {
   const {
@@ -101,6 +103,7 @@ export const StagePreview: React.FC = () => {
     toggleSoloParticipant,
     scenes,
     activeSceneId,
+    switchScene,
     isStageCropped,
     setIsStageCropped,
     fairUseConfig,
@@ -139,6 +142,8 @@ export const StagePreview: React.FC = () => {
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
   const [mediaLoadError, setMediaLoadError] = useState(false);
   const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
+  const [isTacticalMapModalOpen, setIsTacticalMapModalOpen] = useState(false);
+  const [isYouTubeLibraryModalOpen, setIsYouTubeLibraryModalOpen] = useState(false);
 
   React.useEffect(() => {
     setMediaLoadError(false);
@@ -163,10 +168,37 @@ export const StagePreview: React.FC = () => {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
+  const sendYouTubeCommand = (func: string, args: any[] = []) => {
+    const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+    }
+  };
+
   useEffect(() => {
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
-    const updateTime = () => setVideoCurrentTime(videoEl.currentTime);
+
+    if (activeMedia?.startTimeSec && activeMedia.startTimeSec > 0) {
+      videoEl.currentTime = activeMedia.startTimeSec;
+    }
+
+    const updateTime = () => {
+      setVideoCurrentTime(videoEl.currentTime);
+      if (activeMedia?.endTimeSec && activeMedia.endTimeSec > 0 && videoEl.currentTime >= activeMedia.endTimeSec) {
+        if (activeMedia.loop ?? true) {
+          videoEl.currentTime = activeMedia.startTimeSec || 0;
+          videoEl.play().catch(() => {});
+        } else {
+          videoEl.pause();
+          setIsVideoPlaying(false);
+          const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
+          if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
+            switchScene(scenes[currentIdx + 1].id);
+          }
+        }
+      }
+    };
     const updateDuration = () => setVideoDuration(videoEl.duration || 0);
     const onPlay = () => setIsVideoPlaying(true);
     const onPause = () => setIsVideoPlaying(false);
@@ -192,7 +224,81 @@ export const StagePreview: React.FC = () => {
       videoEl.removeEventListener("pause", onPause);
       videoEl.removeEventListener("ratechange", onRate);
     };
-  }, [activeMedia?.id, activeMedia?.url]);
+  }, [activeMedia?.id, activeMedia?.url, activeMedia?.startTimeSec, activeMedia?.endTimeSec, activeMedia?.loop, scenes, activeSceneId, switchScene]);
+
+  // YouTube IFrame PostMessage Telemetry & Loop / Advance
+  useEffect(() => {
+    if (activeMedia?.type !== "youtube") return;
+
+    const onWindowMessage = (event: MessageEvent) => {
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (!data) return;
+
+        if (data.event === "infoDelivery" && data.info) {
+          if (typeof data.info.currentTime === "number") {
+            setVideoCurrentTime(data.info.currentTime);
+            if (activeMedia.endTimeSec && data.info.currentTime >= activeMedia.endTimeSec) {
+              if (activeMedia.loop ?? true) {
+                sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
+                sendYouTubeCommand("playVideo");
+              } else {
+                sendYouTubeCommand("pauseVideo");
+                setIsVideoPlaying(false);
+                const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
+                if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
+                  switchScene(scenes[currentIdx + 1].id);
+                }
+              }
+            }
+          }
+          if (typeof data.info.duration === "number" && data.info.duration > 0) {
+            setVideoDuration(data.info.duration);
+          }
+          if (typeof data.info.playerState === "number") {
+            setIsVideoPlaying(data.info.playerState === 1);
+            if (data.info.playerState === 0) { // ENDED
+              if (activeMedia.loop ?? true) {
+                sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
+                sendYouTubeCommand("playVideo");
+              } else {
+                const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
+                if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
+                  switchScene(scenes[currentIdx + 1].id);
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    };
+
+    window.addEventListener("message", onWindowMessage);
+
+    const interval = setInterval(() => {
+      const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
+      if (iframe && iframe.contentWindow) {
+        iframe.contentWindow.postMessage(JSON.stringify({ event: "listening" }), "*");
+      }
+    }, 1000);
+
+    return () => {
+      window.removeEventListener("message", onWindowMessage);
+      clearInterval(interval);
+    };
+  }, [activeMedia?.id, activeMedia?.youtubeId, activeMedia?.startTimeSec, activeMedia?.endTimeSec, activeMedia?.loop, scenes, activeSceneId, switchScene]);
+
+  // YouTube Volume Sync
+  useEffect(() => {
+    if (activeMedia?.type !== "youtube") return;
+    const vol = activeMedia.isMuted ? 0 : Math.min(100, Math.round((activeMedia.volume ?? 100)));
+    sendYouTubeCommand("setVolume", [vol]);
+    if (activeMedia.isMuted) {
+      sendYouTubeCommand("mute");
+    } else {
+      sendYouTubeCommand("unMute");
+    }
+  }, [activeMedia?.type, activeMedia?.isMuted, activeMedia?.volume]);
 
   useEffect(() => {
     const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
@@ -226,6 +332,16 @@ export const StagePreview: React.FC = () => {
   }, [activeMedia?.id, activeMedia?.url]);
 
   const handleTogglePlayVideo = () => {
+    if (activeMedia?.type === "youtube") {
+      if (isVideoPlaying) {
+        sendYouTubeCommand("pauseVideo");
+        setIsVideoPlaying(false);
+      } else {
+        sendYouTubeCommand("playVideo");
+        setIsVideoPlaying(true);
+      }
+      return;
+    }
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     if (videoEl.paused) {
@@ -238,6 +354,11 @@ export const StagePreview: React.FC = () => {
   };
 
   const handleSeekVideo = (time: number) => {
+    if (activeMedia?.type === "youtube") {
+      sendYouTubeCommand("seekTo", [time, true]);
+      setVideoCurrentTime(time);
+      return;
+    }
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, time));
@@ -245,6 +366,12 @@ export const StagePreview: React.FC = () => {
   };
 
   const handleSkipVideo = (deltaSec: number) => {
+    if (activeMedia?.type === "youtube") {
+      const nextTime = Math.max(0, Math.min(videoDuration || 0, videoCurrentTime + deltaSec));
+      sendYouTubeCommand("seekTo", [nextTime, true]);
+      setVideoCurrentTime(nextTime);
+      return;
+    }
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, videoEl.currentTime + deltaSec));
@@ -252,6 +379,11 @@ export const StagePreview: React.FC = () => {
   };
 
   const handleChangeVideoSpeed = (rate: number) => {
+    if (activeMedia?.type === "youtube") {
+      sendYouTubeCommand("setPlaybackRate", [rate]);
+      setVideoSpeed(rate);
+      return;
+    }
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     videoEl.playbackRate = rate;
@@ -475,7 +607,7 @@ export const StagePreview: React.FC = () => {
       (audioEl as any).mozPreservesPitch = false;
       (audioEl as any).webkitPreservesPitch = false;
     }
-    if (activeMedia.type !== "video") return;
+    if (activeMedia.type !== "video" && activeMedia.type !== "youtube") return;
     if (!fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
 
     let timer: NodeJS.Timeout;
@@ -486,17 +618,28 @@ export const StagePreview: React.FC = () => {
           : fairUseConfig.autoPauseIntervalSec * 1000;
 
       timer = setTimeout(() => {
-        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-        // Agar broadcaster chal raha hai to broadcaster khud handle karega, warna preview handle karega
-        if (v && !v.paused && !stageBroadcaster.isStreaming()) {
+        if (activeMedia.type === "youtube") {
           const mode = fairUseConfig.antiMatchMode || "jerk-skip";
-          v.pause();
+          sendYouTubeCommand("pauseVideo");
           setTimeout(() => {
-            if (mode === "jerk-skip" && v.duration && v.currentTime + 0.35 < v.duration) {
-              v.currentTime += 0.25;
+            if (mode === "jerk-skip") {
+              sendYouTubeCommand("seekTo", [videoCurrentTime + 0.25, true]);
             }
-            v.play().catch(() => {});
+            sendYouTubeCommand("playVideo");
           }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
+        } else {
+          const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+          // Agar broadcaster chal raha hai to broadcaster khud handle karega, warna preview handle karega
+          if (v && !v.paused && !stageBroadcaster.isStreaming()) {
+            const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+            v.pause();
+            setTimeout(() => {
+              if (mode === "jerk-skip" && v.duration && v.currentTime + 0.35 < v.duration) {
+                v.currentTime += 0.25;
+              }
+              v.play().catch(() => {});
+            }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
+          }
         }
         runCycle();
       }, delayMs);
@@ -554,7 +697,11 @@ export const StagePreview: React.FC = () => {
 
   const hasVisualMedia = Boolean(
     activeMedia &&
-      (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+      (activeMedia.type === "video" ||
+        activeMedia.type === "image" ||
+        activeMedia.type === "pdf" ||
+        activeMedia.type === "youtube" ||
+        activeMedia.type === "map")
   );
 
   const isFullBleedLayout =
@@ -1173,6 +1320,32 @@ export const StagePreview: React.FC = () => {
                 </button>
               </div>
             </div>
+          ) : activeMedia.type === "map" && activeMedia.mapConfig ? (
+            <div className="w-full h-full relative overflow-hidden flex items-center justify-center bg-slate-950">
+              <TacticalMapStageCanvas
+                config={activeMedia.mapConfig}
+                isInteractive={true}
+                onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
+              />
+            </div>
+          ) : activeMedia.type === "youtube" ? (
+            <iframe
+              id="livestudio-youtube-iframe"
+              src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)}?enablejsapi=1&autoplay=1&controls=0&rel=0&modestbranding=1&cc_load_policy=0&iv_load_policy=3&playsinline=1&start=${activeMedia.startTimeSec || 0}${activeMedia.endTimeSec ? `&end=${activeMedia.endTimeSec}` : ""}&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+              title={activeMedia.name || "YouTube Video"}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              className="w-full h-full border-0 pointer-events-auto"
+              style={{
+                objectFit: mediaFitMode,
+                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                transform: [
+                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
+                ].filter(Boolean).join(" ") || undefined,
+                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
+              }}
+            />
           ) : activeMedia.type === "video" ? (
             <video
               id="livestudio-active-media-video"
@@ -1357,14 +1530,26 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* Custom Broadcast Media Transport Bar for Video (Overlayed at bottom of video tile in all Fit/Cropped/Zoom modes) */}
-        {activeMedia.type === "video" && (
+        {/* Custom Broadcast Media Transport Bar for Video & YouTube (Overlayed at bottom of video tile in all Fit/Cropped/Zoom modes) */}
+        {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
           <div
             className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all"
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
+            {activeMedia.type === "youtube" && (
+              <button
+                type="button"
+                onClick={() => setIsYouTubeLibraryModalOpen(true)}
+                className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors"
+                title="Edit Start/End Time or Replace YouTube Clip"
+              >
+                <Youtube className="w-3 h-3 text-red-400" />
+                <span>Clip</span>
+              </button>
+            )}
+
             {/* Play/Pause */}
             <button
               type="button"
@@ -1480,6 +1665,53 @@ export const StagePreview: React.FC = () => {
             </span>
           </div>
         )}
+
+        {/* Custom Broadcast Media Transport Bar for Tactical Map */}
+        {activeMedia.type === "map" && activeMedia.mapConfig && (
+          <div
+            className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-cyan-500/30 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-cyan-950/60 border border-cyan-500/40 text-[10px] text-cyan-300 font-bold">
+              <Globe className="w-3.5 h-3.5" />
+              <span>Tactical Map</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsTacticalMapModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[10.5px] font-bold flex items-center gap-1 shadow-md"
+              title="Edit Tactical Map Routes, Trajectories & Locations"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Edit Map</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const styles: Array<"dark-radar" | "satellite" | "political" | "vector-grid"> = [
+                  "dark-radar",
+                  "satellite",
+                  "political",
+                  "vector-grid",
+                ];
+                const curIdx = styles.indexOf(activeMedia.mapConfig!.mapStyle);
+                const nextStyle = styles[(curIdx + 1) % styles.length];
+                setActiveMedia({
+                  ...activeMedia,
+                  mapConfig: { ...activeMedia.mapConfig!, mapStyle: nextStyle },
+                });
+              }}
+              className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 text-[10.5px] font-medium"
+              title="Switch Map Theme (Dark Radar / Satellite / Political / Vector Grid)"
+            >
+              Theme: <span className="font-bold text-cyan-400 capitalize">{activeMedia.mapConfig.mapStyle}</span>
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -1489,7 +1721,11 @@ export const StagePreview: React.FC = () => {
     const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
     const hasVisualMedia = Boolean(
       activeMedia &&
-        (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+        (activeMedia.type === "video" ||
+          activeMedia.type === "image" ||
+          activeMedia.type === "pdf" ||
+          activeMedia.type === "youtube" ||
+          activeMedia.type === "map")
     );
 
     if (onStageParticipants.length === 0 && !hasVisualMedia) {
@@ -1769,8 +2005,21 @@ export const StagePreview: React.FC = () => {
                   </>
                 )}
 
-                {/* Auto-Repeat Toggle Button for Video */}
-                {activeMedia.type === "video" && (
+                {/* Tactical Map Edit Button */}
+                {activeMedia.type === "map" && (
+                  <button
+                    type="button"
+                    onClick={() => setIsTacticalMapModalOpen(true)}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-400/40 flex items-center gap-1 transition-colors"
+                    title="Open Tactical Map Trajectory Editor"
+                  >
+                    <Globe className="w-3 h-3 text-cyan-400" />
+                    <span>Edit Map</span>
+                  </button>
+                )}
+
+                {/* Auto-Repeat Toggle Button for Video & YouTube */}
+                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
                   <button
                     type="button"
                     onClick={() =>
@@ -1796,8 +2045,8 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
-                {/* Audio Mute / Unmute Button for Video / Audio */}
-                {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+                {/* Audio Mute / Unmute Button for Video / Audio / YouTube */}
+                {(activeMedia.type === "video" || activeMedia.type === "audio" || activeMedia.type === "youtube") && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1831,7 +2080,7 @@ export const StagePreview: React.FC = () => {
                 )}
 
                 {/* Volume Slider (0% - 200%) */}
-                {(activeMedia.type === "video" || activeMedia.type === "audio") && (
+                {(activeMedia.type === "video" || activeMedia.type === "audio" || activeMedia.type === "youtube") && (
                   <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
                     <input
                       type="range"
@@ -3425,6 +3674,17 @@ export const StagePreview: React.FC = () => {
         <div className="absolute inset-0 bg-[#07070d]/40 backdrop-blur-[2px] z-40 pointer-events-none transition-opacity duration-300 animate-in fade-in" />
       )}
       </div>
+
+      <YouTubeLibraryModal
+        isOpen={isYouTubeLibraryModalOpen}
+        onClose={() => setIsYouTubeLibraryModalOpen(false)}
+      />
+
+      <TacticalMapModal
+        isOpen={isTacticalMapModalOpen}
+        onClose={() => setIsTacticalMapModalOpen(false)}
+        initialItem={activeMedia?.type === "map" ? activeMedia : undefined}
+      />
     </div>
   );
 };

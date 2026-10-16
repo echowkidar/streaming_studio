@@ -981,9 +981,11 @@ class StageBroadcaster {
       }
 
       if (isMedia) {
-        // ── Media Tile (Video or Image/Slides) ──
+        // ── Media Tile (Video, Image/Slides, or Tactical Map Canvas) ──
         const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
         const mediaImg = el.querySelector("img") as HTMLImageElement | null;
+        const mediaCanvas = (el.querySelector("canvas#livestudio-tactical-map-canvas") ||
+          el.querySelector("canvas")) as HTMLCanvasElement | null;
 
         const defaultMediaFit = currentStore.isStageCropped ? "cover" : "contain";
         const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: defaultMediaFit, zoom: 1, panX: 0, panY: 0 };
@@ -1177,6 +1179,10 @@ class StageBroadcaster {
               currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
             );
           }
+        } else if (mediaCanvas && mediaCanvas.width > 0 && mediaCanvas.height > 0) {
+          try {
+            ctx.drawImage(mediaCanvas, x, y, w, h);
+          } catch {}
         }
 
         // Clean broadcast video output (StreamYard parity: raw file names like 'Intro Video.mp4' are never burned onto the live stream or recording)

@@ -49,10 +49,52 @@ export interface CustomLayoutConfig {
   showSpeakerBorder: boolean;
 }
 
+export type TacticalRouteAssetType =
+  | "missile"
+  | "salvo"
+  | "fighter-jet"
+  | "airliner"
+  | "drone"
+  | "helicopter"
+  | "warship"
+  | "custom-image";
+
+export interface TacticalMapPoint {
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export interface TacticalMapRoute {
+  id: string;
+  from: TacticalMapPoint;
+  to: TacticalMapPoint;
+  assetType: TacticalRouteAssetType;
+  color: string;
+  arcHeight: number;
+  speed: number;
+  showImpactShockwave: boolean;
+  showDistanceKm: boolean;
+  customIconUrl?: string;
+}
+
+export interface TacticalMapConfig {
+  title: string;
+  subtitle?: string;
+  mapStyle: "dark-radar" | "satellite" | "political" | "vector-grid";
+  centerLat: number;
+  centerLon: number;
+  zoom: number;
+  loopAnimation: boolean;
+  showRadarSweep: boolean;
+  showGridLines: boolean;
+  routes: TacticalMapRoute[];
+}
+
 export interface MediaFileItem {
   id: string;
   name: string;
-  type: "video" | "audio" | "image" | "pdf";
+  type: "video" | "audio" | "image" | "pdf" | "youtube" | "map";
   url: string;
   duration?: string;
   durationSeconds?: number;
@@ -66,6 +108,13 @@ export interface MediaFileItem {
   slides?: string[];
   currentSlideIndex?: number;
   speakerNotes?: Record<number, string>;
+  /** YouTube Zero-Key Playback & Fair-Use Start/End Time */
+  youtubeId?: string;
+  youtubeUrl?: string;
+  startTimeSec?: number;
+  endTimeSec?: number;
+  /** Tactical Map Trajectory Animator */
+  mapConfig?: TacticalMapConfig;
 }
 
 export type ActiveMedia = MediaFileItem;
@@ -357,6 +406,7 @@ interface StudioState {
   // Unified Media Library
   mediaLibrary: MediaFileItem[];
   addMediaLibraryItem: (item: MediaFileItem) => void;
+  updateMediaLibraryItem: (id: string, updates: Partial<MediaFileItem>) => void;
   removeMediaLibraryItem: (id: string) => void;
 
   // Chat
@@ -2260,6 +2310,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const current = get().mediaLibrary;
     const filtered = current.filter((m) => m.id !== item.id && m.url !== item.url);
     const next = [item, ...filtered];
+    persistMediaLibrary(next);
+    set({ mediaLibrary: next });
+  },
+  updateMediaLibraryItem: (id, updates) => {
+    const current = get().mediaLibrary;
+    const next = current.map((m) => (m.id === id ? { ...m, ...updates } : m));
     persistMediaLibrary(next);
     set({ mediaLibrary: next });
   },

@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import { spawn, exec } from 'child_process';
 import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { StorageService } from '../services/storage.service';
@@ -573,6 +574,89 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction): P
   } catch (error) {
     next(error);
   }
+});
+
+// GET /api/media/youtube/info?videoId=... (Zero-Key YouTube metadata & direct stream URL extraction)
+router.get('/youtube/info', async (req: Request, res: Response): Promise<void> => {
+  const videoId = ((req.query.videoId as string) || '').trim();
+  const rawUrl = ((req.query.url as string) || '').trim();
+  const targetId =
+    videoId ||
+    (rawUrl.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/) || [])[1];
+
+  if (!targetId) {
+    res.status(400).json({ success: false, error: 'Valid YouTube videoId or url is required' });
+    return;
+  }
+
+  const youtubeUrl = `https://www.youtube.com/watch?v=${targetId}`;
+
+  // 1. Fetch public oEmbed metadata (0ms API key required)
+  let title = 'YouTube Video';
+  let author = 'YouTube Creator';
+  let thumbnail = `https://img.youtube.com/vi/${targetId}/maxresdefault.jpg`;
+
+  try {
+    const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(youtubeUrl)}&format=json`);
+    if (oembedRes.ok) {
+      const data = (await oembedRes.json()) as any;
+      if (data.title) title = data.title;
+      if (data.author_name) author = data.author_name;
+      if (data.thumbnail_url) thumbnail = data.thumbnail_url;
+    }
+  } catch {}
+
+  // 2. Check if yt-dlp is available to extract direct MP4 stream URL
+  exec(`yt-dlp --get-url -f "best[ext=mp4]/best" "${youtubeUrl}"`, { timeout: 8000 }, (err, stdout) => {
+    let directStreamUrl: string | null = null;
+    if (!err && stdout && stdout.trim().startsWith('http')) {
+      directStreamUrl = stdout.trim().split('\n')[0];
+    }
+
+    res.status(200).json({
+      success: true,
+      videoId: targetId,
+      title,
+      author,
+      thumbnail,
+      directStreamUrl,
+      proxyStreamUrl: `/api/media/youtube/stream?videoId=${targetId}`,
+    });
+  });
+});
+
+// GET /api/media/youtube/stream?videoId=... (Proxies MP4 stream with CORS headers for canvas capture and audio DSP)
+router.get('/youtube/stream', (req: Request, res: Response): void => {
+  const videoId = ((req.query.videoId as string) || '').trim();
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    res.status(400).json({ success: false, error: 'Valid 11-char YouTube videoId is required' });
+    return;
+  }
+
+  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Content-Type', 'video/mp4');
+
+  // Spawn yt-dlp to stream standard MP4 output directly to response pipe
+  const proc = spawn('yt-dlp', ['-o', '-', '-f', 'best[ext=mp4]/best', '--no-playlist', youtubeUrl]);
+
+  proc.stdout.pipe(res);
+
+  proc.stderr.on('data', () => {});
+
+  proc.on('error', () => {
+    if (!res.headersSent) {
+      res.status(501).json({ success: false, error: 'yt-dlp not available on host system. Using IFrame fallback.' });
+    }
+  });
+
+  req.on('close', () => {
+    try {
+      proc.kill();
+    } catch {}
+  });
 });
 
 export default router;

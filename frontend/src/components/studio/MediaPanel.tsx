@@ -17,6 +17,8 @@ import {
   Layers,
   Repeat,
   GripVertical,
+  Youtube,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -24,6 +26,8 @@ import { useStudioStore, MediaFileItem, persistStudioLayout } from "@/stores/stu
 import { StageOverlayAsset } from "@/types";
 import { cn } from "@/lib/utils";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
+import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
+import { TacticalMapModal } from "./TacticalMapModal";
 
 interface MediaPanelProps {
   studioId?: string;
@@ -45,6 +49,8 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [autoRepeat, setAutoRepeat] = useState(true);
   const [isSlideCreatorOpen, setIsSlideCreatorOpen] = useState(false);
+  const [isYouTubeLibraryOpen, setIsYouTubeLibraryOpen] = useState(false);
+  const [isTacticalMapOpen, setIsTacticalMapOpen] = useState(false);
   const [draggingMediaId, setDraggingMediaId] = useState<string | null>(null);
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
@@ -471,6 +477,26 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
             <span>Slides</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => setIsYouTubeLibraryOpen(true)}
+            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-500 text-white flex items-center gap-1 shadow-sm transition-all"
+            title="Direct YouTube Video Player & Clip Library"
+          >
+            <Youtube className="w-3.5 h-3.5" />
+            <span>YouTube</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsTacticalMapOpen(true)}
+            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 shadow-sm transition-all"
+            title="Broadcast News Tactical Map & Trajectory Animator"
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Map</span>
+          </button>
+
           <Button
             variant="primary"
             size="sm"
@@ -731,6 +757,22 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         onClose={() => setIsSlideCreatorOpen(false)}
         onDeckCreated={(deck) => {
           setMediaList((prev) => [deck, ...prev]);
+        }}
+      />
+
+      <YouTubeLibraryModal
+        isOpen={isYouTubeLibraryOpen}
+        onClose={() => setIsYouTubeLibraryOpen(false)}
+        onSelectYouTubeItem={(item) => {
+          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
+        }}
+      />
+
+      <TacticalMapModal
+        isOpen={isTacticalMapOpen}
+        onClose={() => setIsTacticalMapOpen(false)}
+        onSaveMapItem={(item) => {
+          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
         }}
       />
     </div>

@@ -216,3 +216,46 @@ export interface StageOverlayAsset {
   isShowing: boolean;
   showBackdrop?: boolean;
 }
+
+export type TacticalRouteAssetType =
+  | "missile"
+  | "salvo"
+  | "fighter-jet"
+  | "airliner"
+  | "drone"
+  | "helicopter"
+  | "warship"
+  | "custom-image";
+
+export interface TacticalMapPoint {
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+export interface TacticalMapRoute {
+  id: string;
+  from: TacticalMapPoint;
+  to: TacticalMapPoint;
+  assetType: TacticalRouteAssetType;
+  color: string;
+  arcHeight: number;
+  speed: number;
+  showImpactShockwave: boolean;
+  showDistanceKm: boolean;
+  customIconUrl?: string;
+}
+
+export interface TacticalMapConfig {
+  title: string;
+  subtitle?: string;
+  mapStyle: "dark-radar" | "satellite" | "political" | "vector-grid";
+  centerLat: number;
+  centerLon: number;
+  zoom: number;
+  loopAnimation: boolean;
+  showRadarSweep: boolean;
+  showGridLines: boolean;
+  routes: TacticalMapRoute[];
+}
+
