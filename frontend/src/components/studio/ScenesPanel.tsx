@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout } from "@/stores/studio.store";
+import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout, MediaFileItem } from "@/stores/studio.store";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
 import { TacticalMapModal } from "./TacticalMapModal";
+import { WebsiteLibraryModal } from "./WebsiteLibraryModal";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -33,6 +34,7 @@ import {
   Layers,
   Youtube,
   Globe,
+  Clipboard,
 } from "lucide-react";
 
 export const LAYOUT_LABELS: Record<string, string> = {
@@ -314,6 +316,47 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [slideCreatorSceneId, setSlideCreatorSceneId] = useState<string | null>(null);
   const [youtubeLibrarySceneId, setYoutubeLibrarySceneId] = useState<string | null>(null);
   const [tacticalMapSceneId, setTacticalMapSceneId] = useState<string | null>(null);
+  const [websiteLibrarySceneId, setWebsiteLibrarySceneId] = useState<string | null>(null);
+
+  const handlePasteToScene = async (sceneId: string) => {
+    try {
+      if (!navigator.clipboard?.read) {
+        alert("Clipboard read not supported or permission denied. Please press Ctrl+V on the stage directly.");
+        return;
+      }
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const newItem: MediaFileItem = {
+              id: `media-screenshot-${Date.now()}`,
+              name: `Screenshot_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
+              type: "image",
+              url: dataUrl,
+              thumbnail: dataUrl,
+              duration: "Image",
+              isUploaded: true,
+            };
+            addMediaLibraryItem(newItem);
+            updateScene(sceneId, { activeMedia: newItem });
+            if (!activeSceneId || activeSceneId === sceneId) {
+              setActiveMedia(newItem);
+            }
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      alert("No image found in clipboard! Press Win+Shift+S (or Cmd+Shift+4) to copy a screenshot first.");
+    } catch (err) {
+      console.warn("Clipboard read error:", err);
+      alert("Clipboard access error. Please use Ctrl+V directly to paste screenshot.");
+    }
+  };
   const mediaFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleSelectSceneLayout = (sceneId: string, layout: StudioLayout) => {
@@ -1703,6 +1746,30 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                     <button
                       type="button"
                       onClick={() => {
+                        setWebsiteLibrarySceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 font-medium"
+                    >
+                      <Globe className="w-3.5 h-3.5 text-teal-400" />
+                      <span>Attach Website URL</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handlePasteToScene(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-white/10 flex items-center gap-2 font-medium"
+                    >
+                      <Clipboard className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Paste Screenshot to Scene</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
                         handleStartRename(scene);
                         setActiveMenuId(null);
                       }}
@@ -2085,6 +2152,34 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
               <span>Create Tactical Map & Missile/Plane Trajectory</span>
             </button>
 
+            {/* Interactive Website URL Picker Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const sId = mediaPickerSceneId;
+                setMediaPickerSceneId(null);
+                setWebsiteLibrarySceneId(sId);
+              }}
+              className="w-full mt-2 py-2 px-3 rounded-xl bg-teal-600/20 border border-teal-500/40 hover:border-teal-400 text-teal-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
+            >
+              <Globe className="w-4 h-4 text-teal-400" />
+              <span>Attach Interactive Website URL (Proxy Bypassed)</span>
+            </button>
+
+            {/* Paste Screenshot from Clipboard Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const sId = mediaPickerSceneId;
+                setMediaPickerSceneId(null);
+                if (sId) handlePasteToScene(sId);
+              }}
+              className="w-full mt-2 py-2 px-3 rounded-xl bg-cyan-600/20 border border-cyan-500/40 hover:border-cyan-400 text-cyan-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
+            >
+              <Clipboard className="w-4 h-4 text-cyan-400" />
+              <span>Paste Screenshot from Clipboard (Ctrl+V)</span>
+            </button>
+
             {/* Upload from Computer */}
             <input
               ref={mediaFileInputRef}
@@ -2331,6 +2426,12 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         isOpen={Boolean(tacticalMapSceneId)}
         onClose={() => setTacticalMapSceneId(null)}
         targetSceneId={tacticalMapSceneId || undefined}
+      />
+
+      <WebsiteLibraryModal
+        isOpen={Boolean(websiteLibrarySceneId)}
+        onClose={() => setWebsiteLibrarySceneId(null)}
+        targetSceneId={websiteLibrarySceneId || undefined}
       />
     </aside>
   );

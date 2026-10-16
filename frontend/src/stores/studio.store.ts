@@ -91,10 +91,25 @@ export interface TacticalMapConfig {
   routes: TacticalMapRoute[];
 }
 
+export type WebsitePointerStyle = "laser" | "cursor" | "crosshair" | "spotlight";
+
+export interface WebsiteSceneConfig {
+  url: string;
+  title?: string;
+  useProxy?: boolean;
+  interactiveMode?: boolean;
+  showBroadcastPointer?: boolean;
+  pointerStyle?: WebsitePointerStyle;
+  pointerColor?: string;
+  scrollYPercent?: number;
+  areaZoom?: number;
+  focusArea?: "top" | "mid" | "btm" | "left" | "right";
+}
+
 export interface MediaFileItem {
   id: string;
   name: string;
-  type: "video" | "audio" | "image" | "pdf" | "youtube" | "map";
+  type: "video" | "audio" | "image" | "pdf" | "youtube" | "map" | "website";
   url: string;
   duration?: string;
   durationSeconds?: number;
@@ -115,6 +130,8 @@ export interface MediaFileItem {
   endTimeSec?: number;
   /** Tactical Map Trajectory Animator */
   mapConfig?: TacticalMapConfig;
+  /** Interactive Website & Live Pointer Config */
+  websiteConfig?: WebsiteSceneConfig;
 }
 
 export type ActiveMedia = MediaFileItem;
@@ -158,6 +175,7 @@ export interface FairUseConfig {
   grainIntensity?: "random" | "light" | "medium" | "strong";
   /** Subtle zoom breathing effect (1.00x-1.04x) defeating DCT hash match */
   isBreathingEnabled?: boolean;
+  breathingIntensity?: "subtle" | "medium" | "strong";
   /** Enable audio fair-use spectral transformation on MP3/audio files */
   enableAudioFairUse?: boolean;
   /** Purani movies jaisi random bareek vertical scratches & traveling lines */
@@ -397,6 +415,8 @@ interface StudioState {
 
   // Scene Transition State
   isSceneTransitioning: boolean;
+  isMediaTransitioning: boolean;
+  setMediaTransitioning: (val: boolean) => void;
   activeTransitionType: "cut" | "fade" | "wipe" | "stinger";
 
   // StreamYard Extra Camera Scene Binding
@@ -1308,6 +1328,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   connectionQuality: "EXCELLENT",
 
   isSceneTransitioning: false,
+  isMediaTransitioning: false,
+  setMediaTransitioning: (val) => set({ isMediaTransitioning: val }),
   activeTransitionType: "fade",
 
   fairUseConfig: {
@@ -1326,6 +1348,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     filmGrainOverlay: true,
     grainIntensity: "random",
     isBreathingEnabled: true,
+    breathingIntensity: "subtle",
     enableAudioFairUse: true,
     vintageLinesOverlay: true, // Default Old-Movie Bareek Lines ON!
     vintageLinesIntensity: "medium",
@@ -2668,10 +2691,32 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       get().saveCurrentStageToScene(state.activeSceneId);
     }
 
+    // StreamYard Scene Participant Reconciliation:
+    // Supports Media-Only scenes, auto-promoting connected guests, and replaceHostOnGuestJoin
+    const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
+
+    // Smart Delta Scene Transition: Compare current and upcoming on-stage participants
+    // If Host/Guest remain on stage across scenes, do NOT blur/flicker the entire stage!
+    // Instead, only trigger media transitioning for the changing 3rd tile.
+    const prevOnStageIds = state.participants
+      .filter((p) => p.status === "ON_STAGE")
+      .map((p) => String(p.id));
+    const nextOnStageIds = nextParticipants
+      .filter((p) => p.status === "ON_STAGE")
+      .map((p) => String(p.id));
+
+    const sharedOnStageIds = prevOnStageIds.filter((id) => nextOnStageIds.includes(id));
+    const isSmartDelta = sharedOnStageIds.length > 0;
+
     const transition = scene.transitionType || "fade";
     if (transition !== "cut") {
-      set({ isSceneTransitioning: true, activeTransitionType: transition });
-      setTimeout(() => set({ isSceneTransitioning: false }), 420);
+      if (isSmartDelta) {
+        set({ isMediaTransitioning: true, activeTransitionType: transition });
+        setTimeout(() => set({ isMediaTransitioning: false }), 420);
+      } else {
+        set({ isSceneTransitioning: true, activeTransitionType: transition });
+        setTimeout(() => set({ isSceneTransitioning: false }), 420);
+      }
     }
 
     const targetLayout = scene.layout || "solo";
@@ -2687,10 +2732,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         : targetLayout === "speaker-large" || targetLayout === "presentation"
         ? 65
         : 50);
-
-    // StreamYard Scene Participant Reconciliation:
-    // Supports Media-Only scenes, auto-promoting connected guests, and replaceHostOnGuestJoin
-    const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
 
     // Restore scene-specific tileTransforms (Zoom, Pan, Fit/Cover, Transparent Media)
     const currentTransforms: Record<string, TileTransform> = scene.tileTransforms

@@ -259,3 +259,19 @@ export interface TacticalMapConfig {
   routes: TacticalMapRoute[];
 }
 
+export type WebsitePointerStyle = "laser" | "cursor" | "crosshair" | "spotlight";
+
+export interface WebsiteSceneConfig {
+  url: string;
+  title?: string;
+  useProxy?: boolean;
+  interactiveMode?: boolean;
+  showBroadcastPointer?: boolean;
+  pointerStyle?: WebsitePointerStyle;
+  pointerColor?: string;
+  scrollYPercent?: number;
+  areaZoom?: number;
+  focusArea?: "top" | "mid" | "btm" | "left" | "right";
+}
+
+

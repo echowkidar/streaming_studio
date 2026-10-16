@@ -994,10 +994,12 @@ class StageBroadcaster {
         const panX = mediaTf.panX || 0;
         const panY = mediaTf.panY || 0;
 
-        // Subtle breathing scale oscillation (1.00x-1.04x) defeating DCT hash match
+        // Cinematic Zoom Breathing scale oscillation (defeating DCT perceptual hashes)
+        const breathIntensity = currentStore.fairUseConfig?.breathingIntensity || "subtle";
+        const amp = breathIntensity === "strong" ? 0.09 : breathIntensity === "medium" ? 0.055 : 0.03;
         const breathingScale =
           currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.isBreathingEnabled
-            ? 1.0 + 0.02 * (1 + Math.sin(timestamp / 3000))
+            ? 1.0 + amp * (1 + Math.sin(timestamp / 1200))
             : 1.0;
         const effectiveZoom = zoom * breathingScale;
 
@@ -1183,6 +1185,22 @@ class StageBroadcaster {
           try {
             ctx.drawImage(mediaCanvas, x, y, w, h);
           } catch {}
+        }
+
+        // Draw Live Broadcast Web Pointer if active over website scene
+        if (typeof window !== "undefined" && (window as any).__livestudioWebPointer && (window as any).__livestudioWebPointer.visible) {
+          const ptr = (window as any).__livestudioWebPointer;
+          const ptrX = x + (w * ptr.xPct) / 100;
+          const ptrY = y + (h * ptr.yPct) / 100;
+          this.drawBroadcastPointer(
+            ctx,
+            ptrX,
+            ptrY,
+            ptr.style || "laser",
+            ptr.color || "#ef4444",
+            Boolean(ptr.isClicking),
+            timestamp
+          );
         }
 
         // Clean broadcast video output (StreamYard parity: raw file names like 'Intro Video.mp4' are never burned onto the live stream or recording)
@@ -2046,6 +2064,110 @@ class StageBroadcaster {
       ctx.fillRect(sx, sy, 1.5, 1.5);
     }
 
+    ctx.restore();
+  }
+
+  /**
+   * Draws Live Broadcast Pointer (Laser, Cursor, Crosshair, Spotlight) over composite video frame
+   */
+  private drawBroadcastPointer(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    style: string,
+    color: string,
+    isClicking: boolean,
+    timestamp: number
+  ) {
+    ctx.save();
+    const effectiveColor = color || "#ef4444";
+
+    if (style === "cursor") {
+      // Broadcast Arrow Cursor
+      ctx.translate(x, y);
+      if (isClicking) ctx.scale(1.25, 1.25);
+      ctx.fillStyle = effectiveColor;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Draw cursor arrow inside
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.moveTo(-4, -6);
+      ctx.lineTo(6, 0);
+      ctx.lineTo(0, 3);
+      ctx.lineTo(2, 7);
+      ctx.lineTo(-1, 8);
+      ctx.lineTo(-3, 4);
+      ctx.closePath();
+      ctx.fill();
+    } else if (style === "crosshair") {
+      // Tactical Crosshair
+      const size = isClicking ? 20 : 16;
+      ctx.strokeStyle = effectiveColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x - size - 4, y);
+      ctx.lineTo(x + size + 4, y);
+      ctx.moveTo(x, y - size - 4);
+      ctx.lineTo(x, y + size + 4);
+      ctx.stroke();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === "spotlight") {
+      // Spotlight Ring
+      const radius = isClicking ? 40 : 48;
+      ctx.strokeStyle = effectiveColor;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = effectiveColor;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // subtle inner tint
+      ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.fill();
+    } else {
+      // "laser" (default)
+      const pulseProgress = (timestamp % 900) / 900;
+      const pulseRadius = 8 + pulseProgress * (isClicking ? 24 : 16);
+      const pulseAlpha = Math.max(0, 1 - pulseProgress);
+
+      // Pulse ring
+      ctx.strokeStyle = effectiveColor;
+      ctx.globalAlpha = pulseAlpha * 0.75;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, pulseRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Main laser dot with shadow
+      ctx.globalAlpha = 1.0;
+      ctx.shadowColor = effectiveColor;
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = effectiveColor;
+      ctx.beginPath();
+      ctx.arc(x, y, isClicking ? 9 : 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner white core
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 

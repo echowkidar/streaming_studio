@@ -41,9 +41,10 @@ import {
   Play,
   Pause,
   RotateCw,
+  Clipboard,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,7 @@ import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { StageTelestrator } from "./StageTelestrator";
 import { TacticalMapStageCanvas, TacticalMapModal } from "./TacticalMapModal";
 import { YouTubeLibraryModal, extractYouTubeVideoId } from "./YouTubeLibraryModal";
+import { InteractiveWebsiteStageView, WebsiteLibraryModal } from "./WebsiteLibraryModal";
 
 export const StagePreview: React.FC = () => {
   const {
@@ -112,6 +114,9 @@ export const StagePreview: React.FC = () => {
     nextSlide,
     prevSlide,
     isSceneTransitioning,
+    isMediaTransitioning,
+    addMediaLibraryItem,
+    updateScene,
   } = useStudioStore();
 
   const defaultMediaFit: "contain" | "cover" = isStageCropped ? "cover" : "contain";
@@ -144,6 +149,7 @@ export const StagePreview: React.FC = () => {
   const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
   const [isTacticalMapModalOpen, setIsTacticalMapModalOpen] = useState(false);
   const [isYouTubeLibraryModalOpen, setIsYouTubeLibraryModalOpen] = useState(false);
+  const [isWebsiteLibraryModalOpen, setIsWebsiteLibraryModalOpen] = useState(false);
 
   React.useEffect(() => {
     setMediaLoadError(false);
@@ -654,6 +660,102 @@ export const StagePreview: React.FC = () => {
     fairUseConfig?.antiMatchMode,
     fairUseConfig?.playbackRate,
   ]);
+
+  // Real-time 60FPS breathScale oscillation loop (mediaZoom * breathScale)
+  const [breathScale, setBreathScale] = useState<number>(1.0);
+  const isBreathingActive = Boolean(fairUseConfig?.enabled && fairUseConfig?.isBreathingEnabled);
+  const breathIntensity = fairUseConfig?.breathingIntensity || "subtle";
+
+  useEffect(() => {
+    if (!isBreathingActive) {
+      setBreathScale(1.0);
+      return;
+    }
+    let animId: number;
+    const amp = breathIntensity === "strong" ? 0.09 : breathIntensity === "medium" ? 0.055 : 0.03;
+    const animate = (time: number) => {
+      const factor = 1 + amp * (1 + Math.sin(time / 1200));
+      setBreathScale(factor);
+      animId = requestAnimationFrame(animate);
+    };
+    animId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animId);
+  }, [isBreathingActive, breathIntensity]);
+
+  // Global Clipboard Screenshot Paste (Ctrl+V / Cmd+V) & 📋 Paste Button
+  const handlePasteBlob = React.useCallback(
+    (blob: Blob) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const newItem: MediaFileItem = {
+          id: `media-screenshot-${Date.now()}`,
+          name: `Screenshot_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
+          type: "image",
+          url: dataUrl,
+          thumbnail: dataUrl,
+          duration: "Image",
+          isUploaded: true,
+        };
+        addMediaLibraryItem(newItem);
+        if (activeSceneId) {
+          updateScene(activeSceneId, { activeMedia: newItem });
+        }
+        setActiveMedia(newItem);
+      };
+      reader.readAsDataURL(blob);
+    },
+    [addMediaLibraryItem, activeSceneId, updateScene, setActiveMedia]
+  );
+
+  useEffect(() => {
+    const onPaste = async (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.clipboardData) {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith("image/")) {
+            const file = items[i].getAsFile();
+            if (file) {
+              e.preventDefault();
+              handlePasteBlob(file);
+              return;
+            }
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [handlePasteBlob]);
+
+  const handleClipboardButtonClick = async () => {
+    try {
+      if (!navigator.clipboard?.read) {
+        alert("Clipboard read not supported or permission denied. Please press Ctrl+V directly to paste screenshot.");
+        return;
+      }
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          handlePasteBlob(blob);
+          return;
+        }
+      }
+      alert("No image found in clipboard! Press Win+Shift+S (or Cmd+Shift+4) to copy a screenshot, then click Paste.");
+    } catch (err) {
+      console.warn("Clipboard read error:", err);
+      alert("Clipboard access error. Please use Ctrl+V / Cmd+V directly to paste screenshot.");
+    }
+  };
 
   const params = useParams();
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null);
@@ -1272,7 +1374,8 @@ export const StagePreview: React.FC = () => {
         data-participant-fit={mediaFitMode}
         data-transparent-card={isTransparentCard ? "true" : "false"}
         className={cn(
-          "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all",
+          "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all duration-300",
+          isMediaTransitioning && "opacity-30 scale-[0.98] blur-[1px]",
           isFullBleedLayout ? "rounded-none" : "rounded-2xl",
           isTransparentCard
             ? "bg-transparent border-0 shadow-none"
@@ -1328,6 +1431,16 @@ export const StagePreview: React.FC = () => {
                 onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
               />
             </div>
+          ) : activeMedia.type === "website" ? (
+            <InteractiveWebsiteStageView
+              item={activeMedia}
+              zoom={mediaZoom * (isBreathingActive ? breathScale : 1)}
+              panX={mediaPanX}
+              panY={mediaPanY}
+              rotation={mediaTransform.rotation || 0}
+              isMirrored={Boolean(fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo)}
+              onOpenLibraryModal={() => setIsWebsiteLibraryModalOpen(true)}
+            />
           ) : activeMedia.type === "youtube" ? (
             <iframe
               id="livestudio-youtube-iframe"
@@ -1339,7 +1452,10 @@ export const StagePreview: React.FC = () => {
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 transform: [
-                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
+                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
+                    : "",
+                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
                 transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
@@ -1361,7 +1477,10 @@ export const StagePreview: React.FC = () => {
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 transform: [
-                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
+                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
+                    : "",
+                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
                 transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
@@ -1383,7 +1502,10 @@ export const StagePreview: React.FC = () => {
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 transform: [
-                  mediaZoom > 1 ? `scale(${mediaZoom})` : "",
+                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
+                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
+                    : "",
+                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
                   fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
                 ].filter(Boolean).join(" ") || undefined,
                 transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
@@ -1874,6 +1996,28 @@ export const StagePreview: React.FC = () => {
                   <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
                 </button>
 
+                {/* 📋 Paste Screenshot from Clipboard */}
+                <button
+                  type="button"
+                  onClick={handleClipboardButtonClick}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border border-white/20 bg-white/10 hover:bg-white/20 text-slate-200 transition-colors"
+                  title="Paste Screenshot from Clipboard (Ctrl+V) — Replaces stage media"
+                >
+                  <Clipboard className="w-3 h-3 text-cyan-400" />
+                  <span>Paste</span>
+                </button>
+
+                {/* 🌐 Web URL Modal Trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsWebsiteLibraryModalOpen(true)}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border border-emerald-500/40 bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 transition-colors"
+                  title="Attach Interactive Website URL with Live Pointer"
+                >
+                  <Globe className="w-3 h-3 text-emerald-400" />
+                  <span>Web URL</span>
+                </button>
+
                 {/* Always-Visible Media Zoom Controls (Works in both Fit & Cropped modes) */}
                 <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
                   <button
@@ -2233,10 +2377,27 @@ export const StagePreview: React.FC = () => {
                           ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
                           : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
                       )}
-                      title="Subtle Zoom Breathing (1.00x–1.04x) continuously shifts DCT block boundaries"
+                      title="Cinematic Zoom Breathing continuously shifts DCT block boundaries"
                     >
                       <span>Breath {fairUseConfig?.isBreathingEnabled ? "ON" : "OFF"}</span>
                     </button>
+
+                    {/* Breath Intensity Selector */}
+                    <select
+                      value={fairUseConfig?.breathingIntensity || "subtle"}
+                      onChange={(e) =>
+                        setFairUseConfig({
+                          breathingIntensity: e.target.value as "subtle" | "medium" | "strong",
+                          isBreathingEnabled: true,
+                        })
+                      }
+                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
+                      title="Breath Zoom Intensity (6% Subtle, 11% Medium, 18% Strong)"
+                    >
+                      <option value="subtle">6% Subtle</option>
+                      <option value="medium">11% Med</option>
+                      <option value="strong">18% Strong</option>
+                    </select>
 
                     {/* Mirror Video Toggle */}
                     <button
@@ -3684,6 +3845,15 @@ export const StagePreview: React.FC = () => {
         isOpen={isTacticalMapModalOpen}
         onClose={() => setIsTacticalMapModalOpen(false)}
         initialItem={activeMedia?.type === "map" ? activeMedia : undefined}
+      />
+
+      <WebsiteLibraryModal
+        isOpen={isWebsiteLibraryModalOpen}
+        onClose={() => setIsWebsiteLibraryModalOpen(false)}
+        onSelectWebsiteItem={(item) => {
+          if (activeSceneId) updateScene(activeSceneId, { activeMedia: item });
+          setActiveMedia(item);
+        }}
       />
     </div>
   );

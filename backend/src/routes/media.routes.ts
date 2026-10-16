@@ -659,4 +659,74 @@ router.get('/youtube/stream', (req: Request, res: Response): void => {
   });
 });
 
+// GET /api/media/website/proxy?url=...
+// Proxies external websites, stripping X-Frame-Options and frame-ancestors CSP, and injecting <base href="...">
+router.get('/website/proxy', async (req: Request, res: Response): Promise<void> => {
+  const targetUrl = ((req.query.url as string) || '').trim();
+  if (!targetUrl) {
+    res.status(400).send('Missing url query parameter');
+    return;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(targetUrl.startsWith('http://') || targetUrl.startsWith('https://') ? targetUrl : `https://${targetUrl}`);
+  } catch {
+    res.status(400).send('Invalid url format');
+    return;
+  }
+
+  try {
+    const fetchResponse = await fetch(parsedUrl.toString(), {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+    });
+
+    const contentType = fetchResponse.headers.get('content-type') || 'text/html';
+
+    // Allow CORS and iframe embedding
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('frame-options');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', contentType);
+
+    // If not HTML (e.g. image, css, js), pipe raw stream / arrayBuffer
+    if (!contentType.includes('text/html')) {
+      const buffer = Buffer.from(await fetchResponse.arrayBuffer());
+      res.send(buffer);
+      return;
+    }
+
+    let html = await fetchResponse.text();
+
+    // Inject <base href="..."> right after <head> so relative links and assets load correctly
+    const baseHref = parsedUrl.origin + parsedUrl.pathname.substring(0, parsedUrl.pathname.lastIndexOf('/') + 1);
+    const baseTag = `<base href="${baseHref}">`;
+
+    if (/<head[^>]*>/i.test(html)) {
+      html = html.replace(/<head[^>]*>/i, `$&${baseTag}`);
+    } else {
+      html = baseTag + html;
+    }
+
+    // Strip meta http-equiv="Content-Security-Policy" or "X-Frame-Options" if embedded in HTML head
+    html = html.replace(/<meta[^>]*http-equiv=["']?(?:content-security-policy|x-frame-options)["']?[^>]*>/gi, '');
+
+    res.send(html);
+  } catch (err: any) {
+    console.error('[Website Proxy Error]:', err?.message || err);
+    res.status(502).send(`<html><body style="font-family:sans-serif;padding:24px;background:#0d1117;color:#f85149;">
+      <h3>Unable to load website through proxy</h3>
+      <p style="color:#c9d1d9;">${err?.message || 'Connection failed'}</p>
+      <p style="color:#8b949e;font-size:12px;">Target: ${parsedUrl.toString()}</p>
+    </body></html>`);
+  }
+});
+
 export default router;

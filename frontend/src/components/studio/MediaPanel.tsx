@@ -19,6 +19,7 @@ import {
   GripVertical,
   Youtube,
   Globe,
+  Clipboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
 import { TacticalMapModal } from "./TacticalMapModal";
+import { WebsiteLibraryModal } from "./WebsiteLibraryModal";
 
 interface MediaPanelProps {
   studioId?: string;
@@ -51,7 +53,46 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const [isSlideCreatorOpen, setIsSlideCreatorOpen] = useState(false);
   const [isYouTubeLibraryOpen, setIsYouTubeLibraryOpen] = useState(false);
   const [isTacticalMapOpen, setIsTacticalMapOpen] = useState(false);
+  const [isWebsiteLibraryOpen, setIsWebsiteLibraryOpen] = useState(false);
   const [draggingMediaId, setDraggingMediaId] = useState<string | null>(null);
+
+  const handlePasteScreenshot = async () => {
+    try {
+      if (!navigator.clipboard?.read) {
+        alert("Clipboard read not supported or permission denied. Please press Ctrl+V on the stage directly.");
+        return;
+      }
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const newItem: MediaFileItem = {
+              id: `media-screenshot-${Date.now()}`,
+              name: `Screenshot_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
+              type: "image",
+              url: dataUrl,
+              thumbnail: dataUrl,
+              duration: "Image",
+              isUploaded: true,
+            };
+            addMediaLibraryItem(newItem);
+            setMediaList((prev) => [newItem, ...prev]);
+            setActiveMedia(newItem);
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      alert("No image found in clipboard! Press Win+Shift+S (or Cmd+Shift+4) to copy a screenshot first.");
+    } catch (err) {
+      console.warn("Clipboard read error:", err);
+      alert("Clipboard access error. Please use Ctrl+V directly to paste screenshot.");
+    }
+  };
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
     return mediaLibrary && mediaLibrary.length > 0 ? mediaLibrary : [
@@ -497,6 +538,26 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
             <span>Map</span>
           </button>
 
+          <button
+            type="button"
+            onClick={handlePasteScreenshot}
+            className="h-7 px-2 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 flex items-center gap-1 border border-white/15 shadow-sm transition-all"
+            title="Paste Screenshot from Clipboard (Ctrl+V)"
+          >
+            <Clipboard className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Paste</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsWebsiteLibraryOpen(true)}
+            className="h-7 px-2 text-xs font-semibold rounded-lg bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1 shadow-sm transition-all"
+            title="Interactive Website URL & Live Pointer"
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Web URL</span>
+          </button>
+
           <Button
             variant="primary"
             size="sm"
@@ -772,6 +833,14 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         isOpen={isTacticalMapOpen}
         onClose={() => setIsTacticalMapOpen(false)}
         onSaveMapItem={(item) => {
+          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
+        }}
+      />
+
+      <WebsiteLibraryModal
+        isOpen={isWebsiteLibraryOpen}
+        onClose={() => setIsWebsiteLibraryOpen(false)}
+        onSelectWebsiteItem={(item) => {
           setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
         }}
       />
