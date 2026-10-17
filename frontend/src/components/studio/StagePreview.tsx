@@ -713,6 +713,45 @@ export const StagePreview: React.FC = () => {
     fairUseConfig?.playbackRate,
   ]);
 
+  // YouTube IFrame LFO Dynamic Tempo & Volume Envelope Modulation (Anti-Audio Fingerprinting)
+  useEffect(() => {
+    if (activeMedia?.type !== "youtube" || !fairUseConfig?.enabled || !fairUseConfig?.enableAudioFairUse) return;
+
+    let lfoStep = 0;
+    const lfoInterval = setInterval(() => {
+      if (isMediaPausedRef.current) return;
+      lfoStep++;
+      // 1.02x to 1.06x dynamic tempo LFO wave (~1.1s period)
+      const baseRate = fairUseConfig.playbackRate || 1.04;
+      const rateMod = Number((baseRate + Math.sin(lfoStep * 0.35) * 0.02).toFixed(3));
+      sendYouTubeCommand("setPlaybackRate", [rateMod]);
+
+      // Subtle +/- 3% acoustic volume envelope wave
+      if (!activeMedia.isMuted) {
+        const baseVol = Math.min(100, Math.max(0, activeMedia.volume ?? 100));
+        const volMod = Math.round(Math.max(1, Math.min(100, baseVol + Math.sin(lfoStep * 0.28) * 3)));
+        sendYouTubeCommand("setVolume", [volMod]);
+      }
+    }, 1100);
+
+    return () => {
+      clearInterval(lfoInterval);
+      if (activeMedia?.type === "youtube") {
+        sendYouTubeCommand("setPlaybackRate", [fairUseConfig.playbackRate || 1.04]);
+        const vol = activeMedia.isMuted ? 0 : Math.min(100, Math.round(activeMedia.volume ?? 100));
+        sendYouTubeCommand("setVolume", [vol]);
+      }
+    };
+  }, [
+    activeMedia?.id,
+    activeMedia?.type,
+    fairUseConfig?.enabled,
+    fairUseConfig?.enableAudioFairUse,
+    fairUseConfig?.playbackRate,
+    activeMedia?.volume,
+    activeMedia?.isMuted,
+  ]);
+
   // Real-time 60FPS breathScale oscillation loop (mediaZoom * breathScale)
   const [breathScale, setBreathScale] = useState<number>(1.0);
   const isBreathingActive = Boolean(fairUseConfig?.enabled && fairUseConfig?.isBreathingEnabled);
@@ -2503,6 +2542,25 @@ export const StagePreview: React.FC = () => {
                       title="Mirror / Flip Media Horizontally for Copyright Protection"
                     >
                       <span>Flip {fairUseConfig?.mirrorMediaVideo ? "ON" : "OFF"}</span>
+                    </button>
+
+                    {/* Dynamic Audio Tempo LFO & Fair-Use EQ Toggle */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFairUseConfig({
+                          enableAudioFairUse: !(fairUseConfig?.enableAudioFairUse ?? true),
+                        })
+                      }
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                        (fairUseConfig?.enableAudioFairUse ?? true)
+                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                      )}
+                      title="Toggle Dynamic Audio Tempo LFO (1.02x–1.06x) & 3-Band Spectral EQ / Highpass Filter"
+                    >
+                      <span>🎵 Tempo+EQ {(fairUseConfig?.enableAudioFairUse ?? true) ? "ON" : "OFF"}</span>
                     </button>
                   </>
                 )}

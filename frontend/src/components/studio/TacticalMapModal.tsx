@@ -1425,6 +1425,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     scenes,
     activeSceneId,
     updateScene,
+    switchScene,
   } = useStudioStore();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -1689,8 +1690,11 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
       const existing = mediaLibrary.find((m) => m.id === editingMapId);
       if (attachAndPresentNow && existing) {
         const merged = { ...existing, ...updates };
-        if (effectiveSceneId) updateScene(effectiveSceneId, { activeMedia: merged });
-        if (!targetSceneId || targetSceneId === activeSceneId) setActiveMedia(merged);
+        if (effectiveSceneId) {
+          updateScene(effectiveSceneId, { activeMedia: merged });
+          if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
+        }
+        setActiveMedia(merged);
         onSaveMapItem?.(merged);
         onClose();
       } else {
@@ -1716,10 +1720,9 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     if (attachAndPresentNow) {
       if (effectiveSceneId) {
         updateScene(effectiveSceneId, { activeMedia: newItem });
+        if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
       }
-      if (!targetSceneId || targetSceneId === activeSceneId) {
-        setActiveMedia(newItem);
-      }
+      setActiveMedia(newItem);
       onSaveMapItem?.(newItem);
       onClose();
     }
@@ -2213,8 +2216,11 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                     <div
                       key={m.id}
                       onClick={() => {
-                        if (effectiveSceneId) updateScene(effectiveSceneId, { activeMedia: m });
-                        if (!targetSceneId || targetSceneId === activeSceneId) setActiveMedia(m);
+                        if (effectiveSceneId) {
+                          updateScene(effectiveSceneId, { activeMedia: m });
+                          if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
+                        }
+                        setActiveMedia(m);
                         onSaveMapItem?.(m);
                         onClose();
                       }}

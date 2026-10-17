@@ -26,7 +26,15 @@ app.get(['/health', '/api/health'], (req: Request, res: Response) => {
   res.status(200).json({ success: true, data: { status: 'healthy', service: 'livestudio-api', timestamp: new Date().toISOString() } });
 });
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+    frameguard: false,
+    contentSecurityPolicy: false,
+  })
+);
 app.use(cors({ origin: true, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());

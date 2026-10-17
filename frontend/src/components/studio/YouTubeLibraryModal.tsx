@@ -84,6 +84,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     scenes,
     activeSceneId,
     updateScene,
+    switchScene,
   } = useStudioStore();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -204,10 +205,11 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
         const merged = { ...updatedFull, ...updates };
         if (effectiveSceneId) {
           updateScene(effectiveSceneId, { activeMedia: merged });
+          if (effectiveSceneId !== activeSceneId) {
+            switchScene(effectiveSceneId);
+          }
         }
-        if (!targetSceneId || targetSceneId === activeSceneId) {
-          setActiveMedia(merged);
-        }
+        setActiveMedia(merged);
         onSelectYouTubeItem?.(merged);
         onClose();
       } else {
@@ -238,10 +240,11 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     if (attachAndPlayNow) {
       if (effectiveSceneId) {
         updateScene(effectiveSceneId, { activeMedia: newItem });
+        if (effectiveSceneId !== activeSceneId) {
+          switchScene(effectiveSceneId);
+        }
       }
-      if (!targetSceneId || targetSceneId === activeSceneId) {
-        setActiveMedia(newItem);
-      }
+      setActiveMedia(newItem);
       onSelectYouTubeItem?.(newItem);
       resetForm();
       onClose();
@@ -253,10 +256,11 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   const handleAttachLibraryItemToScene = (item: MediaFileItem) => {
     if (effectiveSceneId) {
       updateScene(effectiveSceneId, { activeMedia: item });
+      if (effectiveSceneId !== activeSceneId) {
+        switchScene(effectiveSceneId);
+      }
     }
-    if (!targetSceneId || targetSceneId === activeSceneId) {
-      setActiveMedia(item);
-    }
+    setActiveMedia(item);
     onSelectYouTubeItem?.(item);
     onClose();
   };

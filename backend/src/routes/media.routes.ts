@@ -637,10 +637,17 @@ router.get('/youtube/stream', (req: Request, res: Response): void => {
 
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
   res.header('Content-Type', 'video/mp4');
 
-  // Spawn yt-dlp to stream standard MP4 output directly to response pipe
-  const proc = spawn('yt-dlp', ['-o', '-', '-f', 'best[ext=mp4]/best', '--no-playlist', youtubeUrl]);
+  // Spawn yt-dlp with 2026 InnerTube clients (ANDROID_VR, IOS 19.29.1, ANDROID 19.29.37)
+  const proc = spawn('yt-dlp', [
+    '-o', '-',
+    '-f', 'best[ext=mp4]/best',
+    '--no-playlist',
+    '--extractor-args', 'youtube:player_client=android_vr,ios,android',
+    youtubeUrl,
+  ]);
 
   proc.stdout.pipe(res);
 

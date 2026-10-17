@@ -17,15 +17,12 @@ import {
   ZoomOut,
   RotateCcw,
   ExternalLink,
-  ShieldCheck,
   Sparkles,
   Check,
-  Maximize2,
-  Eye,
   Lock,
-  Unlock,
   ArrowUp,
   ArrowDown,
+  BookOpen,
 } from "lucide-react";
 import {
   MediaFileItem,
@@ -49,11 +46,22 @@ declare global {
   }
 }
 
+/**
+ * Bulletproof URL Normalizer:
+ * Automatically heals broken protocols like "https: /fa", "https:/", "http:/", "https;//",
+ * or bare domains like "google.com" into a valid "https://..." URL!
+ */
 export function normalizeWebsiteUrl(raw: string): string {
-  const trimmed = (raw || "").trim();
+  let trimmed = (raw || "").trim();
   if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  // Auto-heal broken protocols like "https: /", "https:/", "http:/", "https;//", "https: //"
+  trimmed = trimmed.replace(/^https?\s*[:;]\s*\/+\s*/i, (m) =>
+    m.toLowerCase().startsWith("http:") ? "http://" : "https://"
+  );
+  if (!/^https?:\/\//i.test(trimmed)) {
+    trimmed = "https://" + trimmed.replace(/^\/+/, "");
+  }
+  return trimmed;
 }
 
 export interface InteractiveWebsiteStageViewProps {
@@ -97,16 +105,24 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
   const [pointerStyle, setPointerStyle] = useState<WebsitePointerStyle>(
     webCfg.pointerStyle || "laser"
   );
-  const [pointerColor, setPointerColor] = useState<string>(
+  const [pointerColor] = useState<string>(
     webCfg.pointerColor || "#ef4444"
   );
-  const [useBackendProxy, setUseBackendProxy] = useState<boolean>(
-    webCfg.useProxy ?? true
+  // Proxy Engine Mode: "web-proxy" (Next.js route, zero X-Frame-Options), "api-proxy" (Backend route), "reader" (Clean Reader View), "direct" (Direct IFrame)
+  const [proxyEngine, setProxyEngine] = useState<"web-proxy" | "api-proxy" | "reader" | "direct">(
+    webCfg.useProxy === false ? "direct" : "web-proxy"
+  );
+  const [liveAddressInput, setLiveAddressInput] = useState<string>(
+    normalizeWebsiteUrl(webCfg.url || item.url)
   );
   const [scrollOffsetPx, setScrollOffsetPx] = useState<number>(
     (webCfg.scrollYPercent || 0) * 18
   );
   const [iframeKey, setIframeKey] = useState<number>(0);
+
+  useEffect(() => {
+    setLiveAddressInput(normalizeWebsiteUrl(webCfg.url || item.url));
+  }, [webCfg.url, item.url]);
 
   // Live Pointer Position (0-100%) inside the website viewport
   const [pointerPos, setPointerPos] = useState<{ x: number; y: number; active: boolean; clicking: boolean }>({
@@ -138,9 +154,14 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
   }, [showPointer, pointerPos, pointerStyle, pointerColor]);
 
   const cleanUrl = normalizeWebsiteUrl(webCfg.url || item.url);
-  const iframeSrc = useBackendProxy
-    ? `/api/media/website/proxy?url=${encodeURIComponent(cleanUrl)}`
-    : cleanUrl;
+  const iframeSrc =
+    proxyEngine === "web-proxy"
+      ? `/web-proxy?url=${encodeURIComponent(cleanUrl)}`
+      : proxyEngine === "api-proxy"
+      ? `/api/media/website/proxy?url=${encodeURIComponent(cleanUrl)}`
+      : proxyEngine === "reader"
+      ? `/web-proxy?url=${encodeURIComponent(cleanUrl)}&mode=reader`
+      : cleanUrl;
 
   const mediaTf = tileTransforms["active-media"] || {
     fitMode: "contain",
@@ -158,8 +179,24 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
 
   const handleUpdateConfig = (partial: Partial<WebsiteSceneConfig>) => {
     const nextCfg: WebsiteSceneConfig = { ...webCfg, ...partial };
-    updateMediaLibraryItem(item.id, { websiteConfig: nextCfg });
-    setActiveMedia({ ...item, websiteConfig: nextCfg });
+    updateMediaLibraryItem(item.id, {
+      url: nextCfg.url || item.url,
+      websiteConfig: nextCfg,
+    });
+    setActiveMedia({
+      ...item,
+      url: nextCfg.url || item.url,
+      websiteConfig: nextCfg,
+    });
+  };
+
+  const handleNavigateAddressBar = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const target = normalizeWebsiteUrl(liveAddressInput);
+    if (!target) return;
+    setLiveAddressInput(target);
+    handleUpdateConfig({ url: target });
+    setIframeKey((k) => k + 1);
   };
 
   const handleContainerMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -186,17 +223,36 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
       onMouseDown={handleContainerMouseDown}
       className="relative w-full h-full bg-[#070913] overflow-hidden select-none group/webstage"
     >
-      {/* Top Broadcast Browser Address Bar Pill */}
-      <div className="absolute top-2 left-2.5 right-2.5 z-25 flex items-center justify-between gap-2 px-3 py-1 rounded-xl bg-[#0b0d1a]/90 backdrop-blur-md border border-white/15 shadow-lg pointer-events-auto opacity-85 group-hover/webstage:opacity-100 transition-opacity">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      {/* Top Broadcast Browser Address Bar Pill (Editable Live URL Bar + Proxy Mode Selector) */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="absolute top-2 left-2.5 right-2.5 z-30 flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl bg-[#0b0d1a]/95 backdrop-blur-md border border-white/15 shadow-lg pointer-events-auto"
+      >
+        <form onSubmit={handleNavigateAddressBar} className="flex items-center gap-1.5 min-w-0 flex-1">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
           <Globe className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-          <span className="text-[10.5px] font-mono text-slate-200 truncate">
-            {cleanUrl}
-          </span>
-        </div>
+          <input
+            type="text"
+            value={liveAddressInput}
+            onChange={(e) => setLiveAddressInput(e.target.value)}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            style={{ fontVariantLigatures: "none", fontFeatureSettings: '"liga" 0, "calt" 0' }}
+            placeholder="Type website URL and press Enter..."
+            className="w-full bg-black/50 border border-white/10 focus:border-cyan-400 rounded-lg px-2 py-0.5 text-[11px] text-white font-sans focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="px-2 py-0.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[9.5px] font-bold shrink-0"
+            title="Load URL"
+          >
+            Go
+          </button>
+        </form>
 
-        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1 shrink-0">
           {/* Interactive Click Mode vs Pan/Pointer Mode */}
           <button
             type="button"
@@ -225,7 +281,7 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
             ) : (
               <>
                 <Lock className="w-3 h-3 text-amber-300" />
-                <span>Lock Clicks (Pointer Only)</span>
+                <span>Pointer Only</span>
               </>
             )}
           </button>
@@ -268,24 +324,22 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
             </select>
           )}
 
-          {/* Proxy vs Direct Embed Switcher */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = !useBackendProxy;
-              setUseBackendProxy(next);
-              handleUpdateConfig({ useProxy: next });
+          {/* 4-Mode Proxy & Reader Switcher */}
+          <select
+            value={proxyEngine}
+            onChange={(e) => {
+              const nextMode = e.target.value as "web-proxy" | "api-proxy" | "reader" | "direct";
+              setProxyEngine(nextMode);
+              handleUpdateConfig({ useProxy: nextMode !== "direct" });
             }}
-            className={cn(
-              "px-2 py-0.5 rounded-lg text-[9.5px] font-semibold border transition-all",
-              useBackendProxy
-                ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
-                : "bg-white/5 text-slate-300 border-white/15"
-            )}
-            title="Proxy Mode bypasses X-Frame-Options restrictions so any news/article website loads inside the scene"
+            className="bg-cyan-950/80 border border-cyan-500/40 rounded-lg px-1.5 py-0.5 text-[9.5px] font-bold text-cyan-200 focus:outline-none"
+            title="Switch Website Loading Engine (Smart Proxy bypasses X-Frame-Options; Reader View extracts clean article)"
           >
-            {useBackendProxy ? "🛡️ Proxy ON" : "Direct"}
-          </button>
+            <option value="web-proxy">🛡️ Smart Proxy (Recommended)</option>
+            <option value="reader">📖 Clean Reader View</option>
+            <option value="api-proxy">⚡ Backend API Proxy</option>
+            <option value="direct">🌐 Direct IFrame</option>
+          </select>
 
           {/* Reload Webpage */}
           <button
@@ -315,7 +369,7 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
         style={{
           width: "100%",
           height: "100%",
-          paddingTop: "36px",
+          paddingTop: "38px",
           transform: [
             effectiveZoom > 1 ? `scale(${effectiveZoom})` : "",
             rotation ? `rotate(${rotation}deg)` : "",
@@ -339,10 +393,9 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
         >
           <iframe
             id="livestudio-active-website-iframe"
-            key={`${iframeKey}-${cleanUrl}-${useBackendProxy ? "proxy" : "direct"}`}
+            key={`${iframeKey}-${cleanUrl}-${proxyEngine}`}
             src={iframeSrc}
             title={webCfg.title || item.name}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
             className={cn(
               "w-full h-full border-0 bg-white",
@@ -536,6 +589,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     scenes,
     activeSceneId,
     updateScene,
+    switchScene,
   } = useStudioStore();
 
   const [isMounted, setIsMounted] = useState(false);
@@ -575,7 +629,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
 
   const handleEditItem = (item: MediaFileItem) => {
     setEditingId(item.id);
-    setUrlInput(item.websiteConfig?.url || item.url);
+    setUrlInput(normalizeWebsiteUrl(item.websiteConfig?.url || item.url));
     setTitleInput(item.name);
     setUseProxy(item.websiteConfig?.useProxy ?? true);
     setInteractiveMode(item.websiteConfig?.interactiveMode ?? true);
@@ -583,10 +637,29 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     setPointerStyle(item.websiteConfig?.pointerStyle || "laser");
   };
 
+  // Auto-heal protocol when user types or pastes URLs like "https: /fa" or "https:/fa"
+  const handleUrlInputChange = (rawVal: string) => {
+    // Only heal once the user has typed at least 1 character after the slash so typing "https://" manually is never interrupted
+    const healed = rawVal.replace(/^(https?)\s*[:;]\s*\/+([^\s/])/i, "$1://$2");
+    setUrlInput(healed);
+    setErrorMsg(null);
+  };
+
+  const activateWebsiteOnSceneAndStage = (item: MediaFileItem) => {
+    if (effectiveSceneId) {
+      updateScene(effectiveSceneId, { activeMedia: item });
+      if (effectiveSceneId !== activeSceneId) {
+        switchScene(effectiveSceneId);
+      }
+    }
+    setActiveMedia(item);
+    onSelectWebsiteItem?.(item);
+  };
+
   const handleSaveWebsite = (attachAndPresentNow: boolean) => {
     const cleanUrl = normalizeWebsiteUrl(urlInput);
     if (!cleanUrl || !cleanUrl.includes(".")) {
-      setErrorMsg("Please enter a valid Website URL (e.g. https://en.wikipedia.org or https://bbc.com/news).");
+      setErrorMsg("Please enter a valid Website URL (e.g. wikipedia.org, bbc.com/news, or https://...).");
       return;
     }
 
@@ -621,9 +694,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
       const existing = mediaLibrary.find((m) => m.id === editingId);
       if (attachAndPresentNow && existing) {
         const merged = { ...existing, ...updates };
-        if (effectiveSceneId) updateScene(effectiveSceneId, { activeMedia: merged });
-        if (!targetSceneId || targetSceneId === activeSceneId) setActiveMedia(merged);
-        onSelectWebsiteItem?.(merged);
+        activateWebsiteOnSceneAndStage(merged);
         onClose();
       } else {
         resetForm();
@@ -644,13 +715,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     addMediaLibraryItem(newItem);
 
     if (attachAndPresentNow) {
-      if (effectiveSceneId) {
-        updateScene(effectiveSceneId, { activeMedia: newItem });
-      }
-      if (!targetSceneId || targetSceneId === activeSceneId) {
-        setActiveMedia(newItem);
-      }
-      onSelectWebsiteItem?.(newItem);
+      activateWebsiteOnSceneAndStage(newItem);
       resetForm();
       onClose();
     } else {
@@ -659,15 +724,28 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
   };
 
   const handleAttachToScene = (item: MediaFileItem) => {
-    if (effectiveSceneId) {
-      updateScene(effectiveSceneId, { activeMedia: item });
-    }
-    if (!targetSceneId || targetSceneId === activeSceneId) {
-      setActiveMedia(item);
-    }
-    onSelectWebsiteItem?.(item);
+    const healedUrl = normalizeWebsiteUrl(item.websiteConfig?.url || item.url);
+    const healedItem: MediaFileItem = {
+      ...item,
+      url: healedUrl,
+      websiteConfig: {
+        ...(item.websiteConfig || {
+          title: item.name,
+          interactiveMode: true,
+          showBroadcastPointer: true,
+          pointerStyle: "laser",
+          pointerColor: "#ef4444",
+        }),
+        url: healedUrl,
+        useProxy: item.websiteConfig?.useProxy ?? true,
+      },
+    };
+    updateMediaLibraryItem(item.id, healedItem);
+    activateWebsiteOnSceneAndStage(healedItem);
     onClose();
   };
+
+  const normalizedPreview = normalizeWebsiteUrl(urlInput);
 
   return createPortal(
     <div
@@ -687,12 +765,12 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <span>Interactive Live Website Scene Player & URL Library</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                  Interactive Click • Area Focus • Live Viewer Pointer
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-sans">
+                  Interactive Click • Smart Proxy + Reader Mode • Live Viewer Pointer
                 </span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Pre-save website URLs, click to attach to any Scene, interact with articles/images/videos, and highlight areas with a live Broadcast Pointer
+                Pre-save website URLs, click to attach & open on Stage immediately, interact with articles/images, and highlight with a live Broadcast Pointer
               </p>
             </div>
           </div>
@@ -726,20 +804,69 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
               )}
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300 block">
-                Website / Article / Portal URL *
-              </label>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-slate-300 block">
+                  Website / Article / Portal URL *
+                </label>
+                <span className="text-[10px] text-emerald-400">
+                  Auto-adds https:// if omitted
+                </span>
+              </div>
               <input
                 type="text"
                 value={urlInput}
-                onChange={(e) => {
-                  setUrlInput(e.target.value);
-                  setErrorMsg(null);
+                onChange={(e) => handleUrlInputChange(e.target.value)}
+                onBlur={() => {
+                  if (urlInput.trim()) {
+                    setUrlInput(normalizeWebsiteUrl(urlInput));
+                  }
                 }}
-                placeholder="https://en.wikipedia.org/wiki/... or https://..."
-                className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-mono focus:outline-none focus:border-indigo-400"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                style={{
+                  fontVariantLigatures: "none",
+                  fontFeatureSettings: '"liga" 0, "calt" 0',
+                }}
+                placeholder="en.wikipedia.org/wiki/India or https://bbc.com/news"
+                className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-sans tracking-wide focus:outline-none focus:border-indigo-400"
               />
+
+              {/* Live Normalized URL Preview */}
+              {normalizedPreview && (
+                <div className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-[10.5px] text-emerald-300">
+                  <span className="truncate">
+                    🔗 Will open: <strong className="font-sans">{normalizedPreview}</strong>
+                  </span>
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-1" />
+                </div>
+              )}
+
+              {/* Quick 1-Click News & Info Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[9.5px] text-slate-400">Quick Fill:</span>
+                {[
+                  { label: "🌐 Wikipedia", url: "https://en.wikipedia.org/wiki/Main_Page", title: "Wikipedia Live" },
+                  { label: "📰 BBC News", url: "https://www.bbc.com/news", title: "BBC World News" },
+                  { label: "🇮🇳 PIB India", url: "https://pib.gov.in", title: "PIB Official Portal" },
+                  { label: "📈 CoinGecko", url: "https://www.coingecko.com", title: "Live Market Tracker" },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      setUrlInput(preset.url);
+                      setTitleInput(preset.title);
+                      setUseProxy(true);
+                      setErrorMsg(null);
+                    }}
+                    className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-indigo-600/30 border border-white/10 hover:border-indigo-400/50 text-[9.5px] text-slate-300 hover:text-white transition-all"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -855,7 +982,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
                 className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/25"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>{targetScene ? `Add to "${targetScene.name}"` : "Show on Stage Now"}</span>
+                <span>{targetScene ? `Open on "${targetScene.name}" Now` : "Show on Stage Now"}</span>
               </button>
             </div>
           </div>
@@ -908,8 +1035,11 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
                               </span>
                             )}
                           </div>
-                          <div className="text-[10px] text-cyan-300/90 font-mono truncate mt-0.5">
-                            {item.websiteConfig?.url || item.url}
+                          <div
+                            style={{ fontVariantLigatures: "none" }}
+                            className="text-[10px] text-cyan-300/90 font-sans truncate mt-0.5"
+                          >
+                            {normalizeWebsiteUrl(item.websiteConfig?.url || item.url)}
                           </div>
                         </div>
 
@@ -919,7 +1049,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
                             onClick={() => handleAttachToScene(item)}
                             className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold"
                           >
-                            {isAttached ? "Present" : targetScene?.activeMedia ? "Replace" : "Use"}
+                            {isAttached ? "Open on Stage" : targetScene?.activeMedia ? "Replace & Open" : "Use"}
                           </button>
                           <button
                             type="button"
@@ -944,7 +1074,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
             </div>
 
             <div className="p-3 rounded-xl bg-cyan-950/25 border border-cyan-500/30 text-[10.5px] text-cyan-200/90 leading-relaxed">
-              💡 <strong>Full Stage & Area Focus Controls:</strong> Once a website is on stage, use the bottom bar or top toolbar to <strong>Zoom (100%–300%)</strong>, focus on <strong>Top / Btm / Left / Right / Mid</strong> areas, scroll smoothly, and move your <strong>Red Laser Pointer</strong> so viewers see exactly what you are explaining!
+              💡 <strong>Smart Proxy + Clean Reader View:</strong> Once a website is on stage, you can switch between <strong>🛡️ Smart Proxy</strong> and <strong>📖 Clean Reader View</strong> in the top bar, <strong>Zoom (100%–300%)</strong>, focus on <strong>Top / Btm / Left / Right / Mid</strong> areas, and point with your <strong>Red Laser Pointer</strong>!
             </div>
           </div>
         </div>
