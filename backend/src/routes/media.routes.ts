@@ -318,7 +318,8 @@ function serializeMediaAsset(asset: any, presignedUrl?: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 import https from 'https';
 import http from 'http';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
+
 
 function extractYouTubeId(input: string): string | null {
   if (!input) return null;
@@ -659,15 +660,47 @@ router.get('/youtube/stream', async (req: Request, res: Response): Promise<void>
     }
 
     const directUrl = await resolveDirectYouTubeStreamUrl(videoId);
-    if (!directUrl) {
-      res.status(404).json({
-        success: false,
-        error: 'Direct MP4 stream unavailable; client will use Next.js /youtube-stream or PostMessage IFrame engine.',
-      });
+    if (directUrl) {
+      pipeYouTubeStreamFollowingRedirects(directUrl, req, res, videoId, 6);
       return;
     }
 
-    pipeYouTubeStreamFollowingRedirects(directUrl, req, res, videoId, 6);
+    // Tier 3: Spawn yt-dlp directly to stream progressive MP4 (video + audio merged on the fly!)
+    const ytdlpBin = await getOrBootstrapYtDlpBinary();
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const proc = spawn(ytdlpBin, [
+      '-f',
+      'best[ext=mp4][height<=720]/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+      '--no-playlist',
+      '--no-check-certificates',
+      '--geo-bypass',
+      '-o',
+      '-',
+      watchUrl,
+    ]);
+
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Cross-Origin-Embedder-Policy');
+    res.removeHeader('Cross-Origin-Resource-Policy');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Content-Type', 'video/mp4');
+
+    proc.stdout.pipe(res);
+
+    proc.on('error', (procErr) => {
+      console.warn('[YouTube Stream] yt-dlp process error:', procErr);
+      if (!res.headersSent) {
+        res.status(502).json({ success: false, error: procErr.message });
+      }
+    });
+
+    req.on('close', () => {
+      try {
+        proc.kill('SIGTERM');
+      } catch {}
+    });
   } catch (err) {
     if (!res.headersSent) {
       res.status(500).json({ success: false, error: (err as Error).message });
@@ -832,10 +865,20 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
 
       const helperScript = `<script>
         (function() {
+          var _realStudioHost = null;
+          try {
+            if (window.parent && window.parent !== window) {
+              _realStudioHost = window.parent;
+            } else if (window.top && window.top !== window) {
+              _realStudioHost = window.top;
+            }
+          } catch (e) {}
+
           try {
             Object.defineProperty(window, "top", { get: function() { return window.self; } });
             Object.defineProperty(window, "parent", { get: function() { return window.self; } });
           } catch (e) {}
+
           document.addEventListener("click", function(e) {
             var a = e.target && e.target.closest ? e.target.closest("a") : null;
             if (!a) return;
@@ -870,21 +913,25 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
 
           window.addEventListener("mousemove", function(e) {
             try {
-              window.parent.postMessage({
-                type: "LIVESTUDIO_WEB_POINTER_MOVE",
-                clientX: e.clientX,
-                clientY: e.clientY,
-                innerWidth: window.innerWidth,
-                innerHeight: window.innerHeight
-              }, "*");
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_MOVE",
+                  clientX: e.clientX,
+                  clientY: e.clientY,
+                  innerWidth: window.innerWidth,
+                  innerHeight: window.innerHeight
+                }, "*");
+              }
             } catch (err) {}
           }, { passive: true });
 
           window.addEventListener("mousedown", function(e) {
             try {
-              window.parent.postMessage({
-                type: "LIVESTUDIO_WEB_POINTER_CLICK"
-              }, "*");
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_CLICK"
+                }, "*");
+              }
             } catch (err) {}
           }, { passive: true });
         })();

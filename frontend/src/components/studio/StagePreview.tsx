@@ -227,6 +227,7 @@ const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) =
 
   return (
     <canvas
+      id="livestudio-fairuse-overlay-canvas"
       ref={canvasRef}
       className="absolute inset-0 w-full h-full pointer-events-none z-[25] select-none"
     />
@@ -359,6 +360,92 @@ export const StagePreview: React.FC = () => {
   const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
   const normalizedMediaVolumePct = Math.max(0, Math.min(100, activeMedia?.volume ?? 100));
   const [isMediaHovered, setIsMediaHovered] = useState(false);
+
+  const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingToolbar, setIsDraggingToolbar] = useState<boolean>(false);
+  const dragToolbarStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number }>({
+    mouseX: 0,
+    mouseY: 0,
+    startX: 0,
+    startY: 0,
+  });
+
+  const handleStartDragToolbar = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const stageEl = document.getElementById("livestudio-stage-container");
+    if (!stageEl) return;
+    const stageRect = stageEl.getBoundingClientRect();
+    const currentX = mediaToolbarPos?.x ?? Math.max(10, Math.round(stageRect.width / 2 - 200));
+    const currentY = mediaToolbarPos?.y ?? (activeMedia?.type === "website" ? 48 : 12);
+
+    dragToolbarStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startX: currentX,
+      startY: currentY,
+    };
+    setIsDraggingToolbar(true);
+
+    const handleMouseMove = (moveEv: MouseEvent) => {
+      const deltaX = moveEv.clientX - dragToolbarStartRef.current.mouseX;
+      const deltaY = moveEv.clientY - dragToolbarStartRef.current.mouseY;
+      const nextX = Math.max(4, Math.min(stageRect.width - 140, dragToolbarStartRef.current.startX + deltaX));
+      const nextY = Math.max(4, Math.min(stageRect.height - 48, dragToolbarStartRef.current.startY + deltaY));
+      setMediaToolbarPos({ x: Math.round(nextX), y: Math.round(nextY) });
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingToolbar(false);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  // Active real-time Audio Speed & Pitch adjustment (audible immediately in local preview + recording + stream)
+  const handleChangeMediaPitch = (rate: number, enablePitchShift: boolean) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (videoEl) {
+      videoEl.playbackRate = rate;
+      (videoEl as any).preservesPitch = !enablePitchShift;
+      (videoEl as any).mozPreservesPitch = !enablePitchShift;
+      (videoEl as any).webkitPreservesPitch = !enablePitchShift;
+    }
+    if (audioEl) {
+      audioEl.playbackRate = rate;
+      (audioEl as any).preservesPitch = !enablePitchShift;
+      (audioEl as any).mozPreservesPitch = !enablePitchShift;
+      (audioEl as any).webkitPreservesPitch = !enablePitchShift;
+    }
+    setFairUseConfig({
+      playbackRate: rate,
+      enableAudioFairUse: enablePitchShift,
+    });
+  };
+
+  // Local preview dynamic tempo variance LFO loop (audible modulation)
+  useEffect(() => {
+    if (!fairUseConfig?.enabled || !fairUseConfig?.dynamicTempoVariance) return;
+    const interval = setInterval(() => {
+      const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+      const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+      const baseRate = fairUseConfig.playbackRate || 1.04;
+      const now = performance.now();
+      const irrationalMod = (Math.sin(now / 1650) + Math.cos(now / 2900)) * 0.018;
+      const currentRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
+      if (videoEl && !videoEl.paused) {
+        videoEl.playbackRate = currentRate;
+      }
+      if (audioEl && !audioEl.paused) {
+        audioEl.playbackRate = currentRate;
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [fairUseConfig?.enabled, fairUseConfig?.dynamicTempoVariance, fairUseConfig?.playbackRate]);
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
   const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
@@ -2485,12 +2572,23 @@ export const StagePreview: React.FC = () => {
         {/* Stage-Level Floating Media Action Toolbar */}
         {hasVisualMedia && activeMedia && (
           <div
+            style={
+              mediaToolbarPos
+                ? {
+                    left: `${mediaToolbarPos.x}px`,
+                    top: `${mediaToolbarPos.y}px`,
+                    transform: "none",
+                  }
+                : undefined
+            }
             className={cn(
-              "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-150 max-w-[calc(100%-24px)]",
-              activeMedia.type === "website"
+              "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-75 max-w-[calc(100%-16px)]",
+              mediaToolbarPos
+                ? ""
+                : activeMedia.type === "website"
                 ? showTicker
                   ? "bottom-14 left-1/2 -translate-x-1/2"
-                  : "bottom-3 left-1/2 -translate-x-1/2"
+                  : "top-12 left-1/2 -translate-x-1/2"
                 : "top-3 left-1/2 -translate-x-1/2",
               isMediaToolbarCollapsed
                 ? "bg-transparent p-0"
@@ -2501,17 +2599,47 @@ export const StagePreview: React.FC = () => {
             onTouchStart={(e) => e.stopPropagation()}
           >
             {isMediaToolbarCollapsed ? (
-              <button
-                type="button"
-                onClick={() => setIsMediaToolbarCollapsed(false)}
-                className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
-                title="Expand Floating Media Action Controls"
-              >
-                <span>🎬 {activeMedia.name}</span>
-                <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
-              </button>
+              <div className="flex items-center gap-1">
+                <div
+                  onMouseDown={handleStartDragToolbar}
+                  className="cursor-grab active:cursor-grabbing px-2 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 text-slate-400 hover:text-white flex items-center shadow-lg text-[10px] select-none"
+                  title="Drag controls"
+                >
+                  ⠿ Drag
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMediaToolbarCollapsed(false)}
+                  className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
+                  title="Expand Floating Media Action Controls"
+                >
+                  <span>🎬 {activeMedia.name}</span>
+                  <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
+                </button>
+              </div>
             ) : (
               <>
+                {/* Drag Handle */}
+                <div
+                  onMouseDown={handleStartDragToolbar}
+                  className="cursor-grab active:cursor-grabbing px-1.5 py-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white flex items-center gap-1 select-none text-[9.5px] font-mono border border-transparent hover:border-white/20 transition-all"
+                  title="Click and drag to move controls anywhere on the stage"
+                >
+                  <span className="text-[12px] leading-none">⠿</span>
+                  <span>Drag</span>
+                </div>
+
+                {mediaToolbarPos !== null && (
+                  <button
+                    type="button"
+                    onClick={() => setMediaToolbarPos(null)}
+                    className="px-1.5 py-0.5 rounded text-[9px] font-semibold text-slate-400 hover:text-cyan-300 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
+                    title="Reset controls position to default"
+                  >
+                    ↺ Reset
+                  </button>
+                )}
+
                 {/* Media Name Tag */}
                 <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[140px] truncate select-none">
                   🎬 {activeMedia.name}
@@ -2709,6 +2837,38 @@ export const StagePreview: React.FC = () => {
                 >
                   <span>🎵 Tempo+EQ {(fairUseConfig?.dynamicTempoVariance ?? true) ? "ON" : "OFF"}</span>
                 </button>
+
+                {/* Interactive Audio Pitch & Speed Presets (Real-time audible pitch shift) */}
+                <select
+                  value={
+                    fairUseConfig?.enableAudioFairUse === false
+                      ? "1.0-normal"
+                      : fairUseConfig?.playbackRate === 1.08
+                      ? "1.08-high"
+                      : fairUseConfig?.playbackRate === 0.95
+                      ? "0.95-deep"
+                      : "1.04-safe"
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "1.0-normal") {
+                      handleChangeMediaPitch(1.0, false);
+                    } else if (val === "1.08-high") {
+                      handleChangeMediaPitch(1.08, true);
+                    } else if (val === "0.95-deep") {
+                      handleChangeMediaPitch(0.95, true);
+                    } else {
+                      handleChangeMediaPitch(1.04, true);
+                    }
+                  }}
+                  className="bg-black/60 border border-amber-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-300 focus:outline-none cursor-pointer"
+                  title="Real-time Audio Pitch & Speed Adjustment (shifts pitch audibly to prevent Content-ID audio match)"
+                >
+                  <option value="1.0-normal">🎵 1.0x Normal</option>
+                  <option value="1.04-safe">🎵 1.04x Safe Pitch (+0.7st)</option>
+                  <option value="1.08-high">🎵 1.08x High Pitch (+1.3st)</option>
+                  <option value="0.95-deep">🎵 0.95x Deep Pitch (-0.9st)</option>
+                </select>
 
                 {/* 60FPS Vintage Lines Toggle & Thickness */}
                 <button

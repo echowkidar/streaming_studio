@@ -16,10 +16,11 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Install FFmpeg, Python3, and yt-dlp for Live RTMP Streaming & Direct YouTube MP4 Stage Recording
-RUN apk add --no-cache ffmpeg python3 curl ca-certificates && \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp || true
+# Install FFmpeg, Python3, py3-pip, and yt-dlp for Live RTMP Streaming & Direct YouTube MP4 Stage Recording
+RUN apk add --no-cache ffmpeg python3 py3-pip curl ca-certificates && \
+    (python3 -m pip install --no-cache-dir --break-system-packages -U yt-dlp || \
+     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp) || true
+
 
 ENV NODE_ENV=production
 

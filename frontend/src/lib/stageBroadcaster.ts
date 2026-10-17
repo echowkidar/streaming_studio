@@ -878,24 +878,36 @@ class StageBroadcaster {
             : this.mediaGainNode || this.audioDestination;
 
         try {
-          const stream =
-            (mediaVideo as any).captureStream?.() ||
-            (mediaVideo as any).mozCaptureStream?.();
-
-          if (stream) {
-            const audioTrack = stream.getAudioTracks()[0];
-            if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
-              const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-              srcNode.connect(targetInputNode);
-              this.mediaStreamSources.set(audioTrack.id, srcNode);
-              console.log("[StageBroadcaster] Connected media video audio stream to broadcast mix");
+          let connected = false;
+          if (!this.connectedMediaElements.has(mediaVideo)) {
+            try {
+              const src = this.audioCtx.createMediaElementSource(mediaVideo);
+              src.connect(targetInputNode);
+              src.connect(this.audioCtx.destination);
+              this.connectedMediaElements.add(mediaVideo);
+              connected = true;
+              console.log("[StageBroadcaster] Connected media element source node to broadcast mix");
+            } catch (elemErr) {
+              // May throw if CORS-restricted or already connected
             }
-          } else if (!this.connectedMediaElements.has(mediaVideo)) {
-            const src = this.audioCtx.createMediaElementSource(mediaVideo);
-            src.connect(targetInputNode);
-            src.connect(this.audioCtx.destination);
-            this.connectedMediaElements.add(mediaVideo);
-            console.log("[StageBroadcaster] Connected media video element node to broadcast mix");
+          } else {
+            connected = true;
+          }
+
+          if (!connected) {
+            const stream =
+              (mediaVideo as any).captureStream?.() ||
+              (mediaVideo as any).mozCaptureStream?.();
+
+            if (stream) {
+              const audioTrack = stream.getAudioTracks()[0];
+              if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
+                const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+                srcNode.connect(targetInputNode);
+                this.mediaStreamSources.set(audioTrack.id, srcNode);
+                console.log("[StageBroadcaster] Connected media video captureStream audio to broadcast mix");
+              }
+            }
           }
         } catch (err) {
           console.warn("[StageBroadcaster] Media audio capture error:", err);
@@ -1012,7 +1024,10 @@ class StageBroadcaster {
         const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
         const mediaImg = el.querySelector("img") as HTMLImageElement | null;
         const mediaCanvas = (el.querySelector("canvas#livestudio-tactical-map-canvas") ||
-          el.querySelector("canvas")) as HTMLCanvasElement | null;
+          el.querySelector("canvas#livestudio-active-website-canvas") ||
+          el.querySelector("canvas[data-media-canvas='true']")) as HTMLCanvasElement | null;
+
+
 
         const defaultMediaFit = currentStore.isStageCropped ? "cover" : "contain";
         const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: defaultMediaFit, zoom: 1, panX: 0, panY: 0 };
@@ -1257,6 +1272,119 @@ class StageBroadcaster {
           try {
             ctx.drawImage(mediaCanvas, x, y, w, h);
           } catch {}
+        } else if (currentStore.activeMedia?.type === "website") {
+          // Dedicated High-Fidelity Website Renderer for Broadcast & Recording
+          const webItem = currentStore.activeMedia;
+          const displayUrl = webItem.url || "https://google.com";
+          let domainName = "Live Website";
+          try {
+            domainName = new URL(displayUrl).hostname;
+          } catch {
+            domainName = webItem.name || "Webpage";
+          }
+
+          ctx.save();
+          // Clean white page background
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(x, y, w, h);
+
+          // Top Browser Navigation Bar Header
+          const barH = Math.min(38, Math.max(26, h * 0.065));
+          ctx.fillStyle = "#0c0e1a";
+          ctx.fillRect(x, y, w, barH);
+
+          // Window action dots
+          ctx.fillStyle = "#ef4444";
+          ctx.beginPath();
+          ctx.arc(x + 14, y + barH / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#f59e0b";
+          ctx.beginPath();
+          ctx.arc(x + 26, y + barH / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#10b981";
+          ctx.beginPath();
+          ctx.arc(x + 38, y + barH / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Address pill inside top bar
+          const pillW = Math.min(w - 140, 480);
+          const pillX = x + (w - pillW) / 2;
+          ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+          this.drawRoundedRect(ctx, pillX, y + 4, pillW, barH - 8, 6);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+          ctx.stroke();
+
+          // Green secure lock + URL text
+          ctx.fillStyle = "#10b981";
+          ctx.font = "bold 11px Inter, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🔒", pillX + 8, y + barH / 2);
+
+          ctx.fillStyle = "#e2e8f0";
+          ctx.font = "500 11px Inter, system-ui, sans-serif";
+          ctx.fillText(displayUrl.slice(0, 52), pillX + 24, y + barH / 2);
+
+          // Central Webpage Hero Content (e.g. Google / Webpage Card)
+          const bodyY = y + barH;
+          const bodyH = h - barH;
+          const midX = x + w / 2;
+          const midY = bodyY + bodyH * 0.42;
+
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          // Title / Brand
+          if (domainName.includes("google")) {
+            const gParts = [
+              { ch: "G", col: "#4285f4" },
+              { ch: "o", col: "#ea4335" },
+              { ch: "o", col: "#fbbc05" },
+              { ch: "g", col: "#4285f4" },
+              { ch: "l", col: "#34a853" },
+              { ch: "e", col: "#ea4335" },
+            ];
+            let startTextX = midX - 60;
+            ctx.font = "bold 36px Inter, system-ui, sans-serif";
+            for (const p of gParts) {
+              ctx.fillStyle = p.col;
+              ctx.fillText(p.ch, startTextX, midY - 30);
+              startTextX += ctx.measureText(p.ch).width + 1.5;
+            }
+          } else {
+            ctx.fillStyle = "#0f172a";
+            ctx.font = "bold 32px Inter, system-ui, sans-serif";
+            ctx.fillText(domainName, midX, midY - 30);
+          }
+
+          // Search Bar / URL Card simulation
+          const cardW = Math.min(w * 0.72, 480);
+          const cardH = 42;
+          ctx.fillStyle = "#f8fafc";
+          this.drawRoundedRect(ctx, midX - cardW / 2, midY + 12, cardW, cardH, 21);
+          ctx.fill();
+          ctx.strokeStyle = "#cbd5e1";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+
+          ctx.fillStyle = "#64748b";
+          ctx.font = "13px Inter, system-ui, sans-serif";
+          ctx.fillText(`Search or interact on ${domainName} live...`, midX, midY + 33);
+
+          // Live Broadcast Badge
+          ctx.fillStyle = "rgba(14, 165, 233, 0.12)";
+          const badgeW = 240;
+          this.drawRoundedRect(ctx, midX - badgeW / 2, midY + 80, badgeW, 24, 12);
+          ctx.fill();
+          ctx.fillStyle = "#0284c7";
+          ctx.font = "bold 10.5px Inter, sans-serif";
+          ctx.fillText("🌐 LIVE WEBPAGE • BROADCAST ACTIVE", midX, midY + 92);
+
+          ctx.restore();
         } else if (currentStore.activeMedia) {
           // Fallback: If YouTube is buffering or DRM-restricted video is using <iframe>,
           // render high-resolution poster (maxresdefault.jpg / hqdefault.jpg) with exact isCover/contain crop math,

@@ -133,6 +133,7 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
   });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mirrorCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Sync pointer state to global window object so stageBroadcaster.ts can draw the cursor onto Live Stream & Recording!
   useEffect(() => {
@@ -182,6 +183,59 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
   }, []);
 
   const cleanUrl = normalizeWebsiteUrl(webCfg.url || item.url);
+
+  // Background Live Snapshot Engine: periodically snapshots proxied iframe to canvas for 60FPS Stage Broadcaster & Local MP4 Recorder
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    let isSnapshotting = false;
+
+    const captureFrame = async () => {
+      if (isSnapshotting || typeof window === "undefined") return;
+      const iframe = document.getElementById("livestudio-active-website-iframe") as HTMLIFrameElement | null;
+      const canvas = mirrorCanvasRef.current;
+      if (!iframe || !canvas) return;
+
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!doc || !doc.body) return;
+
+        isSnapshotting = true;
+        const html2canvasModule = await import("html2canvas");
+        const html2canvas = html2canvasModule.default || html2canvasModule;
+        const rendered = await html2canvas(doc.body, {
+          allowTaint: true,
+          useCORS: true,
+          logging: false,
+          scale: 1,
+          width: iframe.clientWidth || 1280,
+          height: iframe.clientHeight || 720,
+        });
+
+        if (rendered && rendered.width > 0 && rendered.height > 0) {
+          canvas.width = rendered.width;
+          canvas.height = rendered.height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(rendered, 0, 0);
+          }
+        }
+      } catch (err) {
+        // Cross-origin iframe or loading
+      } finally {
+        isSnapshotting = false;
+      }
+    };
+
+    timer = setInterval(captureFrame, 1500);
+    const initialT = setTimeout(captureFrame, 1000);
+
+    return () => {
+      if (timer) clearInterval(timer);
+      clearTimeout(initialT);
+    };
+  }, [cleanUrl, proxyEngine, iframeKey]);
+
   const iframeSrc =
     proxyEngine === "web-proxy"
       ? `/web-proxy?url=${encodeURIComponent(cleanUrl)}`
@@ -590,6 +644,14 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
           <RotateCcw className="w-3 h-3" />
         </button>
       </div>
+
+      {/* Hidden Live Website Mirror Canvas for 60FPS Stage Broadcaster & Local MP4 Recorder */}
+      <canvas
+        id="livestudio-active-website-canvas"
+        data-media-canvas="true"
+        ref={mirrorCanvasRef}
+        className="hidden"
+      />
     </div>
   );
 };

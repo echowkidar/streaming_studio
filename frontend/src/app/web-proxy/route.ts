@@ -440,6 +440,15 @@ export async function GET(req: NextRequest) {
       // Inject anti-frame-busting & navigation helper so clicking links or searching stays inside the stage proxy
       const helperScript = `<script>
         (function() {
+          var _realStudioHost = null;
+          try {
+            if (window.parent && window.parent !== window) {
+              _realStudioHost = window.parent;
+            } else if (window.top && window.top !== window) {
+              _realStudioHost = window.top;
+            }
+          } catch (e) {}
+
           try {
             Object.defineProperty(window, "top", { get: function() { return window.self; } });
             Object.defineProperty(window, "parent", { get: function() { return window.self; } });
@@ -479,21 +488,25 @@ export async function GET(req: NextRequest) {
 
           window.addEventListener("mousemove", function(e) {
             try {
-              window.parent.postMessage({
-                type: "LIVESTUDIO_WEB_POINTER_MOVE",
-                clientX: e.clientX,
-                clientY: e.clientY,
-                innerWidth: window.innerWidth,
-                innerHeight: window.innerHeight
-              }, "*");
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_MOVE",
+                  clientX: e.clientX,
+                  clientY: e.clientY,
+                  innerWidth: window.innerWidth,
+                  innerHeight: window.innerHeight
+                }, "*");
+              }
             } catch (err) {}
           }, { passive: true });
 
           window.addEventListener("mousedown", function(e) {
             try {
-              window.parent.postMessage({
-                type: "LIVESTUDIO_WEB_POINTER_CLICK"
-              }, "*");
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_CLICK"
+                }, "*");
+              }
             } catch (err) {}
           }, { passive: true });
         })();
