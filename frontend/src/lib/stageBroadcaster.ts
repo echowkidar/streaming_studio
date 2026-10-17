@@ -83,6 +83,7 @@ class StageBroadcaster {
   private mediaStreamSources = new Map<string, MediaStreamAudioSourceNode>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
   private mediaGainNode: GainNode | null = null;
+  private mediaLocalGainNode: GainNode | null = null;
   private hpFilter: BiquadFilterNode | null = null;
   private formantFilter: BiquadFilterNode | null = null;
   private sweepingNotchFilter: BiquadFilterNode | null = null;
@@ -124,6 +125,30 @@ class StageBroadcaster {
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume error:", e));
       }
+      if (!this.audioDestination && this.audioCtx) {
+        this.audioDestination = this.audioCtx.createMediaStreamDestination();
+        const aTracks = this.audioDestination.stream.getAudioTracks();
+        if (aTracks.length > 0) {
+          this.activeAudioTrack = aTracks[0];
+        }
+        // Continuous gentle carrier (amplitude 0.0002 = ~ -74dB)
+        try {
+          const sampleRate = this.audioCtx.sampleRate || 48000;
+          const bufferSize = sampleRate * 2;
+          const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
+          for (let ch = 0; ch < 2; ch++) {
+            const channelData = noiseBuffer.getChannelData(ch);
+            for (let i = 0; i < bufferSize; i++) {
+              channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+            }
+          }
+          const carrier = this.audioCtx.createBufferSource();
+          carrier.buffer = noiseBuffer;
+          carrier.loop = true;
+          carrier.connect(this.audioDestination);
+          carrier.start();
+        } catch {}
+      }
     } catch (e) {
       console.warn("[StageBroadcaster] AudioContext init error:", e);
     }
@@ -157,6 +182,12 @@ class StageBroadcaster {
   }
 
   public getCompositeAudioTrack(): MediaStreamTrack | null {
+    if ((!this.activeAudioTrack || this.activeAudioTrack.readyState === "ended") && this.audioDestination?.stream) {
+      const aTracks = this.audioDestination.stream.getAudioTracks();
+      if (aTracks.length > 0) {
+        this.activeAudioTrack = aTracks[0];
+      }
+    }
     return this.activeAudioTrack;
   }
 
@@ -207,44 +238,39 @@ class StageBroadcaster {
     // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
     try {
       this.ensureAudioContext();
-      if (!this.audioCtx) {
-        const AudioContextClass =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioCtx = new AudioContextClass();
-      }
-      if (this.audioCtx.state === "suspended") {
-        this.audioCtx.resume().catch((audioResumeErr) => {
-          console.warn("[StageBroadcaster] AudioContext resume warning:", audioResumeErr);
-        });
-      }
-      this.audioDestination = this.audioCtx.createMediaStreamDestination();
-
-      // Continuous gentle carrier (amplitude 0.0002 = ~ -74dB)
-      // Completely inaudible to human ears, but forces WebRTC & GStreamer AAC to stream 128 kbps audio packets 24/7 without silence suppression/DTX
-      const sampleRate = this.audioCtx.sampleRate || 48000;
-      const bufferSize = sampleRate * 2;
-      const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
-      for (let ch = 0; ch < 2; ch++) {
-        const channelData = noiseBuffer.getChannelData(ch);
-        for (let i = 0; i < bufferSize; i++) {
-          channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+      if (!this.audioDestination && this.audioCtx) {
+        this.audioDestination = this.audioCtx.createMediaStreamDestination();
+        const aTracks = this.audioDestination.stream.getAudioTracks();
+        if (aTracks.length > 0) {
+          this.activeAudioTrack = aTracks[0];
         }
-      }
-      const carrier = this.audioCtx.createBufferSource();
-      carrier.buffer = noiseBuffer;
-      carrier.loop = true;
-      carrier.connect(this.audioDestination);
-      
-      // Audible tab flag trick: route at inaudible 0.00001 volume to system speakers so Chrome NEVER throttles background tab timers or WebRTC streams!
-      try {
-        const bgKeepAlive = this.audioCtx.createGain();
-        bgKeepAlive.gain.value = 0.00001;
-        carrier.connect(bgKeepAlive);
-        bgKeepAlive.connect(this.audioCtx.destination);
-      } catch {}
 
-      carrier.start();
+        // Continuous gentle carrier (amplitude 0.0002 = ~ -74dB)
+        // Forces WebRTC & GStreamer AAC to stream 128 kbps audio packets 24/7 without silence suppression/DTX
+        const sampleRate = this.audioCtx.sampleRate || 48000;
+        const bufferSize = sampleRate * 2;
+        const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
+        for (let ch = 0; ch < 2; ch++) {
+          const channelData = noiseBuffer.getChannelData(ch);
+          for (let i = 0; i < bufferSize; i++) {
+            channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+          }
+        }
+        const carrier = this.audioCtx.createBufferSource();
+        carrier.buffer = noiseBuffer;
+        carrier.loop = true;
+        carrier.connect(this.audioDestination);
+        
+        // Audible tab flag trick: route at inaudible 0.00001 volume to system speakers so Chrome NEVER throttles background tab timers or WebRTC streams!
+        try {
+          const bgKeepAlive = this.audioCtx.createGain();
+          bgKeepAlive.gain.value = 0.00001;
+          carrier.connect(bgKeepAlive);
+          bgKeepAlive.connect(this.audioCtx.destination);
+        } catch {}
+
+        carrier.start();
+      }
     } catch (audioErr) {
       console.warn("[StageBroadcaster] Web Audio initialization warning:", audioErr);
     }
@@ -757,7 +783,11 @@ class StageBroadcaster {
    * StreamYard Parity: Backstage & muted participants are instantly silenced with GainNode
    */
   public refreshAudioConnections() {
+    this.ensureAudioContext();
     if (!this.audioCtx || !this.audioDestination) return;
+    if (this.audioCtx.state === "suspended") {
+      this.audioCtx.resume().catch(() => {});
+    }
 
     try {
       const store = useStudioStore.getState();
@@ -830,7 +860,7 @@ class StageBroadcaster {
           }
         }
 
-        const isMediaMuted = Boolean(store.activeMedia?.isMuted || mediaVideo.muted);
+        const isMediaMuted = Boolean(store.activeMedia?.isMuted);
         const baseVol = (store.activeMedia?.volume ?? 100) / 100; // 0.0 to 2.0 (boost supported)
         const isDuckingEnabled = Boolean(
           store.fairUseConfig?.enabled &&
@@ -842,10 +872,23 @@ class StageBroadcaster {
         const finalGain = isMediaMuted ? 0 : shouldDuck ? Math.min(baseVol, duckVol) : baseVol;
 
         if (this.mediaGainNode) {
-          this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.12);
+          this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.08);
         }
-        if (mediaVideo.muted !== isMediaMuted) {
-          mediaVideo.muted = isMediaMuted;
+
+        // Local speaker preview gain control (avoids muting the HTML5 video element itself, which silences createMediaElementSource in Chromium)
+        if (!this.mediaLocalGainNode && this.audioCtx) {
+          try {
+            this.mediaLocalGainNode = this.audioCtx.createGain();
+            this.mediaLocalGainNode.connect(this.audioCtx.destination);
+          } catch {}
+        }
+        if (this.mediaLocalGainNode) {
+          this.mediaLocalGainNode.gain.setTargetAtTime(isMediaMuted ? 0 : baseVol, this.audioCtx.currentTime, 0.08);
+        }
+
+        // Ensure the HTML5 video element is NOT muted at the DOM level so Web Audio receives non-zero audio samples
+        if (mediaVideo.muted) {
+          mediaVideo.muted = false;
         }
 
         // Setup 5-Stage Audio Anti-Content-ID DSP Pipeline (High-pass + Sweeping Notch + Formant Peaking)
@@ -906,7 +949,11 @@ class StageBroadcaster {
               srcNode.disconnect();
             } catch {}
             srcNode.connect(targetInputNode);
-            srcNode.connect(this.audioCtx.destination);
+            if (this.mediaLocalGainNode) {
+              srcNode.connect(this.mediaLocalGainNode);
+            } else {
+              srcNode.connect(this.audioCtx.destination);
+            }
           } else {
             const stream =
               (mediaVideo as any).captureStream?.() ||
@@ -917,6 +964,9 @@ class StageBroadcaster {
               if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
                 const streamSrcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
                 streamSrcNode.connect(targetInputNode);
+                if (this.mediaLocalGainNode) {
+                  streamSrcNode.connect(this.mediaLocalGainNode);
+                }
                 this.mediaStreamSources.set(audioTrack.id, streamSrcNode);
                 console.log("[StageBroadcaster] Connected media video captureStream audio to broadcast mix");
               }

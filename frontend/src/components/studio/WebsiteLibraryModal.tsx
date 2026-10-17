@@ -134,6 +134,22 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mirrorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pointerInactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const kickPointerActive = (xPct: number, yPct: number, clicking = false) => {
+    setPointerPos({
+      x: Math.max(0, Math.min(100, xPct)),
+      y: Math.max(0, Math.min(100, yPct)),
+      active: true,
+      clicking,
+    });
+    if (pointerInactivityTimerRef.current) {
+      clearTimeout(pointerInactivityTimerRef.current);
+    }
+    pointerInactivityTimerRef.current = setTimeout(() => {
+      setPointerPos((prev) => ({ ...prev, active: false }));
+    }, 4500);
+  };
 
   // Sync pointer state to global window object so stageBroadcaster.ts can draw the cursor onto Live Stream & Recording!
   useEffect(() => {
@@ -166,12 +182,7 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
         const actualY =
           ((topBarHeight + (clientY / Math.max(1, innerHeight)) * iframeAvailableH) / Math.max(1, rect.height)) * 100;
 
-        setPointerPos({
-          x: Math.max(0, Math.min(100, actualX)),
-          y: Math.max(0, Math.min(100, actualY)),
-          active: true,
-          clicking: false,
-        });
+        kickPointerActive(actualX, actualY);
       } else if (e.data?.type === "LIVESTUDIO_WEB_POINTER_CLICK") {
         setPointerPos((p) => ({ ...p, clicking: true }));
         setTimeout(() => setPointerPos((p) => ({ ...p, clicking: false })), 260);
@@ -179,7 +190,12 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      if (pointerInactivityTimerRef.current) {
+        clearTimeout(pointerInactivityTimerRef.current);
+      }
+    };
   }, []);
 
   const cleanUrl = normalizeWebsiteUrl(webCfg.url || item.url);
@@ -286,11 +302,12 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
     const rect = containerRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / Math.max(1, rect.width)) * 100));
     const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / Math.max(1, rect.height)) * 100));
-    setPointerPos((prev) => ({ ...prev, x, y, active: true }));
+    kickPointerActive(x, y);
   };
 
   const handleContainerMouseDown = () => {
-    setPointerPos((prev) => ({ ...prev, clicking: true }));
+    if (!containerRef.current) return;
+    setPointerPos((prev) => ({ ...prev, clicking: true, active: true }));
     setTimeout(() => {
       setPointerPos((prev) => ({ ...prev, clicking: false }));
     }, 260);
@@ -301,7 +318,6 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
       ref={containerRef}
       onMouseMove={handleContainerMouseMove}
       onMouseEnter={() => setPointerPos((p) => ({ ...p, active: true }))}
-      onMouseLeave={() => setPointerPos((p) => ({ ...p, active: false }))}
       onMouseDown={handleContainerMouseDown}
       className="relative w-full h-full bg-[#070913] overflow-hidden select-none group/webstage"
     >

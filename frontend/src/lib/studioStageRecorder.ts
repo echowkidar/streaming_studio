@@ -115,12 +115,17 @@ export class StudioStageRecorder {
       }
 
       // Guarantee audio track is present in the recorded stream
-      if (stream && stream.getAudioTracks().length === 0) {
+      if (stream) {
         stageBroadcaster.refreshAudioConnections();
-        const aTrack = stageBroadcaster.getCompositeAudioTrack();
-        if (aTrack) {
-          stream.addTrack(aTrack);
+        if (stream.getAudioTracks().length === 0) {
+          const aTrack = stageBroadcaster.getCompositeAudioTrack();
+          if (aTrack) {
+            stream.addTrack(aTrack);
+          }
         }
+        console.log(
+          `[StudioStageRecorder] Recording stream initialized: ${stream.getVideoTracks().length} video track(s), ${stream.getAudioTracks().length} audio track(s)`
+        );
       }
 
       // 2. Resilient active fallback if DOM container was completely unavailable

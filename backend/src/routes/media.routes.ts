@@ -475,16 +475,12 @@ async function resolveDirectYouTubeStreamUrl(videoId: string): Promise<string | 
       });
       if (ytRes.ok) {
         const ytData: any = await ytRes.json();
-        const formats: any[] = [
-          ...(ytData?.streamingData?.formats || []),
-          ...(ytData?.streamingData?.adaptiveFormats || []),
-        ];
-        // Prefer progressive MP4 with both video & audio (itag 22 = 720p, itag 18 = 360p)
+        const formats: any[] = ytData?.streamingData?.formats || [];
+        // Strictly prefer progressive MP4 formats that contain BOTH video & audio (itag 22 = 720p, itag 18 = 360p)
         const bestFormat =
           formats.find((f) => f.itag === 22 && f.url) ||
           formats.find((f) => f.itag === 18 && f.url) ||
-          formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4') && f.audioQuality) ||
-          formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4'));
+          formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4') && f.audioQuality);
         if (bestFormat?.url) {
           ytStreamUrlCache.set(videoId, { url: bestFormat.url, expiresAt: Date.now() + 20 * 60 * 1000 });
           return bestFormat.url;
@@ -533,12 +529,17 @@ function pipeYouTubeStreamFollowingRedirects(
   req: Request,
   res: Response,
   videoId: string,
-  redirectsLeft: number = 6
+  redirectsLeft: number = 6,
+  onFail?: () => void
 ): void {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(initialUrl);
   } catch (err) {
+    if (onFail) {
+      onFail();
+      return;
+    }
     if (!res.headersSent) {
       res.status(502).json({ success: false, error: 'Invalid upstream stream URL' });
     }
@@ -567,13 +568,17 @@ function pipeYouTubeStreamFollowingRedirects(
     ) {
       proxyRes.resume();
       const nextUrl = new URL(proxyRes.headers.location, initialUrl).toString();
-      pipeYouTubeStreamFollowingRedirects(nextUrl, req, res, videoId, redirectsLeft - 1);
+      pipeYouTubeStreamFollowingRedirects(nextUrl, req, res, videoId, redirectsLeft - 1, onFail);
       return;
     }
 
     if (statusCode >= 400) {
       proxyRes.resume();
       ytStreamUrlCache.delete(videoId);
+      if (onFail) {
+        onFail();
+        return;
+      }
       if (!res.headersSent) {
         res.status(502).json({ success: false, error: `Upstream returned ${statusCode}` });
       }
@@ -585,6 +590,9 @@ function pipeYouTubeStreamFollowingRedirects(
     res.removeHeader('Cross-Origin-Embedder-Policy');
     res.removeHeader('Cross-Origin-Resource-Policy');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, User-Agent');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'video/mp4');
@@ -600,6 +608,10 @@ function pipeYouTubeStreamFollowingRedirects(
 
   proxyReq.on('error', (err) => {
     ytStreamUrlCache.delete(videoId);
+    if (onFail) {
+      onFail();
+      return;
+    }
     if (!res.headersSent) {
       res.status(502).json({ success: false, error: err.message });
     }
@@ -649,6 +661,67 @@ router.get('/youtube/info', async (req: Request, res: Response): Promise<void> =
   }
 });
 
+// Spawns yt-dlp to mux video + audio into fragmented MP4 streamable to stdout without seek errors
+function spawnYtDlpStream(
+  videoId: string,
+  req: Request,
+  res: Response,
+  ytdlpBin: string
+): void {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const proc = spawn(ytdlpBin, [
+    '-f',
+    'best[ext=mp4][height<=720]/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+    '--no-playlist',
+    '--no-check-certificates',
+    '--geo-bypass',
+    '--merge-output-format',
+    'mp4',
+    '--ppa',
+    'Merger+ffmpeg_o:-movflags frag_keyframe+empty_moov+default_base_moof',
+    '-o',
+    '-',
+    watchUrl,
+  ]);
+
+  res.removeHeader('X-Frame-Options');
+  res.removeHeader('Content-Security-Policy');
+  res.removeHeader('Cross-Origin-Embedder-Policy');
+  res.removeHeader('Cross-Origin-Opener-Policy');
+  res.removeHeader('Cross-Origin-Resource-Policy');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, User-Agent');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Type', 'video/mp4');
+
+  proc.stdout.pipe(res);
+
+  proc.on('error', (procErr) => {
+    console.warn('[YouTube Stream] yt-dlp process error:', procErr);
+    if (!res.headersSent) {
+      res.status(502).json({ success: false, error: procErr.message });
+    }
+  });
+
+  req.on('close', () => {
+    try {
+      proc.kill('SIGTERM');
+    } catch {}
+  });
+}
+
+// OPTIONS /api/media/youtube/stream
+router.options('/youtube/stream', (_req: Request, res: Response) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, User-Agent');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.status(204).end();
+});
+
 // GET /api/media/youtube/stream?videoId=...
 router.get('/youtube/stream', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -659,48 +732,29 @@ router.get('/youtube/stream', async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const directUrl = await resolveDirectYouTubeStreamUrl(videoId);
-    if (directUrl) {
-      pipeYouTubeStreamFollowingRedirects(directUrl, req, res, videoId, 6);
-      return;
-    }
-
-    // Tier 3: Spawn yt-dlp directly to stream progressive MP4 (video + audio merged on the fly!)
-    const ytdlpBin = await getOrBootstrapYtDlpBinary();
-    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const proc = spawn(ytdlpBin, [
-      '-f',
-      'best[ext=mp4][height<=720]/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
-      '--no-playlist',
-      '--no-check-certificates',
-      '--geo-bypass',
-      '-o',
-      '-',
-      watchUrl,
-    ]);
-
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
     res.removeHeader('Cross-Origin-Embedder-Policy');
+    res.removeHeader('Cross-Origin-Opener-Policy');
     res.removeHeader('Cross-Origin-Resource-Policy');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, User-Agent');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.setHeader('Content-Type', 'video/mp4');
 
-    proc.stdout.pipe(res);
+    const ytdlpBin = await getOrBootstrapYtDlpBinary();
 
-    proc.on('error', (procErr) => {
-      console.warn('[YouTube Stream] yt-dlp process error:', procErr);
-      if (!res.headersSent) {
-        res.status(502).json({ success: false, error: procErr.message });
-      }
-    });
+    const directUrl = await resolveDirectYouTubeStreamUrl(videoId);
+    if (directUrl) {
+      pipeYouTubeStreamFollowingRedirects(directUrl, req, res, videoId, 6, () => {
+        spawnYtDlpStream(videoId, req, res, ytdlpBin);
+      });
+      return;
+    }
 
-    req.on('close', () => {
-      try {
-        proc.kill('SIGTERM');
-      } catch {}
-    });
+    // Direct resolution unavailable - stream directly via yt-dlp stdout pipe
+    spawnYtDlpStream(videoId, req, res, ytdlpBin);
   } catch (err) {
     if (!res.headersSent) {
       res.status(500).json({ success: false, error: (err as Error).message });
