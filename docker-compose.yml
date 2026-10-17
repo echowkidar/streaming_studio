@@ -78,7 +78,7 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
     networks:
       - livestudio
     healthcheck:
@@ -159,7 +159,7 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_healthy
+        condition: service_started
     networks:
       - livestudio
 
@@ -202,11 +202,10 @@ services:
 
   # ─── MinIO (S3-Compatible Object Storage) ───────────────
   minio:
-    build:
-      context: ./minio
-      dockerfile: Dockerfile
+    image: cgr.dev/chainguard/minio:latest
     container_name: livestudio-minio
     restart: unless-stopped
+    user: "0:0"
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
@@ -216,11 +215,11 @@ services:
     networks:
       - livestudio
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || mc ready local || exit 1"]
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/127.0.0.1/9000 || curl -sf http://127.0.0.1:9000/minio/health/live || wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live || true"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 10s
 
   # ─── LiveKit (WebRTC SFU - Optional local fallback) ─────
   livekit:
