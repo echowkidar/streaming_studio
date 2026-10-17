@@ -85,6 +85,7 @@ class StageBroadcaster {
   private mediaGainNode: GainNode | null = null;
   private hpFilter: BiquadFilterNode | null = null;
   private formantFilter: BiquadFilterNode | null = null;
+  private sweepingNotchFilter: BiquadFilterNode | null = null;
 
   // Cached Background & Overlay Images
   private cachedBgUrl: string | null = null;
@@ -836,28 +837,38 @@ class StageBroadcaster {
           mediaVideo.muted = isMediaMuted;
         }
 
-        // Setup Formant EQ Filter when audio fair-use is active
+        // Setup 5-Stage Audio Anti-Content-ID DSP Pipeline (High-pass + Sweeping Notch + Formant Peaking)
         const needsAudioFairUse = Boolean(
-          store.fairUseConfig?.enabled && store.fairUseConfig?.enableAudioFairUse
+          store.fairUseConfig?.enabled && (store.fairUseConfig?.enableAudioFairUse ?? store.fairUseConfig?.audioEqProtection ?? true)
         );
         if (needsAudioFairUse && !this.hpFilter && this.audioCtx) {
           try {
+            // Stage 3: 85 Hz Sub-Bass High-Pass Cut
             this.hpFilter = this.audioCtx.createBiquadFilter();
             this.hpFilter.type = "highpass";
             this.hpFilter.frequency.value = 85;
 
+            // Stage 4: Sweeping Spectral Notch Filter LFO (900 Hz - 2700 Hz @ -5.5 dB)
+            this.sweepingNotchFilter = this.audioCtx.createBiquadFilter();
+            this.sweepingNotchFilter.type = "peaking";
+            this.sweepingNotchFilter.frequency.value = 1800;
+            this.sweepingNotchFilter.Q.value = 2.2;
+            this.sweepingNotchFilter.gain.value = -5.5;
+
+            // Stage 5: Formant Peaking EQ (+3.2 dB @ 2.35 kHz)
             this.formantFilter = this.audioCtx.createBiquadFilter();
             this.formantFilter.type = "peaking";
             this.formantFilter.frequency.value = 2350;
             this.formantFilter.Q.value = 1.4;
-            this.formantFilter.gain.value = 3.5;
+            this.formantFilter.gain.value = 3.2;
 
-            this.hpFilter.connect(this.formantFilter);
+            this.hpFilter.connect(this.sweepingNotchFilter);
+            this.sweepingNotchFilter.connect(this.formantFilter);
             if (this.mediaGainNode) {
               this.formantFilter.connect(this.mediaGainNode);
             }
           } catch (filterErr) {
-            console.warn("[StageBroadcaster] Formant filter creation error:", filterErr);
+            console.warn("[StageBroadcaster] Audio filter chain creation error:", filterErr);
           }
         }
 
@@ -1010,23 +1021,52 @@ class StageBroadcaster {
         const panX = mediaTf.panX || 0;
         const panY = mediaTf.panY || 0;
 
-        // Cinematic Zoom Breathing scale oscillation (defeating DCT perceptual hashes)
-        const breathIntensity = currentStore.fairUseConfig?.breathingIntensity || "subtle";
-        const amp = breathIntensity === "strong" ? 0.09 : breathIntensity === "medium" ? 0.055 : 0.03;
-        const breathingScale =
-          currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.isBreathingEnabled
-            ? 1.0 + amp * (1 + Math.sin(timestamp / 1200))
-            : 1.0;
+        // 2D Pan + Zoom + Micro-Tilt Breathing LFO (defeating DCT perceptual hashes & macroblocks)
+        const isBreathing = Boolean(
+          currentStore.fairUseConfig?.enabled &&
+            (currentStore.fairUseConfig?.zoomBreathing ?? currentStore.fairUseConfig?.isBreathingEnabled ?? true)
+        );
+        const breathIntensity = currentStore.fairUseConfig?.breathIntensity || currentStore.fairUseConfig?.breathingIntensity || "medium";
+        const maxDelta = breathIntensity === "subtle" ? 0.06 : breathIntensity === "strong" ? 0.18 : 0.11;
+        const breathWave = isBreathing ? (1 + Math.sin(timestamp / 520)) / 2 : 0;
+        const breathingScale = 1.0 + breathWave * maxDelta;
+        const breathPanX = isBreathing ? Math.sin(timestamp / 780) * 0.85 : 0;
+        const breathPanY = isBreathing ? Math.cos(timestamp / 920) * 0.65 : 0;
+        const breathTilt = isBreathing ? Math.sin(timestamp / 1100) * 0.35 : 0;
         const effectiveZoom = zoom * breathingScale;
+
+        // Dynamic Sweeping Spectral Notch Filter LFO & Dual-Wave Irrational Tempo
+        if (this.sweepingNotchFilter && this.audioCtx) {
+          const sweepHz = 1800 + Math.sin(timestamp / 820) * 900;
+          this.sweepingNotchFilter.frequency.setValueAtTime(sweepHz, this.audioCtx.currentTime);
+        }
+        if (mediaVideo && !mediaVideo.paused) {
+          try {
+            (mediaVideo as any).preservesPitch = false;
+            (mediaVideo as any).mozPreservesPitch = false;
+            (mediaVideo as any).webkitPreservesPitch = false;
+            if (currentStore.fairUseConfig?.dynamicTempoVariance ?? true) {
+              const baseRate = currentStore.fairUseConfig?.playbackRate || 1.04;
+              const irrationalMod = (Math.sin(timestamp / 1650) + Math.cos(timestamp / 2900)) * 0.018;
+              mediaVideo.playbackRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
+            }
+          } catch {}
+        }
 
         if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
           ctx.save();
           if (currentStore.fairUseConfig?.enabled) {
             if (currentStore.fairUseConfig?.visualTransformFilter) {
-              ctx.filter = "contrast(1.05) saturate(1.06)";
+              ctx.filter = "contrast(1.06) saturate(1.05)";
+            }
+            const cx = x + w / 2;
+            const cy = y + h / 2;
+            if (breathTilt !== 0) {
+              ctx.translate(cx, cy);
+              ctx.rotate((breathTilt * Math.PI) / 180);
+              ctx.translate(-cx, -cy);
             }
             if (currentStore.fairUseConfig.mirrorMediaVideo) {
-              const cx = x + w / 2;
               ctx.translate(cx, 0);
               ctx.scale(-1, 1);
               ctx.translate(-cx, 0);
@@ -1035,8 +1075,8 @@ class StageBroadcaster {
 
           const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
           const tRatio = w / h;
-          let objectPosX = Math.max(0, Math.min(100, 50 + panX));
-          let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+          let objectPosX = Math.max(0, Math.min(100, 50 + panX + breathPanX));
+          let objectPosY = Math.max(0, Math.min(100, 50 + panY + breathPanY));
           if (mediaVideo.style.objectPosition) {
             const parts = mediaVideo.style.objectPosition.split(" ");
             if (parts.length >= 2) {
@@ -1090,6 +1130,22 @@ class StageBroadcaster {
             }
           }
           ctx.restore();
+
+          // Dynamic Corner Vignette (defeating frame-border edge hashing)
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vignetteOverlay ?? true)) {
+            ctx.save();
+            const cx = x + w / 2;
+            const cy = y + h / 2;
+            const rMin = Math.min(w, h) * 0.38;
+            const rMax = Math.max(w, h) * 0.72;
+            const vigGrad = ctx.createRadialGradient(cx, cy, rMin, cx, cy, rMax);
+            vigGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+            vigGrad.addColorStop(0.65, "rgba(0, 0, 0, 0.08)");
+            vigGrad.addColorStop(1, "rgba(0, 0, 0, 0.42)");
+            ctx.fillStyle = vigGrad;
+            ctx.fillRect(x, y, w, h);
+            ctx.restore();
+          }
 
           // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
           if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
@@ -2032,7 +2088,7 @@ class StageBroadcaster {
         d[i] = v;
         d[i + 1] = v;
         d[i + 2] = v;
-        d[i + 3] = (Math.random() * 45 + 15) | 0; // Subtle random particle alpha
+        d[i + 3] = (Math.random() * 80 + 35) | 0; // Prominently visible random particle alpha
       }
       gctx.putImageData(idata, 0, 0);
     } catch {}
@@ -2061,7 +2117,7 @@ class StageBroadcaster {
         d[i] = Math.max(0, Math.min(255, luma + rJitter));
         d[i + 1] = Math.max(0, Math.min(255, luma + gJitter));
         d[i + 2] = Math.max(0, Math.min(255, luma + bJitter));
-        d[i + 3] = (Math.random() * 60 + 20) | 0;
+        d[i + 3] = (Math.random() * 95 + 45) | 0;
       }
       gctx.putImageData(idata, 0, 0);
     } catch {}
@@ -2093,12 +2149,12 @@ class StageBroadcaster {
     ctx.rect(x, y, w, h);
     ctx.clip();
 
-    let alpha = 0.05;
-    if (intensity === "light") alpha = 0.035;
-    else if (intensity === "medium") alpha = 0.065;
-    else if (intensity === "strong") alpha = 0.10;
+    let alpha = 0.14;
+    if (intensity === "light") alpha = 0.08;
+    else if (intensity === "medium") alpha = 0.14;
+    else if (intensity === "strong") alpha = 0.22;
     else if (intensity === "random") {
-      alpha = 0.055 + Math.sin(this.grainFrameCount / 18) * 0.035; // 5.5% to 12%
+      alpha = 0.12 + Math.sin(this.grainFrameCount / 16) * 0.08; // 8% to 20%
     }
 
     ctx.globalAlpha = alpha;
@@ -2112,6 +2168,17 @@ class StageBroadcaster {
       for (let py = y - jitterY; py < y + h; py += 160) {
         ctx.drawImage(this.grainCanvas, px, py);
       }
+    }
+
+    // Dynamic Micro Specular Noise Flecks (1.8px - 3.5px) to defeat perceptual hashes
+    ctx.globalCompositeOperation = "source-over";
+    const fleckCount = intensity === "strong" ? 8 : intensity === "light" ? 3 : 5;
+    for (let f = 0; f < fleckCount; f++) {
+      const fx = x + Math.random() * w;
+      const fy = y + Math.random() * h;
+      const size = 1.8 + Math.random() * 1.7; // 1.8px to 3.5px
+      ctx.fillStyle = `rgba(255, 255, 255, ${(0.18 + Math.random() * 0.22) * (alpha / 0.14)})`;
+      ctx.fillRect(fx, fy, size, size);
     }
     ctx.restore();
   }
@@ -2133,36 +2200,48 @@ class StageBroadcaster {
     ctx.rect(x, y, w, h);
     ctx.clip();
 
-    const lineCount = intensity === "light" ? 3 : intensity === "strong" ? 8 : 5;
-    const baseAlpha = intensity === "light" ? 0.14 : intensity === "strong" ? 0.32 : 0.22;
+    const lineCount = intensity === "light" ? 4 : intensity === "strong" ? 9 : 6;
+    const baseAlpha = intensity === "light" ? 0.18 : intensity === "strong" ? 0.38 : 0.26;
+    const targetWidth = intensity === "light" ? 1.5 : intensity === "strong" ? 3.5 : 2.4;
 
-    // 1. Random Vertical & Slightly Tilted Bareek Scratches (Old Cinema Reel Effect)
+    // 1. Dual-Core Vertical & Slightly Tilted Cinema Projector Scratches
     for (let i = 0; i < lineCount; i++) {
       const lx = x + Math.random() * w;
-      const tilt = (Math.random() - 0.5) * 6; // Halki si tirchhi ya seedhi bareek line
-      const isDarkLine = Math.random() > 0.65;
-      const alpha = baseAlpha * (0.5 + Math.random() * 0.7);
+      const tilt = (Math.random() - 0.5) * 6;
+      const isDarkLine = Math.random() > 0.6;
+      const alpha = baseAlpha * (0.6 + Math.random() * 0.6);
 
-      ctx.strokeStyle = isDarkLine
-        ? `rgba(15, 15, 20, ${alpha})`
-        : `rgba(255, 250, 235, ${alpha})`;
-      ctx.lineWidth = Math.random() < 0.75 ? 0.65 : 1.15; // Ekdum bareek hairline
-
-      ctx.beginPath();
-      // Kuch lines poori height par aayengi, kuch beech me toot-ti hui (projector scratch style)
       const startY = Math.random() < 0.6 ? y : y + Math.random() * (h * 0.4);
       const endY = Math.random() < 0.6 ? y + h : startY + h * (0.35 + Math.random() * 0.5);
+
+      // Outer glow / contrast boundary
+      ctx.beginPath();
+      ctx.lineWidth = targetWidth + 1.2;
+      ctx.strokeStyle = isDarkLine
+        ? `rgba(255, 255, 255, ${alpha * 0.35})`
+        : `rgba(0, 0, 0, ${alpha * 0.45})`;
+      ctx.moveTo(lx, startY);
+      ctx.lineTo(lx + tilt, Math.min(y + h, endY));
+      ctx.stroke();
+
+      // Inner sharp core line
+      ctx.beginPath();
+      ctx.lineWidth = targetWidth;
+      ctx.strokeStyle = isDarkLine
+        ? `rgba(18, 18, 24, ${alpha})`
+        : `rgba(255, 248, 225, ${alpha})`;
       ctx.moveTo(lx, startY);
       ctx.lineTo(lx + tilt, Math.min(y + h, endY));
       ctx.stroke();
     }
 
-    // 2. Subtle Traveling Horizontal Scanlines / Reel Dust specks (2 specks per frame)
-    for (let s = 0; s < 2; s++) {
+    // 2. Traveling Cinema Reel Dust Flecks (2.5px x 1.8px)
+    const speckCount = intensity === "strong" ? 6 : intensity === "light" ? 2 : 4;
+    for (let s = 0; s < speckCount; s++) {
       const sx = x + Math.random() * w;
       const sy = y + Math.random() * h;
-      ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.8})`;
-      ctx.fillRect(sx, sy, 1.5, 1.5);
+      ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.75})`;
+      ctx.fillRect(sx, sy, 2.5, 1.8);
     }
 
     ctx.restore();

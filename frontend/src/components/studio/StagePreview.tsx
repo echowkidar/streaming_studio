@@ -44,7 +44,7 @@ import {
   Clipboard,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem, TacticalMapConfig } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem, TacticalMapConfig, FairUseConfig } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
@@ -54,6 +54,184 @@ import { StageTelestrator } from "./StageTelestrator";
 import { TacticalMapStageCanvas, TacticalMapModal } from "./TacticalMapModal";
 import { YouTubeLibraryModal, extractYouTubeVideoId } from "./YouTubeLibraryModal";
 import { InteractiveWebsiteStageView, WebsiteLibraryModal } from "./WebsiteLibraryModal";
+
+const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animId: number;
+    let frameCount = 0;
+
+    const grainCanvas = document.createElement("canvas");
+    grainCanvas.width = 160;
+    grainCanvas.height = 160;
+    const gctx = grainCanvas.getContext("2d");
+
+    const refreshGrainTile = () => {
+      if (!gctx) return;
+      const idata = gctx.createImageData(160, 160);
+      const d = idata.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const luma = (Math.random() * 255) | 0;
+        const rJitter = ((Math.random() - 0.5) * 40) | 0;
+        const gJitter = ((Math.random() - 0.5) * 40) | 0;
+        const bJitter = ((Math.random() - 0.5) * 40) | 0;
+        d[i] = Math.max(0, Math.min(255, luma + rJitter));
+        d[i + 1] = Math.max(0, Math.min(255, luma + gJitter));
+        d[i + 2] = Math.max(0, Math.min(255, luma + bJitter));
+        d[i + 3] = (Math.random() * 95 + 45) | 0;
+      }
+      gctx.putImageData(idata, 0, 0);
+    };
+
+    refreshGrainTile();
+
+    const render = () => {
+      frameCount++;
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+
+      ctx.clearRect(0, 0, w, h);
+
+      if (w <= 0 || h <= 0) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      const showGrain = config?.filmGrainOverlay ?? true;
+      const showLines = config?.vintageLinesOverlay ?? true;
+      const showVignette = config?.vignetteOverlay ?? true;
+
+      // 1. Dynamic Corner Vignette
+      if (showVignette) {
+        ctx.save();
+        const cx = w / 2;
+        const cy = h / 2;
+        const rMin = Math.min(w, h) * 0.38;
+        const rMax = Math.max(w, h) * 0.72;
+        const vigGrad = ctx.createRadialGradient(cx, cy, rMin, cx, cy, rMax);
+        vigGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
+        vigGrad.addColorStop(0.65, "rgba(0, 0, 0, 0.08)");
+        vigGrad.addColorStop(1, "rgba(0, 0, 0, 0.42)");
+        ctx.fillStyle = vigGrad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+      }
+
+      // 2. Film Grain Overlay
+      if (showGrain) {
+        const grainIntensity = config?.grainIntensity || "random";
+        if (grainIntensity === "random" && frameCount % 12 === 0) {
+          refreshGrainTile();
+        }
+
+        ctx.save();
+        let alpha = 0.14;
+        if (grainIntensity === "light") alpha = 0.08;
+        else if (grainIntensity === "medium") alpha = 0.14;
+        else if (grainIntensity === "strong") alpha = 0.22;
+        else if (grainIntensity === "random") {
+          alpha = 0.12 + Math.sin(frameCount / 16) * 0.08;
+        }
+
+        ctx.globalAlpha = alpha;
+        ctx.globalCompositeOperation = "overlay";
+
+        const jitterX = (Math.random() * 160) | 0;
+        const jitterY = (Math.random() * 160) | 0;
+        for (let px = -jitterX; px < w; px += 160) {
+          for (let py = -jitterY; py < h; py += 160) {
+            ctx.drawImage(grainCanvas, px, py);
+          }
+        }
+
+        // Specular flecks
+        ctx.globalCompositeOperation = "source-over";
+        const fleckCount = grainIntensity === "strong" ? 8 : grainIntensity === "light" ? 3 : 5;
+        for (let f = 0; f < fleckCount; f++) {
+          const fx = Math.random() * w;
+          const fy = Math.random() * h;
+          const size = 1.8 + Math.random() * 1.7;
+          ctx.fillStyle = `rgba(255, 255, 255, ${(0.18 + Math.random() * 0.22) * (alpha / 0.14)})`;
+          ctx.fillRect(fx, fy, size, size);
+        }
+        ctx.restore();
+      }
+
+      // 3. Dual-Core Bold Vintage Projector Lines
+      if (showLines) {
+        const linesIntensity = config?.vintageLinesIntensity || "medium";
+        const lineCount = linesIntensity === "light" ? 4 : linesIntensity === "strong" ? 9 : 6;
+        const baseAlpha = linesIntensity === "light" ? 0.18 : linesIntensity === "strong" ? 0.38 : 0.26;
+        const targetWidth = linesIntensity === "light" ? 1.5 : linesIntensity === "strong" ? 3.5 : 2.4;
+
+        ctx.save();
+        for (let i = 0; i < lineCount; i++) {
+          const lx = Math.random() * w;
+          const tilt = (Math.random() - 0.5) * 6;
+          const isDarkLine = Math.random() > 0.6;
+          const alpha = baseAlpha * (0.6 + Math.random() * 0.6);
+
+          const startY = Math.random() < 0.6 ? 0 : Math.random() * (h * 0.4);
+          const endY = Math.random() < 0.6 ? h : startY + h * (0.35 + Math.random() * 0.5);
+
+          // Outer contrast boundary
+          ctx.beginPath();
+          ctx.lineWidth = targetWidth + 1.2;
+          ctx.strokeStyle = isDarkLine
+            ? `rgba(255, 255, 255, ${alpha * 0.35})`
+            : `rgba(0, 0, 0, ${alpha * 0.45})`;
+          ctx.moveTo(lx, startY);
+          ctx.lineTo(lx + tilt, Math.min(h, endY));
+          ctx.stroke();
+
+          // Inner sharp core line
+          ctx.beginPath();
+          ctx.lineWidth = targetWidth;
+          ctx.strokeStyle = isDarkLine
+            ? `rgba(18, 18, 24, ${alpha})`
+            : `rgba(255, 248, 225, ${alpha})`;
+          ctx.moveTo(lx, startY);
+          ctx.lineTo(lx + tilt, Math.min(h, endY));
+          ctx.stroke();
+        }
+
+        // Reel dust flecks
+        const speckCount = linesIntensity === "strong" ? 6 : linesIntensity === "light" ? 2 : 4;
+        for (let s = 0; s < speckCount; s++) {
+          const sx = Math.random() * w;
+          const sy = Math.random() * h;
+          ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.75})`;
+          ctx.fillRect(sx, sy, 2.5, 1.8);
+        }
+        ctx.restore();
+      }
+
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [config]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-none z-[25] select-none"
+    />
+  );
+};
 
 export const StagePreview: React.FC = () => {
   const {
@@ -135,12 +313,45 @@ export const StagePreview: React.FC = () => {
   const mediaPanX = mediaTransform.panX || 0;
   const mediaPanY = mediaTransform.panY || 0;
 
+  // Real-time 60FPS 2D Pan + Zoom + Micro-Tilt Breathing LFO
+  const [breathScale, setBreathScale] = useState<number>(1.0);
+  const [breathPan, setBreathPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [breathTilt, setBreathTilt] = useState<number>(0);
+  const isBreathingActive = Boolean(
+    fairUseConfig?.enabled &&
+      (fairUseConfig?.zoomBreathing ?? fairUseConfig?.isBreathingEnabled ?? true)
+  );
+  const breathIntensity = fairUseConfig?.breathIntensity || fairUseConfig?.breathingIntensity || "medium";
+
+  useEffect(() => {
+    if (!isBreathingActive) {
+      setBreathScale(1.0);
+      setBreathPan({ x: 0, y: 0 });
+      setBreathTilt(0);
+      return;
+    }
+    let animId: number;
+    const maxDelta = breathIntensity === "subtle" ? 0.06 : breathIntensity === "strong" ? 0.18 : 0.11;
+    const animate = (time: number) => {
+      const breathWave = (1 + Math.sin(time / 520)) / 2;
+      setBreathScale(1.0 + breathWave * maxDelta);
+      setBreathPan({
+        x: Math.sin(time / 780) * 0.85,
+        y: Math.cos(time / 920) * 0.65,
+      });
+      setBreathTilt(Math.sin(time / 1100) * 0.35);
+      animId = requestAnimationFrame(animate);
+    };
+    animId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animId);
+  }, [isBreathingActive, breathIntensity]);
+
   // Convert pan coordinates (-50 to +50) to CSS object-position (0% to 100%)
   // panY = -50 => objectPosY = 0%   (TOP / Header / Letterhead)
   // panY = 0   => objectPosY = 50%  (CENTER / Body)
   // panY = +50 => objectPosY = 100% (BOTTOM / Footer / Signatures)
-  const objectPosX = Math.max(0, Math.min(100, 50 + mediaPanX));
-  const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY));
+  const objectPosX = Math.max(0, Math.min(100, 50 + mediaPanX + (isBreathingActive ? breathPan.x : 0)));
+  const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY + (isBreathingActive ? breathPan.y : 0)));
   const effectiveObjectPosX = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosX;
   const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosY;
   const effectiveTransformOriginX = effectiveObjectPosX;
@@ -814,26 +1025,6 @@ export const StagePreview: React.FC = () => {
     activeMedia?.isMuted,
   ]);
 
-  // Real-time 60FPS breathScale oscillation loop (mediaZoom * breathScale)
-  const [breathScale, setBreathScale] = useState<number>(1.0);
-  const isBreathingActive = Boolean(fairUseConfig?.enabled && fairUseConfig?.isBreathingEnabled);
-  const breathIntensity = fairUseConfig?.breathingIntensity || "subtle";
-
-  useEffect(() => {
-    if (!isBreathingActive) {
-      setBreathScale(1.0);
-      return;
-    }
-    let animId: number;
-    const amp = breathIntensity === "strong" ? 0.09 : breathIntensity === "medium" ? 0.055 : 0.03;
-    const animate = (time: number) => {
-      const factor = 1 + amp * (1 + Math.sin(time / 1200));
-      setBreathScale(factor);
-      animId = requestAnimationFrame(animate);
-    };
-    animId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animId);
-  }, [isBreathingActive, breathIntensity]);
 
   // Global Clipboard Screenshot Paste (Ctrl+V / Cmd+V) & 📋 Paste Button
   const handlePasteBlob = React.useCallback(
@@ -1894,7 +2085,9 @@ export const StagePreview: React.FC = () => {
                   mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
                     ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
                     : "",
-                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
+                  (mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0) !== 0
+                    ? `rotate(${Number(((mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0)).toFixed(2))}deg)`
+                    : "",
                   isMediaMirrored ? "scaleX(-1)" : "",
                 ]
                   .filter(Boolean)
@@ -1924,7 +2117,9 @@ export const StagePreview: React.FC = () => {
                   mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
                     ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
                     : "",
-                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
+                  (mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0) !== 0
+                    ? `rotate(${Number(((mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0)).toFixed(2))}deg)`
+                    : "",
                   isMediaMirrored ? "scaleX(-1)" : "",
                 ]
                   .filter(Boolean)
@@ -1961,27 +2156,8 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
-        {/* Dynamic Film Grain Adjustment Layer */}
-        {fairUseConfig?.enabled && (fairUseConfig?.filmGrainOverlay ?? true) && (
-          <div
-            className="absolute inset-0 pointer-events-none z-15 mix-blend-overlay opacity-15 select-none"
-            style={{
-              backgroundImage: `radial-gradient(rgba(255,255,255,0.12) 0.5px, transparent 0)`,
-              backgroundSize: "17px 23px",
-            }}
-          />
-        )}
-
-        {/* Old-Movie Bareek Vertical Scratches & Traveling Lines Overlay */}
-        {fairUseConfig?.enabled && (fairUseConfig?.vintageLinesOverlay ?? true) && (
-          <div className="absolute inset-0 pointer-events-none z-15 overflow-hidden select-none opacity-35">
-            <div className="absolute top-0 bottom-0 left-[18%] w-[1px] bg-white/40 animate-pulse" />
-            <div className="absolute top-[15%] bottom-[10%] left-[63%] w-[1px] bg-black/50 animate-ping" style={{ animationDuration: "1.4s" }} />
-            <div className="absolute top-0 bottom-[25%] left-[82%] w-[0.5px] bg-amber-100/35 animate-pulse" style={{ animationDuration: "0.9s" }} />
-            <div className="absolute top-[20%] bottom-[10%] left-[34%] w-[0.8px] bg-white/30 animate-pulse" style={{ animationDuration: "1.1s" }} />
-            <div className="absolute top-[5%] bottom-[35%] left-[49%] w-[0.5px] bg-black/45 animate-pulse" style={{ animationDuration: "0.7s" }} />
-          </div>
-        )}
+        {/* 60FPS Fair-Use Canvas Overlay (Multi-scale Film Grain, Dual-Core Vintage Lines, Corner Vignette) */}
+        {fairUseConfig?.enabled && <FairUseCanvasOverlay config={fairUseConfig} />}
 
         {/* YouTube Fair Use / Reaction Badge */}
         {fairUseConfig?.enabled && (
@@ -2510,6 +2686,60 @@ export const StagePreview: React.FC = () => {
                   title="Toggle Dynamic Audio Tempo LFO (1.02x–1.06x) & 3-Band Spectral EQ"
                 >
                   <span>🎵 Tempo+EQ {(fairUseConfig?.dynamicTempoVariance ?? true) ? "ON" : "OFF"}</span>
+                </button>
+
+                {/* 60FPS Vintage Lines Toggle & Thickness */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFairUseConfig({
+                      vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    (fairUseConfig?.vintageLinesOverlay ?? true)
+                      ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 font-bold"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle 60FPS Dual-Core Vintage Film Lines"
+                >
+                  <span>Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}</span>
+                </button>
+                {(fairUseConfig?.vintageLinesOverlay ?? true) && (
+                  <select
+                    value={fairUseConfig?.vintageLinesIntensity || "medium"}
+                    onChange={(e) =>
+                      setFairUseConfig({
+                        vintageLinesIntensity: e.target.value as "light" | "medium" | "strong",
+                      })
+                    }
+                    className="bg-black/60 border border-emerald-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-emerald-300 focus:outline-none cursor-pointer"
+                    title="Vintage Lines Thickness"
+                  >
+                    <option value="light">Light 1.5px</option>
+                    <option value="medium">Medium 2.4px</option>
+                    <option value="strong">Strong 3.5px</option>
+                  </select>
+                )}
+
+                {/* 60FPS Film Grain Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFairUseConfig({
+                      filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    (fairUseConfig?.filmGrainOverlay ?? true)
+                      ? "bg-purple-500/25 text-purple-300 border-purple-500/50 font-bold"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle 60FPS Film Grain & Noise Overlay"
+                >
+                  <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
                 </button>
               </>
             )}

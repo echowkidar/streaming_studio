@@ -217,6 +217,8 @@ export interface FairUseConfig {
   /** Purani movies jaisi random bareek vertical scratches & traveling lines */
   vintageLinesOverlay?: boolean;
   vintageLinesIntensity?: "light" | "medium" | "strong";
+  /** Dynamic Corner Vignette gradient to defeat edge and frame hash matching */
+  vignetteOverlay?: boolean;
   /** Switches back to host scene if host mic & cam are off for too long during media playback */
   idleMediaGuardSec: number;
 }
@@ -1386,6 +1388,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     enableAudioFairUse: true,
     vintageLinesOverlay: true, // Default Old-Movie Bareek Lines ON!
     vintageLinesIntensity: "medium",
+    vignetteOverlay: true,
     idleMediaGuardSec: 60,
     ...(savedLayout.fairUseConfig || {}),
   },

@@ -25,6 +25,7 @@ import {
   ZoomIn,
   ZoomOut,
   Move,
+  RotateCw,
 } from "lucide-react";
 import {
   MediaFileItem,
@@ -735,9 +736,17 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     Array<TacticalMapRoute & { spawnedAt: number; simProgress: number }>
   >([]);
 
+  // Mouse Drag Mode & 3D Auto-Orbit State
+  const [mouseDragMode, setMouseDragMode] = useState<"pan" | "rotate-tilt">("rotate-tilt");
+  const [isAutoOrbiting, setIsAutoOrbiting] = useState<boolean>(false);
+  const yawDegRef = useRef<number>(config.yawDeg ?? 0);
+  useEffect(() => {
+    yawDegRef.current = yawDeg;
+  }, [yawDeg]);
+
   // Mouse Drag Pan / 3D Orbit State
   const [isDraggingMap, setIsDraggingMap] = useState(false);
-  const dragModeRef = useRef<"pan" | "orbit">("pan");
+  const dragModeRef = useRef<"pan" | "orbit">("orbit");
   const dragStartRef = useRef({
     clientX: 0,
     clientY: 0,
@@ -919,8 +928,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   // Mouse Handlers for Real-Time Stage Pan, 3D Tilt/Orbit & Simulator Clicks
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.stopPropagation();
-    const isRightOrShift = e.button === 2 || e.shiftKey;
-    dragModeRef.current = isRightOrShift ? "orbit" : "pan";
+    const isOrbit = mouseDragMode === "rotate-tilt" || e.button === 2 || e.shiftKey;
+    dragModeRef.current = isOrbit ? "orbit" : "pan";
     setIsDraggingMap(true);
     dragStartRef.current = {
       clientX: e.clientX,
@@ -928,7 +937,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       startLat: centerLat,
       startLon: centerLon,
       startPitch: pitchDeg,
-      startYaw: yawDeg,
+      startYaw: yawDegRef.current,
       movedPx: 0,
     };
   };
@@ -945,6 +954,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       const nextYaw = Math.max(-180, Math.min(180, Math.round(dragStartRef.current.startYaw + dx * 0.35)));
       setPitchDeg(nextPitch);
       setYawDeg(nextYaw);
+      yawDegRef.current = nextYaw;
       if (viewMode === "2d" && nextPitch > 8) {
         setViewMode("3d-perspective");
       }
@@ -1132,10 +1142,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           ctx.fillStyle = "#030712";
           ctx.fillRect(0, 0, W, H);
 
+          if (isAutoOrbiting && !isDraggingMap) {
+            yawDegRef.current = ((yawDegRef.current + 0.35 + 180) % 360) - 180;
+          }
+
           const is3DPersp = viewMode === "3d-perspective" && pitchDeg > 2;
           const is3DGlobe = viewMode === "3d-globe";
           const effPitch = is3DPersp ? pitchDeg : 0;
-          const effYaw = is3DPersp ? yawDeg : 0;
+          const effYaw = is3DPersp ? yawDegRef.current : 0;
           const altScale = config.altitudeScale ?? 1.25;
 
           if (is3DGlobe) {
@@ -1252,8 +1266,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, W, horizonY + 80);
 
-            // 2. Render Tilted 3D Map Plane using horizontal perspective scanline strips for true 3D trapezoid depth!
-            const strips = 48;
+            // 2. Render Tilted 3D Map Plane using 56 horizontal perspective scanline strips for true 3D trapezoid depth!
+            const strips = 56;
             const stripSrcH = H / strips;
             const pitchRad = (effPitch * Math.PI) / 180;
             const cosP = Math.cos(pitchRad);
@@ -1283,6 +1297,19 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 destH
               );
             }
+
+            // 3D Terrain Plane Rim (extruded military tabletop depth)
+            const lastNormY = (H - stripSrcH / 2 - H * 0.54) / H;
+            const lastDepthScale = Math.max(0.58, 1 + lastNormY * sinP * 0.72);
+            const lastDestY = H * 0.54 + (H - stripSrcH - H * 0.54) * cosP;
+            const lastDestW = W * lastDepthScale;
+            const lastDestX = (W - lastDestW) / 2 - (effYaw / 90) * lastNormY * 140;
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(lastDestX, lastDestY + 2);
+            ctx.lineTo(lastDestX + lastDestW, lastDestY + 2);
+            ctx.stroke();
             ctx.restore();
 
             // 3. Horizon Glow Line & Compass Ticks
@@ -1977,6 +2004,59 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             }
             ctx.restore();
           }
+
+          // Top-Right 3D Rotating Compass Rose Gizmo
+          ctx.save();
+          const compassR = 24;
+          const compassX = W - compassR - 22;
+          const compassY = (config.showTelemetryHud !== false ? (simulatorActive ? 122 : 102) : 22) + compassR;
+
+          // Outer dial plate
+          ctx.fillStyle = "rgba(6, 10, 22, 0.9)";
+          ctx.beginPath();
+          ctx.arc(compassX, compassY, compassR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.55)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Rotating needle
+          ctx.save();
+          ctx.translate(compassX, compassY);
+          ctx.rotate((effYaw * Math.PI) / 180);
+
+          // North Pointer (Red)
+          ctx.fillStyle = "#ef4444";
+          ctx.beginPath();
+          ctx.moveTo(0, -compassR + 5);
+          ctx.lineTo(4.5, -2);
+          ctx.lineTo(-4.5, -2);
+          ctx.closePath();
+          ctx.fill();
+
+          // South Pointer (Slate)
+          ctx.fillStyle = "#94a3b8";
+          ctx.beginPath();
+          ctx.moveTo(0, compassR - 5);
+          ctx.lineTo(4.5, 2);
+          ctx.lineTo(-4.5, 2);
+          ctx.closePath();
+          ctx.fill();
+
+          // Center Pin
+          ctx.fillStyle = "#38bdf8";
+          ctx.beginPath();
+          ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          // Cardinal N label
+          ctx.font = "bold 9px monospace";
+          ctx.fillStyle = "#ef4444";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("N", compassX, compassY - compassR + 7);
+          ctx.restore();
         }
       }
 
@@ -1998,6 +2078,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     zoom,
     simulatorActive,
     simTool,
+    isAutoOrbiting,
   ]);
 
   return (
@@ -2146,6 +2227,47 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               </button>
             ))}
           </div>
+
+          {/* Mouse Mode: 🔄 3D Rotate & Tilt vs ✋ Pan Map */}
+          <button
+            type="button"
+            onClick={() => setMouseDragMode(mouseDragMode === "rotate-tilt" ? "pan" : "rotate-tilt")}
+            className={cn(
+              "px-2 py-0.5 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
+              mouseDragMode === "rotate-tilt"
+                ? "bg-amber-500/25 text-amber-300 border-amber-500/60 shadow"
+                : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+            )}
+            title="Toggle Left-Click Drag: 🔄 3D Rotate & Tilt vs ✋ Pan Map"
+          >
+            {mouseDragMode === "rotate-tilt" ? (
+              <>
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>🔄 3D Rotate & Tilt</span>
+              </>
+            ) : (
+              <>
+                <Move className="w-3.5 h-3.5" />
+                <span>✋ Pan Map</span>
+              </>
+            )}
+          </button>
+
+          {/* 🔄 Auto-Orbit 3D Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsAutoOrbiting(!isAutoOrbiting)}
+            className={cn(
+              "px-2 py-0.5 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
+              isAutoOrbiting
+                ? "bg-cyan-500/30 text-cyan-300 border-cyan-400 shadow-lg shadow-cyan-500/20 animate-pulse"
+                : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+            )}
+            title="Auto-rotate 3D camera 360° continuously"
+          >
+            <RotateCw className={cn("w-3.5 h-3.5", isAutoOrbiting && "animate-spin")} />
+            <span>Auto-Orbit {isAutoOrbiting ? "ON" : "OFF"}</span>
+          </button>
 
           {/* 3D Pitch Slider (Visible when in 3D Tilt mode) */}
           {viewMode === "3d-perspective" && (
@@ -2877,8 +2999,8 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                       </div>
                       <input
                         type="range"
-                        min={-90}
-                        max={90}
+                        min={-180}
+                        max={180}
                         step={5}
                         value={mapConfig.yawDeg ?? 0}
                         onChange={(e) => setMapConfig({ ...mapConfig, yawDeg: Number(e.target.value) })}
