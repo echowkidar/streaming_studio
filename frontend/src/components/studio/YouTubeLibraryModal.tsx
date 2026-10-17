@@ -228,7 +228,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
       startTimeSec: startSec,
       endTimeSec: endSec,
       loop: loopClip,
-      volume: 85,
+      volume: 100,
       isMuted: false,
       isUploaded: true,
     };

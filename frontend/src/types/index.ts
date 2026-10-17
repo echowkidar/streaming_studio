@@ -225,7 +225,27 @@ export type TacticalRouteAssetType =
   | "drone"
   | "helicopter"
   | "warship"
+  | "cargo-ship"
+  | "tank"
   | "custom-image";
+
+export type TacticalTargetEffect =
+  | "explosion"
+  | "landing"
+  | "naval-cruise"
+  | "ship-launch-missile"
+  | "jet-airstrike"
+  | "intercept"
+  | "hover-patrol"
+  | "airdrop"
+  | "none";
+
+export type TacticalTargetMarkerType =
+  | "default"
+  | "warship"
+  | "cargo-ship"
+  | "airbase"
+  | "radar-site";
 
 export interface TacticalMapPoint {
   name: string;
@@ -244,12 +264,15 @@ export interface TacticalMapRoute {
   showImpactShockwave: boolean;
   showDistanceKm: boolean;
   customIconUrl?: string;
+  targetEffect?: TacticalTargetEffect;
+  targetMarkerType?: TacticalTargetMarkerType;
+  curveDirection?: "up" | "straight" | "down";
 }
 
 export interface TacticalMapConfig {
   title: string;
   subtitle?: string;
-  mapStyle: "dark-radar" | "satellite" | "political" | "vector-grid";
+  mapStyle: "dark-radar" | "satellite" | "ocean" | "political" | "vector-grid";
   centerLat: number;
   centerLon: number;
   zoom: number;

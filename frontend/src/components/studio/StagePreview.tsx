@@ -160,6 +160,10 @@ export const StagePreview: React.FC = () => {
   const [videoDuration, setVideoDuration] = useState(0);
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [videoSpeed, setVideoSpeed] = useState(1.0);
+  const mediaCurrentTimeRef = useRef<number>(0);
+  const isMediaPausedRef = useRef<boolean>(false);
+  const ytTelemetryActiveRef = useRef<boolean>(false);
+  const [isYtJerking, setIsYtJerking] = useState<boolean>(false);
 
   // Media Transport state for active background audio
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
@@ -190,13 +194,16 @@ export const StagePreview: React.FC = () => {
     }
 
     const updateTime = () => {
+      mediaCurrentTimeRef.current = videoEl.currentTime;
       setVideoCurrentTime(videoEl.currentTime);
       if (activeMedia?.endTimeSec && activeMedia.endTimeSec > 0 && videoEl.currentTime >= activeMedia.endTimeSec) {
         if (activeMedia.loop ?? true) {
           videoEl.currentTime = activeMedia.startTimeSec || 0;
+          mediaCurrentTimeRef.current = videoEl.currentTime;
           videoEl.play().catch(() => {});
         } else {
           videoEl.pause();
+          isMediaPausedRef.current = true;
           setIsVideoPlaying(false);
           const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
           if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
@@ -206,8 +213,14 @@ export const StagePreview: React.FC = () => {
       }
     };
     const updateDuration = () => setVideoDuration(videoEl.duration || 0);
-    const onPlay = () => setIsVideoPlaying(true);
-    const onPause = () => setIsVideoPlaying(false);
+    const onPlay = () => {
+      isMediaPausedRef.current = false;
+      setIsVideoPlaying(true);
+    };
+    const onPause = () => {
+      isMediaPausedRef.current = true;
+      setIsVideoPlaying(false);
+    };
     const onRate = () => setVideoSpeed(videoEl.playbackRate);
 
     videoEl.addEventListener("timeupdate", updateTime);
@@ -217,6 +230,8 @@ export const StagePreview: React.FC = () => {
     videoEl.addEventListener("pause", onPause);
     videoEl.addEventListener("ratechange", onRate);
 
+    isMediaPausedRef.current = videoEl.paused;
+    mediaCurrentTimeRef.current = videoEl.currentTime || 0;
     setIsVideoPlaying(!videoEl.paused);
     setVideoCurrentTime(videoEl.currentTime || 0);
     setVideoDuration(videoEl.duration || 0);
@@ -236,6 +251,10 @@ export const StagePreview: React.FC = () => {
   useEffect(() => {
     if (activeMedia?.type !== "youtube") return;
 
+    mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
+    isMediaPausedRef.current = false;
+    ytTelemetryActiveRef.current = false;
+
     const onWindowMessage = (event: MessageEvent) => {
       try {
         const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
@@ -243,13 +262,17 @@ export const StagePreview: React.FC = () => {
 
         if (data.event === "infoDelivery" && data.info) {
           if (typeof data.info.currentTime === "number") {
+            mediaCurrentTimeRef.current = data.info.currentTime;
+            ytTelemetryActiveRef.current = true;
             setVideoCurrentTime(data.info.currentTime);
             if (activeMedia.endTimeSec && data.info.currentTime >= activeMedia.endTimeSec) {
               if (activeMedia.loop ?? true) {
+                mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
                 sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
                 sendYouTubeCommand("playVideo");
               } else {
                 sendYouTubeCommand("pauseVideo");
+                isMediaPausedRef.current = true;
                 setIsVideoPlaying(false);
                 const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
                 if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
@@ -262,9 +285,12 @@ export const StagePreview: React.FC = () => {
             setVideoDuration(data.info.duration);
           }
           if (typeof data.info.playerState === "number") {
-            setIsVideoPlaying(data.info.playerState === 1);
+            const isPlaying = data.info.playerState === 1;
+            isMediaPausedRef.current = !isPlaying;
+            setIsVideoPlaying(isPlaying);
             if (data.info.playerState === 0) { // ENDED
               if (activeMedia.loop ?? true) {
+                mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
                 sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
                 sendYouTubeCommand("playVideo");
               } else {
@@ -285,8 +311,11 @@ export const StagePreview: React.FC = () => {
       const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
       if (iframe && iframe.contentWindow) {
         iframe.contentWindow.postMessage(JSON.stringify({ event: "listening" }), "*");
+        // Unload closed captions and subtitles
+        iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unloadModule", args: ["captions"] }), "*");
+        iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unloadModule", args: ["cc"] }), "*");
       }
-    }, 1000);
+    }, 500);
 
     return () => {
       window.removeEventListener("message", onWindowMessage);
@@ -341,9 +370,11 @@ export const StagePreview: React.FC = () => {
     if (activeMedia?.type === "youtube") {
       if (isVideoPlaying) {
         sendYouTubeCommand("pauseVideo");
+        isMediaPausedRef.current = true;
         setIsVideoPlaying(false);
       } else {
         sendYouTubeCommand("playVideo");
+        isMediaPausedRef.current = false;
         setIsVideoPlaying(true);
       }
       return;
@@ -352,15 +383,18 @@ export const StagePreview: React.FC = () => {
     if (!videoEl) return;
     if (videoEl.paused) {
       videoEl.play().catch(() => {});
+      isMediaPausedRef.current = false;
       setIsVideoPlaying(true);
     } else {
       videoEl.pause();
+      isMediaPausedRef.current = true;
       setIsVideoPlaying(false);
     }
   };
 
   const handleSeekVideo = (time: number) => {
     if (activeMedia?.type === "youtube") {
+      mediaCurrentTimeRef.current = time;
       sendYouTubeCommand("seekTo", [time, true]);
       setVideoCurrentTime(time);
       return;
@@ -368,12 +402,15 @@ export const StagePreview: React.FC = () => {
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, time));
+    mediaCurrentTimeRef.current = videoEl.currentTime;
     setVideoCurrentTime(videoEl.currentTime);
   };
 
   const handleSkipVideo = (deltaSec: number) => {
     if (activeMedia?.type === "youtube") {
-      const nextTime = Math.max(0, Math.min(videoDuration || 0, videoCurrentTime + deltaSec));
+      const cur = mediaCurrentTimeRef.current || videoCurrentTime;
+      const nextTime = Math.max(0, Math.min(videoDuration || 0, cur + deltaSec));
+      mediaCurrentTimeRef.current = nextTime;
       sendYouTubeCommand("seekTo", [nextTime, true]);
       setVideoCurrentTime(nextTime);
       return;
@@ -381,6 +418,7 @@ export const StagePreview: React.FC = () => {
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (!videoEl) return;
     videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, videoEl.currentTime + deltaSec));
+    mediaCurrentTimeRef.current = videoEl.currentTime;
     setVideoCurrentTime(videoEl.currentTime);
   };
 
@@ -626,13 +664,27 @@ export const StagePreview: React.FC = () => {
       timer = setTimeout(() => {
         if (activeMedia.type === "youtube") {
           const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+          if (isMediaPausedRef.current) {
+            runCycle();
+            return;
+          }
+
+          setIsYtJerking(true);
           sendYouTubeCommand("pauseVideo");
+
           setTimeout(() => {
-            if (mode === "jerk-skip") {
-              sendYouTubeCommand("seekTo", [videoCurrentTime + 0.25, true]);
+            const currentSec = mediaCurrentTimeRef.current;
+            // Advance +0.3s ONLY when live telemetry confirms currentTime > 2s to NEVER seek to 0:00!
+            if (mode === "jerk-skip" && currentSec > 2) {
+              const nextSec = currentSec + 0.3;
+              mediaCurrentTimeRef.current = nextSec;
+              sendYouTubeCommand("seekTo", [nextSec, true]);
             }
             sendYouTubeCommand("playVideo");
-          }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
+            setTimeout(() => {
+              setIsYtJerking(false);
+            }, 100);
+          }, 160);
         } else {
           const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
           // Agar broadcaster chal raha hai to broadcaster khud handle karega, warna preview handle karega
@@ -1441,28 +1493,60 @@ export const StagePreview: React.FC = () => {
               isMirrored={Boolean(fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo)}
               onOpenLibraryModal={() => setIsWebsiteLibraryModalOpen(true)}
             />
-          ) : activeMedia.type === "youtube" ? (
-            <iframe
-              id="livestudio-youtube-iframe"
-              src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)}?enablejsapi=1&autoplay=1&controls=0&rel=0&modestbranding=1&cc_load_policy=0&iv_load_policy=3&playsinline=1&start=${activeMedia.startTimeSec || 0}${activeMedia.endTimeSec ? `&end=${activeMedia.endTimeSec}` : ""}&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-              title={activeMedia.name || "YouTube Video"}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              className="w-full h-full border-0 pointer-events-auto"
-              style={{
-                objectFit: mediaFitMode,
-                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                transform: [
-                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
-                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
-                    : "",
-                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
-                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
-                ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
-              }}
-            />
-          ) : activeMedia.type === "video" ? (
+          ) : activeMedia.type === "youtube" ? (() => {
+            const isYtCover = mediaFitMode === "cover";
+            const effectiveYtZoom = mediaZoom * (isBreathingActive ? breathScale : 1);
+            const ytTotalScale = isYtCover ? Math.max(1.15, effectiveYtZoom * 1.15) : effectiveYtZoom;
+            const maxShiftX = Math.max(0, (ytTotalScale - 1) * 50);
+            const maxShiftY = Math.max(0, (ytTotalScale - 1) * 50);
+            const ytShiftX = Number(((-mediaPanX / 50) * maxShiftX).toFixed(2));
+            const ytShiftY = Number(((-mediaPanY / 50) * maxShiftY).toFixed(2));
+
+            const ytRotateStr = mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "";
+            const ytMirrorStr = fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "";
+            const ytJerkStr = isYtJerking ? "scale(1.025) translate(2px, -2px)" : "";
+            const ytTransform = `translate3d(${ytShiftX}%, ${ytShiftY}%, 0) scale(${ytTotalScale.toFixed(3)}) ${ytRotateStr} ${ytMirrorStr} ${ytJerkStr}`.trim();
+
+            return (
+              <div
+                className="relative w-full h-full overflow-hidden flex items-center justify-center pointer-events-auto"
+                onMouseDown={handleMediaPanMouseDown}
+                onTouchStart={handleMediaPanTouchStart}
+                onTouchMove={handleMediaPanTouchMove}
+                onTouchEnd={handleMediaPanTouchEnd}
+                onWheel={handleMediaWheel}
+                style={{
+                  cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                  userSelect: "none",
+                }}
+              >
+                <div
+                  className="relative w-full h-full flex items-center justify-center"
+                  style={{
+                    transform: ytTransform,
+                    transformOrigin: "center center",
+                    transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
+                    filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
+                  }}
+                >
+                  <iframe
+                    id="livestudio-youtube-iframe"
+                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)}?enablejsapi=1&autoplay=1&controls=0&rel=0&modestbranding=1&cc_load_policy=0&iv_load_policy=3&playsinline=1&start=${activeMedia.startTimeSec || 0}${activeMedia.endTimeSec ? `&end=${activeMedia.endTimeSec}` : ""}&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
+                    title={activeMedia.name || "YouTube Video"}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    className="border-0 pointer-events-auto"
+                    style={{
+                      width: "100%",
+                      height: "118%",
+                      position: "absolute",
+                      top: "-9%",
+                      left: 0,
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })() : activeMedia.type === "video" ? (
             <video
               id="livestudio-active-media-video"
               src={activeMedia.url}
@@ -1814,9 +1898,10 @@ export const StagePreview: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                const styles: Array<"dark-radar" | "satellite" | "political" | "vector-grid"> = [
+                const styles: Array<"dark-radar" | "satellite" | "ocean" | "political" | "vector-grid"> = [
                   "dark-radar",
                   "satellite",
+                  "ocean",
                   "political",
                   "vector-grid",
                 ];
@@ -2270,20 +2355,22 @@ export const StagePreview: React.FC = () => {
                     {/* Inline Auto-Ducking ON/OFF Toggle */}
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const nextDucking = !(fairUseConfig?.duckingActive ?? false);
                         setFairUseConfig({
-                          duckingActive: !(fairUseConfig?.duckingActive ?? true),
-                        })
-                      }
+                          duckingActive: nextDucking,
+                          autoAudioDucking: nextDucking,
+                        });
+                      }}
                       className={cn(
                         "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        (fairUseConfig?.duckingActive ?? true)
+                        (fairUseConfig?.duckingActive ?? false)
                           ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
                           : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
                       )}
                       title="Toggle auto-ducking when mic is active"
                     >
-                      <span>Duck {(fairUseConfig?.duckingActive ?? true) ? "ON" : "OFF"}</span>
+                      <span>Duck {(fairUseConfig?.duckingActive ?? false) ? "ON" : "OFF"}</span>
                     </button>
 
                     {/* 8-12s Random Jerk / Frame-Skip / Pause Selector */}
