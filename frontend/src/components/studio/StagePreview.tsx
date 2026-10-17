@@ -1147,7 +1147,8 @@ export const StagePreview: React.FC = () => {
         activeMedia.type === "image" ||
         activeMedia.type === "pdf" ||
         activeMedia.type === "youtube" ||
-        activeMedia.type === "map")
+        activeMedia.type === "map" ||
+        activeMedia.type === "website")
   );
 
   const isFullBleedLayout =
