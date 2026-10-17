@@ -867,6 +867,26 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
               } catch (err) {}
             }
           }, true);
+
+          window.addEventListener("mousemove", function(e) {
+            try {
+              window.parent.postMessage({
+                type: "LIVESTUDIO_WEB_POINTER_MOVE",
+                clientX: e.clientX,
+                clientY: e.clientY,
+                innerWidth: window.innerWidth,
+                innerHeight: window.innerHeight
+              }, "*");
+            } catch (err) {}
+          }, { passive: true });
+
+          window.addEventListener("mousedown", function(e) {
+            try {
+              window.parent.postMessage({
+                type: "LIVESTUDIO_WEB_POINTER_CLICK"
+              }, "*");
+            } catch (err) {}
+          }, { passive: true });
         })();
       </script>`;
 

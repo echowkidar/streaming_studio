@@ -153,6 +153,34 @@ export const InteractiveWebsiteStageView: React.FC<InteractiveWebsiteStageViewPr
     };
   }, [showPointer, pointerPos, pointerStyle, pointerColor]);
 
+  // Listen for live pointer events forwarded from inside the website proxy iframe so pointer moves seamlessly everywhere
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data?.type === "LIVESTUDIO_WEB_POINTER_MOVE" && containerRef.current) {
+        const { clientX, clientY, innerWidth, innerHeight } = e.data;
+        const rect = containerRef.current.getBoundingClientRect();
+        const topBarHeight = 38;
+        const iframeAvailableH = Math.max(1, rect.height - topBarHeight);
+        const actualX = (clientX / Math.max(1, innerWidth)) * 100;
+        const actualY =
+          ((topBarHeight + (clientY / Math.max(1, innerHeight)) * iframeAvailableH) / Math.max(1, rect.height)) * 100;
+
+        setPointerPos({
+          x: Math.max(0, Math.min(100, actualX)),
+          y: Math.max(0, Math.min(100, actualY)),
+          active: true,
+          clicking: false,
+        });
+      } else if (e.data?.type === "LIVESTUDIO_WEB_POINTER_CLICK") {
+        setPointerPos((p) => ({ ...p, clicking: true }));
+        setTimeout(() => setPointerPos((p) => ({ ...p, clicking: false })), 260);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
   const cleanUrl = normalizeWebsiteUrl(webCfg.url || item.url);
   const iframeSrc =
     proxyEngine === "web-proxy"

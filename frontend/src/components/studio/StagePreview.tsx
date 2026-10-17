@@ -312,6 +312,7 @@ export const StagePreview: React.FC = () => {
   const mediaZoom = Math.max(1, mediaTransform.zoom || 1);
   const mediaPanX = mediaTransform.panX || 0;
   const mediaPanY = mediaTransform.panY || 0;
+  const [isMediaToolbarCollapsed, setIsMediaToolbarCollapsed] = useState<boolean>(false);
 
   // Real-time 60FPS 2D Pan + Zoom + Micro-Tilt Breathing LFO
   const [breathScale, setBreathScale] = useState<number>(1.0);
@@ -2481,22 +2482,42 @@ export const StagePreview: React.FC = () => {
 
     return (
       <div className={cn("w-full h-full relative select-none", (isFullBleedLayout || mediaFitMode === "cover") ? "p-0" : "p-2")}>
-        {/* Stage-Level Top-Center Floating Media Action Toolbar */}
+        {/* Stage-Level Floating Media Action Toolbar */}
         {hasVisualMedia && activeMedia && (
           <div
             className={cn(
-              "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto transition-all duration-150 max-w-[calc(100%-24px)] top-3 left-1/2 -translate-x-1/2"
+              "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-150 max-w-[calc(100%-24px)]",
+              activeMedia.type === "website"
+                ? showTicker
+                  ? "bottom-14 left-1/2 -translate-x-1/2"
+                  : "bottom-3 left-1/2 -translate-x-1/2"
+                : "top-3 left-1/2 -translate-x-1/2",
+              isMediaToolbarCollapsed
+                ? "bg-transparent p-0"
+                : "bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)]"
             )}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Media Name Tag */}
-            <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[140px] truncate select-none">
-              🎬 {activeMedia.name}
-            </span>
+            {isMediaToolbarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => setIsMediaToolbarCollapsed(false)}
+                className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
+                title="Expand Floating Media Action Controls"
+              >
+                <span>🎬 {activeMedia.name}</span>
+                <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
+              </button>
+            ) : (
+              <>
+                {/* Media Name Tag */}
+                <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[140px] truncate select-none">
+                  🎬 {activeMedia.name}
+                </span>
 
-            <span className="w-px h-3 bg-white/20" />
+                <span className="w-px h-3 bg-white/20" />
 
             {/* Multi-Step Undo Button */}
             {mediaBoundsHistory.length > 0 && (
@@ -2867,8 +2888,20 @@ export const StagePreview: React.FC = () => {
             >
               Remove
             </button>
-          </div>
+
+            {/* Collapse / Minimize Toolbar Button */}
+            <button
+              type="button"
+              onClick={() => setIsMediaToolbarCollapsed(true)}
+              className="px-1.5 py-0.5 hover:bg-white/15 rounded text-slate-400 hover:text-white text-[9.5px] font-bold border border-white/10 transition-colors cursor-pointer"
+              title="Minimize Media Action Controls"
+            >
+              ✕
+            </button>
+          </>
         )}
+      </div>
+    )}
 
         {/* Active Stage Media Window (Interactive, Draggable & Resizable) */}
         {hasVisualMedia && activeMedia && (
