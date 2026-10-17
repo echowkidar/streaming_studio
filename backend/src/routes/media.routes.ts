@@ -679,6 +679,9 @@ router.get('/youtube/stream', async (req: Request, res: Response): Promise<void>
 // Proxies external webpages into the studio stage iframe, stripping X-Frame-Options, COEP, CORP & CSP
 // and injecting <base href="..."> + navigation/form helpers so websites open and interact seamlessly!
 router.get('/website/proxy', async (req: Request, res: Response): Promise<void> => {
+  if (typeof process !== 'undefined' && process.env) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  }
   res.removeHeader('X-Frame-Options');
   res.removeHeader('Content-Security-Policy');
   res.removeHeader('Content-Security-Policy-Report-Only');
@@ -709,6 +712,8 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
     res.status(400).send('Invalid URL');
     return;
   }
+
+  const hostLower = parsed.hostname.toLowerCase().replace(/^www\./, '');
 
   // Reader View Mode
   if (mode === 'reader') {
@@ -747,17 +752,65 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
     } catch {}
   }
 
+  let targetUrl = parsed.toString();
+  let fetchUserAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+  if (hostLower === 'facebook.com' || hostLower === 'www.facebook.com' || hostLower.endsWith('.facebook.com')) {
+    targetUrl = `https://m.facebook.com${parsed.pathname}${parsed.search}`;
+    fetchUserAgent =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  }
+
+  let resp: any = null;
   try {
-    const resp = await fetch(parsed.toString(), {
+    resp = await fetch(targetUrl, {
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        'User-Agent': fetchUserAgent,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
       },
       redirect: 'follow',
       signal: AbortSignal.timeout(10000),
     });
+  } catch (err1) {
+    if (!parsed.hostname.startsWith('www.') && !parsed.hostname.startsWith('m.')) {
+      try {
+        const altParsed = new URL(parsed.toString());
+        altParsed.hostname = 'www.' + altParsed.hostname;
+        resp = await fetch(altParsed.toString(), {
+          headers: {
+            'User-Agent': fetchUserAgent,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+          },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch {}
+    }
+  }
+
+  try {
+    if (!resp || !resp.ok) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(200).send(`<!DOCTYPE html><html>
+      <head><meta charset="utf-8"/><title>${parsed.hostname}</title></head>
+      <body style="background:#090a14;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:36px;text-align:center;">
+        <div style="max-width:540px;margin:0 auto;background:#131525;padding:28px 32px;border-radius:18px;border:1px solid rgba(255,255,255,0.12);box-shadow:0 12px 36px rgba(0,0,0,0.5);">
+          <div style="font-size:38px;margin-bottom:12px;">🛡️</div>
+          <h3 style="color:#38bdf8;font-size:18px;margin-bottom:8px;">${parsed.hostname} — Protected by Firewall</h3>
+          <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin-bottom:20px;">
+            ${resp ? `Status ${resp.status} received.` : 'Connection timeout.'} Choose an action below to display this content on stage:
+          </p>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;">
+            <a href="/api/media/website/proxy?url=${encodeURIComponent(parsed.toString())}&mode=reader" style="padding:9px 18px;border-radius:10px;background:#0284c7;color:#fff;text-decoration:none;font-weight:700;font-size:12.5px;">📖 Open Clean Reader View</a>
+            <a href="${parsed.toString()}" target="_blank" rel="noopener noreferrer" style="padding:9px 18px;border-radius:10px;background:#334155;color:#e2e8f0;text-decoration:none;font-weight:600;font-size:12.5px;">🔗 Open in New Tab</a>
+          </div>
+        </div>
+      </body></html>`);
+      return;
+    }
 
     const contentType = resp.headers.get('content-type') || 'text/html; charset=utf-8';
 
@@ -818,7 +871,7 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
       </script>`;
 
       if (/<head[^>]*>/i.test(html)) {
-        html = html.replace(/<head[^>]*>/i, (match) => `${match}${baseTag}${helperScript}`);
+        html = html.replace(/<head[^>]*>/i, (match: string) => `${match}${baseTag}${helperScript}`);
       } else {
         html = `<head>${baseTag}${helperScript}</head>${html}`;
       }

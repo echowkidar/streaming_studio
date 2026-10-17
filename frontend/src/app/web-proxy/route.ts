@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+if (typeof process !== "undefined" && process.env) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+}
+
 function healAndNormalizeUrl(raw: string): string {
   let trimmed = (raw || "").trim();
   if (!trimmed) return "";
@@ -347,11 +351,23 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  let targetUrl = parsed.toString();
+  let fetchUserAgent =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+  // Facebook & Meta: Desktop facebook blocks automated proxy requests with HTTP 400 Bad Request.
+  // Routing through m.facebook.com with mobile headers returns HTTP 200 OK with full webpage HTML!
+  if (hostLower === "facebook.com" || hostLower === "www.facebook.com" || hostLower.endsWith(".facebook.com")) {
+    targetUrl = `https://m.facebook.com${parsed.pathname}${parsed.search}`;
+    fetchUserAgent =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+  }
+
+  let resp: Response | null = null;
   try {
-    const resp = await fetch(parsed.toString(), {
+    resp = await fetch(targetUrl, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "User-Agent": fetchUserAgent,
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
@@ -359,6 +375,47 @@ export async function GET(req: NextRequest) {
       redirect: "follow",
       signal: AbortSignal.timeout(10000),
     });
+  } catch (err1) {
+    // If bare domain failed (e.g. https://amu.ac.in), retry with www.
+    if (!parsed.hostname.startsWith("www.") && !parsed.hostname.startsWith("m.")) {
+      try {
+        const altParsed = new URL(parsed.toString());
+        altParsed.hostname = "www." + altParsed.hostname;
+        resp = await fetch(altParsed.toString(), {
+          headers: {
+            "User-Agent": fetchUserAgent,
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+          },
+          redirect: "follow",
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch {}
+    }
+  }
+
+  try {
+    if (!resp || !resp.ok) {
+      // If direct proxy failed or returned 4xx/5xx, try Jina Reader view or render clean fallback card
+      const fallbackHtml = `<!DOCTYPE html><html>
+      <head><meta charset="utf-8"/><title>${parsed.hostname}</title></head>
+      <body style="background:#090a14;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:36px;text-align:center;">
+        <div style="max-width:540px;margin:0 auto;background:#131525;padding:28px 32px;border-radius:18px;border:1px solid rgba(255,255,255,0.12);box-shadow:0 12px 36px rgba(0,0,0,0.5);">
+          <div style="font-size:38px;margin-bottom:12px;">🛡️</div>
+          <h3 style="color:#38bdf8;font-size:18px;margin-bottom:8px;">${parsed.hostname} — Firewall Protected</h3>
+          <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin-bottom:20px;">
+            ${resp ? `Status ${resp.status} received.` : "Connection timeout."} Choose an action below to display this content on stage:
+          </p>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;">
+            <a href="/web-proxy?url=${encodeURIComponent(parsed.toString())}&mode=reader" style="padding:9px 18px;border-radius:10px;background:#0284c7;color:#fff;text-decoration:none;font-weight:700;font-size:12.5px;">📖 Open Clean Reader View</a>
+            <a href="${parsed.toString()}" target="_blank" rel="noopener noreferrer" style="padding:9px 18px;border-radius:10px;background:#334155;color:#e2e8f0;text-decoration:none;font-weight:600;font-size:12.5px;">🔗 Open in New Tab</a>
+          </div>
+        </div>
+      </body></html>`;
+      responseHeaders.set("Content-Type", "text/html; charset=utf-8");
+      return new NextResponse(fallbackHtml, { status: 200, headers: responseHeaders });
+    }
 
     const contentType = resp.headers.get("content-type") || "text/html; charset=utf-8";
 
@@ -439,10 +496,20 @@ export async function GET(req: NextRequest) {
       headers: responseHeaders,
     });
   } catch (err) {
-    const fallbackHtml = `<!DOCTYPE html><html><body style="background:#090a14;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:40px;text-align:center;">
-      <h3 style="color:#38bdf8;margin-bottom:8px;">Website Protected by Firewall — Opening Reader View...</h3>
-      <p style="color:#94a3b8;font-size:14px;margin-bottom:18px;">${(err as Error).message}</p>
-      <a href="/web-proxy?url=${encodeURIComponent(parsed.toString())}&mode=reader" style="display:inline-block;padding:10px 20px;border-radius:10px;background:#0284c7;color:#fff;text-decoration:none;font-weight:700;font-size:13px;">📖 Open Clean Reader View</a>
+    const fallbackHtml = `<!DOCTYPE html><html>
+    <head><meta charset="utf-8"/><title>${parsed.hostname}</title></head>
+    <body style="background:#090a14;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:36px;text-align:center;">
+      <div style="max-width:540px;margin:0 auto;background:#131525;padding:28px 32px;border-radius:18px;border:1px solid rgba(255,255,255,0.12);box-shadow:0 12px 36px rgba(0,0,0,0.5);">
+        <div style="font-size:38px;margin-bottom:12px;">🛡️</div>
+        <h3 style="color:#38bdf8;font-size:18px;margin-bottom:8px;">${parsed.hostname} — Protected by Firewall</h3>
+        <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin-bottom:20px;">
+          ${(err as Error).message}
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;">
+          <a href="/web-proxy?url=${encodeURIComponent(parsed.toString())}&mode=reader" style="padding:9px 18px;border-radius:10px;background:#0284c7;color:#fff;text-decoration:none;font-weight:700;font-size:12.5px;">📖 Open Clean Reader View</a>
+          <a href="${parsed.toString()}" target="_blank" rel="noopener noreferrer" style="padding:9px 18px;border-radius:10px;background:#334155;color:#e2e8f0;text-decoration:none;font-weight:600;font-size:12.5px;">🔗 Open in New Tab</a>
+        </div>
+      </div>
     </body></html>`;
     responseHeaders.set("Content-Type", "text/html; charset=utf-8");
     return new NextResponse(fallbackHtml, { status: 200, headers: responseHeaders });
