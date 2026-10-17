@@ -1,3 +1,14 @@
+
+function extractYouTubeVideoId(urlOrId: string): string {
+  if (!urlOrId) return "";
+  const trimmed = urlOrId.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(
+    /(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+  );
+  return match ? match[1] : "";
+}
+
 /**
  * LiveStudio Stage Broadcaster
  * Composites the active studio stage (participants, active media, layouts, backgrounds, overlays, banners, tickers)
@@ -84,6 +95,7 @@ class StageBroadcaster {
   private cachedLogoImage: HTMLImageElement | null = null;
   private cachedChromaBackdropUrl: string | null = null;
   private chromaBackdropImage: HTMLImageElement | null = null;
+  private youtubePosterCache = new Map<string, HTMLImageElement>();
   private grainCanvas: HTMLCanvasElement | null = null;
   private grainFrameCount = 0;
 
@@ -1189,6 +1201,91 @@ class StageBroadcaster {
           try {
             ctx.drawImage(mediaCanvas, x, y, w, h);
           } catch {}
+        } else if (currentStore.activeMedia) {
+          // Fallback: If YouTube is buffering or DRM-restricted video is using <iframe>,
+          // render high-resolution poster (maxresdefault.jpg / hqdefault.jpg) with exact isCover/contain crop math,
+          // zoom breathing, film grain, and vintage lines so Record to PC never records an empty black box!
+          const activeItem = currentStore.activeMedia;
+          const posterUrl =
+            activeItem.thumbnail ||
+            (activeItem.youtubeId ? `https://i.ytimg.com/vi/${activeItem.youtubeId}/maxresdefault.jpg` : null) ||
+            (activeItem.type === "youtube" && activeItem.url ? `https://i.ytimg.com/vi/${extractYouTubeVideoId(activeItem.url)}/hqdefault.jpg` : null);
+
+          if (posterUrl) {
+            let pImg = this.youtubePosterCache.get(posterUrl);
+            if (!pImg) {
+              pImg = new Image();
+              pImg.crossOrigin = "anonymous";
+              pImg.src = posterUrl;
+              this.youtubePosterCache.set(posterUrl, pImg);
+            }
+            if (pImg.complete && pImg.naturalWidth > 0) {
+              const iRatio = pImg.naturalWidth / pImg.naturalHeight;
+              const tRatio = w / h;
+              let objectPosX = Math.max(0, Math.min(100, 50 + panX));
+              let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+
+              if (isCover) {
+                let sw = pImg.naturalWidth;
+                let sh = pImg.naturalHeight;
+                if (iRatio > tRatio) {
+                  sw = pImg.naturalHeight * tRatio;
+                } else {
+                  sh = pImg.naturalWidth / tRatio;
+                }
+                sw = sw / effectiveZoom;
+                sh = sh / effectiveZoom;
+                let sx = (pImg.naturalWidth - sw) * (objectPosX / 100);
+                let sy = (pImg.naturalHeight - sh) * (objectPosY / 100);
+                sx = Math.max(0, Math.min(pImg.naturalWidth - sw, sx));
+                sy = Math.max(0, Math.min(pImg.naturalHeight - sh, sy));
+                try {
+                  ctx.drawImage(pImg, sx, sy, sw, sh, x, y, w, h);
+                } catch {}
+              } else {
+                let dw = w, dh = h, dx = x, dy = y;
+                if (iRatio > tRatio) {
+                  dh = w / iRatio;
+                  dy = y + (h - dh) / 2;
+                } else {
+                  dw = h * iRatio;
+                  dx = x + (w - dw) / 2;
+                }
+                if (effectiveZoom > 1) {
+                  let sw = pImg.naturalWidth / effectiveZoom;
+                  let sh = pImg.naturalHeight / effectiveZoom;
+                  let sx = (pImg.naturalWidth - sw) * (objectPosX / 100);
+                  let sy = (pImg.naturalHeight - sh) * (objectPosY / 100);
+                  sx = Math.max(0, Math.min(pImg.naturalWidth - sw, sx));
+                  sy = Math.max(0, Math.min(pImg.naturalHeight - sh, sy));
+                  try {
+                    ctx.drawImage(pImg, sx, sy, sw, sh, dx, dy, dw, dh);
+                  } catch {}
+                } else {
+                  try {
+                    ctx.drawImage(pImg, dx, dy, dw, dh);
+                  } catch {}
+                }
+              }
+
+              // Dynamic Film Grain / Micro-Noise Adjustment Layer
+              if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+                this.drawFilmGrainOverlay(ctx, x, y, w, h);
+              }
+
+              // Vintage Old-Movie Scratches & Traveling Lines Overlay
+              if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+                this.drawVintageFilmLinesOverlay(
+                  ctx,
+                  x,
+                  y,
+                  w,
+                  h,
+                  currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+                );
+              }
+            }
+          }
         }
 
         // Draw Live Broadcast Web Pointer if active over website scene

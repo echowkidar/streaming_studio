@@ -145,6 +145,7 @@ export interface MediaFileItem {
   durationSeconds?: number;
   thumbnail?: string;
   loop?: boolean;
+  playbackRate?: number;
   isUploaded?: boolean;
   desc?: string;
   isMuted?: boolean;
@@ -205,6 +206,11 @@ export interface FairUseConfig {
   grainIntensity?: "random" | "light" | "medium" | "strong";
   /** Subtle zoom breathing effect (1.00x-1.04x) defeating DCT hash match */
   isBreathingEnabled?: boolean;
+  zoomBreathing?: boolean;
+  breathIntensity?: "subtle" | "medium" | "strong";
+  dynamicTempoVariance?: boolean;
+  keepReactionLocked?: boolean;
+  audioEqProtection?: boolean;
   breathingIntensity?: "subtle" | "medium" | "strong";
   /** Enable audio fair-use spectral transformation on MP3/audio files */
   enableAudioFairUse?: boolean;
@@ -284,7 +290,7 @@ export interface ParticipantBounds {
   y: number; // percentage top: 0 to 100
   width: number; // percentage width: 10 to 100
   height: number; // percentage height: 10 to 100
-  zIndex: number;
+  zIndex?: number;
   isLockedRatio?: boolean;
 }
 

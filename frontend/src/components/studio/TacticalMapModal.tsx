@@ -694,6 +694,7 @@ export type SimulatorCommandTool =
 
 export interface TacticalMapStageCanvasProps {
   config: TacticalMapConfig;
+  fitMode?: "contain" | "cover";
   isInteractive?: boolean;
   onMapClickLatLon?: (lat: number, lon: number) => void;
   onConfigChange?: (updates: Partial<TacticalMapConfig>) => void;
@@ -702,6 +703,7 @@ export interface TacticalMapStageCanvasProps {
 
 export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   config,
+  fitMode = "contain",
   isInteractive = true,
   onMapClickLatLon,
   onConfigChange,
@@ -2014,7 +2016,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
         onMouseLeave={() => setIsDraggingMap(false)}
         onWheel={handleCanvasWheel}
         className={cn(
-          "w-full h-full object-contain",
+          "w-full h-full",
+          fitMode === "cover" ? "object-cover" : "object-contain",
           simulatorActive
             ? "cursor-crosshair"
             : isDraggingMap

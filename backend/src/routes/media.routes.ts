@@ -2,7 +2,6 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import { spawn, exec } from 'child_process';
 import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { StorageService } from '../services/storage.service';
@@ -19,6 +18,78 @@ if (!fs.existsSync(LOCAL_UPLOAD_DIR)) {
 }
 
 // Function to immediately purge all temporary media files for a studio session
+
+const DUMMY_MEDIA_NAMES = new Set([
+  "livestudio intro video.mp4",
+  "livestudio_intro_video.mp4",
+  "intro video.mp4",
+  "intro_countdown_30s.mp4",
+  "intro_countdown_30s_1080p.mp4",
+  "product_demo_highlights.mp4",
+  "product_architecture_2026.pdf",
+  "background_lofi_stream.mp3",
+  "sponsor_pitch_2026.pdf",
+  "outro_credits_theme.mp4",
+  "product_roadmap_slide_deck.pdf",
+  "ambient_chillhop_background.mp3",
+  "sponsor_banner_lowerthird.png",
+]);
+
+export async function purgeOrphanedAndDummyMedia(workspaceId?: string): Promise<number> {
+  let purged = 0;
+  try {
+
+    const assets = await prisma.mediaAsset.findMany({
+      where: workspaceId ? { workspaceId } : undefined,
+      orderBy: { createdAt: "desc" },
+    });
+    const seenKeys = new Set<string>();
+    for (const asset of assets) {
+      const lowerName = (asset.name || "").trim().toLowerCase();
+      const isDummyName =
+        DUMMY_MEDIA_NAMES.has(lowerName) ||
+        lowerName.startsWith("livestudio intro") ||
+        lowerName.startsWith("livestudio_intro");
+
+      let isMissingOnDisk = false;
+      if (asset.storagePath.startsWith("local://")) {
+        const relPath = asset.storagePath.replace("local://", "");
+        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+        if (!fs.existsSync(fullLocalPath)) {
+          isMissingOnDisk = true;
+        } else {
+          try {
+            const st = fs.statSync(fullLocalPath);
+            if (st.size === 0) isMissingOnDisk = true;
+          } catch {
+            isMissingOnDisk = true;
+          }
+        }
+      }
+
+      const dedupKey = `${asset.workspaceId}:${asset.assetType}:${lowerName}:${Number(asset.fileSize || 0)}`;
+      const isDuplicate = seenKeys.has(dedupKey);
+
+      if (isDummyName || isMissingOnDisk || isDuplicate) {
+        if (asset.storagePath.startsWith("local://") && !isDuplicate) {
+          const relPath = asset.storagePath.replace("local://", "");
+          const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+          if (fs.existsSync(fullLocalPath)) {
+            await fs.promises.unlink(fullLocalPath).catch(() => null);
+          }
+        }
+        await prisma.mediaAsset.delete({ where: { id: asset.id } }).catch(() => null);
+        purged++;
+      } else {
+        seenKeys.add(dedupKey);
+      }
+    }
+  } catch (err) {
+    console.warn("[Media Cleanup] purgeOrphanedAndDummyMedia warning:", err);
+  }
+  return purged;
+}
+
 export async function deleteSessionMedia(sessionId: string): Promise<number> {
   if (!sessionId) return 0;
   const cleanId = sessionId.replace(/^studio-/, '');
@@ -238,73 +309,534 @@ function serializeMediaAsset(asset: any, presignedUrl?: string) {
   };
 }
 
-const DUMMY_MEDIA_NAMES = [
-  'intro_countdown_30s.mp4',
-  'product_demo_highlights.mp4',
-  'product_architecture_2026.pdf',
-  'background_lofi_stream.mp3',
-  'livestudio intro video.mp4',
-];
 
-export async function purgeOrphanedAndDummyMedia(workspaceId: string): Promise<number> {
-  let count = 0;
-  try {
-    const assets = await prisma.mediaAsset.findMany({
-      where: { workspaceId },
-    });
+// ─────────────────────────────────────────────────────────────────────────────
+// ZERO-API-KEY YOUTUBE METADATA & DIRECT STREAM PROXY
+// Allows playing YouTube URLs directly inside HTML5 <video crossOrigin="anonymous">
+// with Start/End time, Fair-Use DSP filters (Audio Tempo LFO, Pitch Shift, 3-Band EQ),
+// and full Canvas Broadcast/Recording!
+// ─────────────────────────────────────────────────────────────────────────────
+import https from 'https';
+import http from 'http';
+import { execFile } from 'child_process';
 
-    for (const asset of assets) {
-      let isDummy = false;
-      const lowerName = (asset.name || '').toLowerCase();
-      if (DUMMY_MEDIA_NAMES.some((dn) => lowerName.includes(dn))) {
-        isDummy = true;
-      }
-
-      let isMissingOrZeroByte = false;
-      if (asset.storagePath.startsWith('local://')) {
-        const relPath = asset.storagePath.replace('local://', '');
-        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
-        if (!fs.existsSync(fullLocalPath)) {
-          isMissingOrZeroByte = true;
-        } else {
-          try {
-            const stat = fs.statSync(fullLocalPath);
-            if (stat.size === 0) isMissingOrZeroByte = true;
-          } catch {
-            isMissingOrZeroByte = true;
-          }
-        }
-      }
-
-      if (isDummy || isMissingOrZeroByte) {
-        if (asset.storagePath.startsWith('local://')) {
-          const relPath = asset.storagePath.replace('local://', '');
-          const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
-          if (fs.existsSync(fullLocalPath)) {
-            await fs.promises.unlink(fullLocalPath).catch(() => null);
-          }
-        } else {
-          await storageService.deleteFile(asset.storagePath).catch(() => null);
-        }
-        await prisma.mediaAsset.delete({ where: { id: asset.id } }).catch(() => null);
-        count++;
-        console.log(`[Media Cleanup] Purged dummy/orphaned file: ${asset.name} (${asset.id})`);
-      }
-    }
-  } catch (err) {
-    console.warn('[Media Cleanup] Error during purge:', err);
-  }
-  return count;
+function extractYouTubeId(input: string): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(
+    /(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+  );
+  return match ? match[1] : null;
 }
 
-// POST /api/media/cleanup
-router.post('/cleanup', async (req: Request, res: Response): Promise<void> => {
+const ytStreamUrlCache = new Map<string, { url: string; expiresAt: number }>();
+let ytDlpBootstrapPromise: Promise<string> | null = null;
+
+async function getOrBootstrapYtDlpBinary(): Promise<string> {
+  const candidates = ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', '/tmp/yt-dlp'];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      return c;
+    }
+  }
+  if (!ytDlpBootstrapPromise) {
+    ytDlpBootstrapPromise = (async () => {
+      try {
+        const resp = await fetch(
+          'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp',
+          { redirect: 'follow', signal: AbortSignal.timeout(12000) }
+        );
+        if (resp.ok) {
+          const buf = Buffer.from(await resp.arrayBuffer());
+          await fs.promises.writeFile('/tmp/yt-dlp', buf, { mode: 0o755 });
+          return '/tmp/yt-dlp';
+        }
+      } catch {}
+      return 'yt-dlp';
+    })();
+  }
+  return ytDlpBootstrapPromise;
+}
+
+async function resolveDirectYouTubeStreamUrl(videoId: string): Promise<string | null> {
+  const cached = ytStreamUrlCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  // Tier 1: Try yt-dlp (system or auto-bootstrapped in /tmp/yt-dlp)
+  const ytdlpBin = await getOrBootstrapYtDlpBinary();
+  const ytdlpUrl = await new Promise<string | null>((resolve) => {
+    execFile(
+      ytdlpBin,
+      [
+        '-f',
+        'best[ext=mp4][height<=720]/best[ext=mp4]/18/best',
+        '-g',
+        '--no-playlist',
+        '--no-check-certificates',
+        '--geo-bypass',
+        watchUrl,
+      ],
+      { timeout: 9000 },
+      (err, stdout) => {
+        if (!err && stdout && stdout.trim().startsWith('http')) {
+          resolve(stdout.trim().split('\n')[0].trim());
+        } else {
+          resolve(null);
+        }
+      }
+    );
+  });
+
+  if (ytdlpUrl) {
+    ytStreamUrlCache.set(videoId, { url: ytdlpUrl, expiresAt: Date.now() + 25 * 60 * 1000 });
+    return ytdlpUrl;
+  }
+
+  // Tier 2: Direct YouTube InnerTube Player API (100% pure Node.js fetch across 5 client profiles)
+  const innertubeClients: Array<{
+    clientName: string;
+    clientVersion: string;
+    androidSdkVersion?: number;
+    deviceMake?: string;
+    deviceModel?: string;
+    osName?: string;
+    osVersion?: string;
+    userAgent: string;
+  }> = [
+    {
+      clientName: 'IOS',
+      clientVersion: '19.45.4',
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.1.0.22B83',
+      userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
+    },
+    {
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.60.19',
+      androidSdkVersion: 32,
+      osName: 'Android',
+      osVersion: '12L',
+      userAgent: 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+    },
+    {
+      clientName: 'ANDROID',
+      clientVersion: '19.44.38',
+      androidSdkVersion: 34,
+      osName: 'Android',
+      osVersion: '14',
+      userAgent: 'com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip',
+    },
+    {
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+      userAgent: 'Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15',
+    },
+  ];
+
+  for (const clientCfg of innertubeClients) {
+    try {
+      const ytRes = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': clientCfg.userAgent,
+          Origin: 'https://www.youtube.com',
+        },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: clientCfg.clientName,
+              clientVersion: clientCfg.clientVersion,
+              hl: 'en',
+              gl: 'US',
+              ...(clientCfg.deviceMake ? { deviceMake: clientCfg.deviceMake } : {}),
+              ...(clientCfg.deviceModel ? { deviceModel: clientCfg.deviceModel } : {}),
+              ...(clientCfg.osName ? { osName: clientCfg.osName } : {}),
+              ...(clientCfg.osVersion ? { osVersion: clientCfg.osVersion } : {}),
+              ...(clientCfg.androidSdkVersion ? { androidSdkVersion: clientCfg.androidSdkVersion } : {}),
+            },
+            thirdParty: {
+              embedUrl: 'https://www.youtube.com/',
+            },
+          },
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      if (ytRes.ok) {
+        const ytData: any = await ytRes.json();
+        const formats: any[] = [
+          ...(ytData?.streamingData?.formats || []),
+          ...(ytData?.streamingData?.adaptiveFormats || []),
+        ];
+        // Prefer progressive MP4 with both video & audio (itag 22 = 720p, itag 18 = 360p)
+        const bestFormat =
+          formats.find((f) => f.itag === 22 && f.url) ||
+          formats.find((f) => f.itag === 18 && f.url) ||
+          formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4') && f.audioQuality) ||
+          formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4'));
+        if (bestFormat?.url) {
+          ytStreamUrlCache.set(videoId, { url: bestFormat.url, expiresAt: Date.now() + 20 * 60 * 1000 });
+          return bestFormat.url;
+        }
+      }
+    } catch {}
+  }
+
+  // Tier 3: Try public Piped / Invidious zero-key stream APIs
+  const pipedInstances = [
+    `https://pipedapi.kavin.rocks/streams/${videoId}`,
+    `https://pipedapi.adminforge.de/streams/${videoId}`,
+    `https://pipedapi.ducks.party/streams/${videoId}`,
+    `https://inv.nadeko.net/api/v1/videos/${videoId}`,
+    `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+  ];
+  for (const apiUrl of pipedInstances) {
+    try {
+      const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(4500) });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        const streams: any[] = data?.videoStreams || [];
+        const mp4Stream = streams.find(
+          (s) => !s.videoOnly && (s.format === 'MPEG_4' || String(s.mimeType || '').includes('mp4')) && s.url
+        );
+        if (mp4Stream?.url) {
+          ytStreamUrlCache.set(videoId, { url: mp4Stream.url, expiresAt: Date.now() + 20 * 60 * 1000 });
+          return mp4Stream.url;
+        }
+        const invStreams: any[] = data?.formatStreams || [];
+        const mp4Inv = invStreams.find((s) => s.url && String(s.type || '').includes('video/mp4'));
+        if (mp4Inv?.url) {
+          ytStreamUrlCache.set(videoId, { url: mp4Inv.url, expiresAt: Date.now() + 20 * 60 * 1000 });
+          return mp4Inv.url;
+        }
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
+// Helper that follows up to 6 HTTP 301/302/303/307/308 redirects (Critical for googlevideo.com CDN URLs!)
+function pipeYouTubeStreamFollowingRedirects(
+  initialUrl: string,
+  req: Request,
+  res: Response,
+  videoId: string,
+  redirectsLeft: number = 6
+): void {
+  let parsedUrl: URL;
   try {
-    const workspaceId = await resolveWorkspaceId(req);
-    const count = await purgeOrphanedAndDummyMedia(workspaceId);
-    res.json({ success: true, count, message: `Purged ${count} orphaned/dummy media items` });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    parsedUrl = new URL(initialUrl);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(502).json({ success: false, error: 'Invalid upstream stream URL' });
+    }
+    return;
+  }
+
+  const client = parsedUrl.protocol === 'https:' ? https : http;
+  const reqHeaders: Record<string, string> = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Accept: '*/*',
+    Connection: 'keep-alive',
+  };
+  if (req.headers.range) {
+    reqHeaders['Range'] = req.headers.range;
+  }
+
+  const proxyReq = client.get(initialUrl, { headers: reqHeaders }, (proxyRes) => {
+    const statusCode = proxyRes.statusCode || 200;
+
+    // Follow 301/302/303/307/308 redirects from googlevideo.com edge servers
+    if (
+      [301, 302, 303, 307, 308].includes(statusCode) &&
+      proxyRes.headers.location &&
+      redirectsLeft > 0
+    ) {
+      proxyRes.resume();
+      const nextUrl = new URL(proxyRes.headers.location, initialUrl).toString();
+      pipeYouTubeStreamFollowingRedirects(nextUrl, req, res, videoId, redirectsLeft - 1);
+      return;
+    }
+
+    if (statusCode >= 400) {
+      proxyRes.resume();
+      ytStreamUrlCache.delete(videoId);
+      if (!res.headersSent) {
+        res.status(502).json({ success: false, error: `Upstream returned ${statusCode}` });
+      }
+      return;
+    }
+
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.removeHeader('Cross-Origin-Embedder-Policy');
+    res.removeHeader('Cross-Origin-Resource-Policy');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'video/mp4');
+    if (proxyRes.headers['content-length']) {
+      res.setHeader('Content-Length', proxyRes.headers['content-length']);
+    }
+    if (proxyRes.headers['content-range']) {
+      res.setHeader('Content-Range', proxyRes.headers['content-range']);
+    }
+    res.writeHead(statusCode);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    ytStreamUrlCache.delete(videoId);
+    if (!res.headersSent) {
+      res.status(502).json({ success: false, error: err.message });
+    }
+  });
+}
+
+// GET /api/media/youtube/info?url=...
+router.get('/youtube/info', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawUrl = String(req.query.url || '');
+    const videoId = extractYouTubeId(rawUrl);
+    if (!videoId) {
+      res.status(400).json({ success: false, error: 'Invalid YouTube URL or Video ID' });
+      return;
+    }
+
+    let title = `YouTube Video (${videoId})`;
+    let author = 'YouTube';
+    let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    try {
+      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+      const oRes = await fetch(oembedUrl, { signal: AbortSignal.timeout(4000) });
+      if (oRes.ok) {
+        const oData: any = await oRes.json();
+        if (oData.title) title = oData.title;
+        if (oData.author_name) author = oData.author_name;
+        if (oData.thumbnail_url) thumbnailUrl = oData.thumbnail_url;
+      }
+    } catch {}
+
+    const directUrl = await resolveDirectYouTubeStreamUrl(videoId);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        videoId,
+        title,
+        author,
+        thumbnailUrl,
+        hasDirectStream: Boolean(directUrl),
+        streamProxyUrl: `/api/media/youtube/stream?videoId=${videoId}`,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: (err as Error).message });
+  }
+});
+
+// GET /api/media/youtube/stream?videoId=...
+router.get('/youtube/stream', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const raw = String(req.query.videoId || req.query.url || '');
+    const videoId = extractYouTubeId(raw);
+    if (!videoId) {
+      res.status(400).json({ success: false, error: 'Invalid YouTube videoId' });
+      return;
+    }
+
+    const directUrl = await resolveDirectYouTubeStreamUrl(videoId);
+    if (!directUrl) {
+      res.status(404).json({
+        success: false,
+        error: 'Direct MP4 stream unavailable; client will use Next.js /youtube-stream or PostMessage IFrame engine.',
+      });
+      return;
+    }
+
+    pipeYouTubeStreamFollowingRedirects(directUrl, req, res, videoId, 6);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  }
+});
+
+// GET /api/media/website/proxy?url=...
+// Proxies external webpages into the studio stage iframe, stripping X-Frame-Options, COEP, CORP & CSP
+// and injecting <base href="..."> + navigation/form helpers so websites open and interact seamlessly!
+router.get('/website/proxy', async (req: Request, res: Response): Promise<void> => {
+  res.removeHeader('X-Frame-Options');
+  res.removeHeader('Content-Security-Policy');
+  res.removeHeader('Content-Security-Policy-Report-Only');
+  res.removeHeader('Cross-Origin-Embedder-Policy');
+  res.removeHeader('Cross-Origin-Opener-Policy');
+  res.removeHeader('Cross-Origin-Resource-Policy');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
+  let rawUrl = String(req.query.url || '').trim();
+  const mode = String(req.query.mode || 'proxy');
+  if (!rawUrl) {
+    res.status(400).send('Missing url parameter');
+    return;
+  }
+  // Auto-heal malformed protocols like "https: /", "https:/", "http:/", "https;//"
+  rawUrl = rawUrl.replace(/^https?\s*[:;]\s*\/+\s*/i, (m) =>
+    m.toLowerCase().startsWith('http:') ? 'http://' : 'https://'
+  );
+  if (!/^https?:\/\//i.test(rawUrl)) {
+    rawUrl = `https://${rawUrl.replace(/^\/+/, '')}`;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    res.status(400).send('Invalid URL');
+    return;
+  }
+
+  // Reader View Mode
+  if (mode === 'reader') {
+    try {
+      const readerResp = await fetch(`https://r.jina.ai/${parsed.toString()}`, {
+        headers: {
+          Accept: 'text/plain',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      const text = await readerResp.text();
+      const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/^### (.*)$/gm, '<h3 style="color:#38bdf8;margin-top:20px;">$1</h3>')
+        .replace(/^## (.*)$/gm, '<h2 style="color:#f8fafc;margin-top:24px;border-bottom:1px solid #334155;padding-bottom:6px;">$1</h2>')
+        .replace(/^# (.*)$/gm, '<h1 style="color:#ffffff;font-size:28px;margin-bottom:12px;">$1</h1>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/!\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:12px;margin:12px 0;" />')
+        .replace(/\[(.*?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="/api/media/website/proxy?url=$2" style="color:#38bdf8;text-decoration:underline;">$1</a>')
+        .replace(/\n\n/g, '</p><p style="margin:12px 0;line-height:1.7;">');
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(200).send(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${parsed.hostname}</title></head>
+      <body style="background:#0b0f19;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;padding:32px 48px;max-width:960px;margin:0 auto;font-size:17px;line-height:1.7;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:20px;border-bottom:1px solid rgba(255,255,255,0.12);">
+          <span style="color:#38bdf8;font-weight:700;font-size:14px;">📖 READER VIEW • ${parsed.hostname}</span>
+          <a href="/api/media/website/proxy?url=${encodeURIComponent(parsed.toString())}" style="color:#94a3b8;font-size:12px;text-decoration:underline;">Switch to Full Interactive Page</a>
+        </div>
+        <p style="margin:12px 0;line-height:1.7;">${escaped}</p>
+      </body></html>`);
+      return;
+    } catch {}
+  }
+
+  try {
+    const resp = await fetch(parsed.toString(), {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const contentType = resp.headers.get('content-type') || 'text/html; charset=utf-8';
+
+    if (contentType.includes('text/html')) {
+      let html = await resp.text();
+      // Strip embedded meta CSP & X-Frame-Options tags
+      html = html
+        .replace(/<meta[^>]*http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, '')
+        .replace(/<meta[^>]*http-equiv=["']?X-Frame-Options["']?[^>]*>/gi, '');
+
+      const finalUrl = resp.url ? new URL(resp.url) : parsed;
+      const origin = `${finalUrl.protocol}//${finalUrl.host}`;
+      const baseHref = `${origin}${finalUrl.pathname.endsWith('/') ? finalUrl.pathname : finalUrl.pathname.replace(/[^/]*$/, '')}`;
+      const baseTag = `<base href="${baseHref}" />`;
+
+      html = html
+        .replace(/\b(src|href)=["']\/(?!\/)/gi, `$1="${origin}/`)
+        .replace(/\baction=["']\/(?!\/)/gi, `action="${origin}/`);
+
+      const helperScript = `<script>
+        (function() {
+          try {
+            Object.defineProperty(window, "top", { get: function() { return window.self; } });
+            Object.defineProperty(window, "parent", { get: function() { return window.self; } });
+          } catch (e) {}
+          document.addEventListener("click", function(e) {
+            var a = e.target && e.target.closest ? e.target.closest("a") : null;
+            if (!a) return;
+            var rawHref = a.getAttribute("href");
+            if (!rawHref || rawHref.startsWith("#") || rawHref.startsWith("javascript:")) return;
+            try {
+              var resolved = new URL(a.href, "${finalUrl.toString()}").toString();
+              if (/^https?:\/\//i.test(resolved) && !resolved.includes("/api/media/website/proxy") && !resolved.includes("/web-proxy")) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.location.href = "/api/media/website/proxy?url=" + encodeURIComponent(resolved);
+              }
+            } catch (err) {}
+          }, true);
+
+          document.addEventListener("submit", function(e) {
+            var form = e.target;
+            if (!form || form.tagName !== "FORM") return;
+            var method = (form.getAttribute("method") || "GET").toUpperCase();
+            if (method === "GET") {
+              try {
+                e.preventDefault();
+                var actionUrl = new URL(form.getAttribute("action") || "${finalUrl.toString()}", "${finalUrl.toString()}");
+                var formData = new FormData(form);
+                formData.forEach(function(val, key) {
+                  actionUrl.searchParams.set(key, String(val));
+                });
+                window.location.href = "/api/media/website/proxy?url=" + encodeURIComponent(actionUrl.toString());
+              } catch (err) {}
+            }
+          }, true);
+        })();
+      </script>`;
+
+      if (/<head[^>]*>/i.test(html)) {
+        html = html.replace(/<head[^>]*>/i, (match) => `${match}${baseTag}${helperScript}`);
+      } else {
+        html = `<head>${baseTag}${helperScript}</head>${html}`;
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.status(200).send(html);
+      return;
+    }
+
+    const arrayBuf = await resp.arrayBuffer();
+    res.setHeader('Content-Type', contentType);
+    res.status(resp.status).send(Buffer.from(arrayBuf));
+  } catch (err) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(200).send(`<!DOCTYPE html><html><body style="background:#090a14;color:#f8fafc;font-family:Inter,system-ui,sans-serif;padding:40px;text-align:center;">
+      <h3 style="color:#38bdf8;margin-bottom:8px;">Unable to load webpage directly (${(err as Error).message})</h3>
+      <p style="color:#94a3b8;font-size:14px;margin-bottom:18px;">Click below to open Clean Reader View or switch to Next.js Web Proxy in the top bar.</p>
+      <a href="/api/media/website/proxy?url=${encodeURIComponent(parsed.toString())}&mode=reader" style="display:inline-block;padding:10px 20px;border-radius:10px;background:#0284c7;color:#fff;text-decoration:none;font-weight:700;font-size:13px;">📖 Open Clean Reader View</a>
+    </body></html>`);
   }
 });
 
@@ -317,9 +849,10 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     }
 
     const workspaceId = await resolveWorkspaceId(req);
-    await purgeOrphanedAndDummyMedia(workspaceId);
     const mimeType = req.file.mimetype || 'application/octet-stream';
     const assetType = resolveAssetType(mimeType);
+
+    await purgeOrphanedAndDummyMedia(workspaceId);
 
     // --- STRICT VPS STORAGE QUOTA ENFORCEMENT ---
 
@@ -606,6 +1139,18 @@ router.get('/:id/file', async (req: Request, res: Response, next: NextFunction):
   }
 });
 
+
+// POST /api/media/cleanup (Purges dummy, broken/missing local files, and duplicate assets)
+router.post('/cleanup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const purgedCount = await purgeOrphanedAndDummyMedia(workspaceId);
+    res.status(200).json({ success: true, data: { purgedCount } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+
 // DELETE /api/media/session/:sessionId (Immediate purge of all temporary files for a studio session)
 router.delete('/session/:sessionId', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -644,166 +1189,6 @@ router.delete('/:id', async (req: Request, res: Response, next: NextFunction): P
     res.status(200).json({ success: true, data: { id: req.params.id, deleted: true } });
   } catch (error) {
     next(error);
-  }
-});
-
-// GET /api/media/youtube/info?videoId=... (Zero-Key YouTube metadata & direct stream URL extraction)
-router.get('/youtube/info', async (req: Request, res: Response): Promise<void> => {
-  const videoId = ((req.query.videoId as string) || '').trim();
-  const rawUrl = ((req.query.url as string) || '').trim();
-  const targetId =
-    videoId ||
-    (rawUrl.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/) || [])[1];
-
-  if (!targetId) {
-    res.status(400).json({ success: false, error: 'Valid YouTube videoId or url is required' });
-    return;
-  }
-
-  const youtubeUrl = `https://www.youtube.com/watch?v=${targetId}`;
-
-  // 1. Fetch public oEmbed metadata (0ms API key required)
-  let title = 'YouTube Video';
-  let author = 'YouTube Creator';
-  let thumbnail = `https://img.youtube.com/vi/${targetId}/maxresdefault.jpg`;
-
-  try {
-    const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(youtubeUrl)}&format=json`);
-    if (oembedRes.ok) {
-      const data = (await oembedRes.json()) as any;
-      if (data.title) title = data.title;
-      if (data.author_name) author = data.author_name;
-      if (data.thumbnail_url) thumbnail = data.thumbnail_url;
-    }
-  } catch {}
-
-  // 2. Check if yt-dlp is available to extract direct MP4 stream URL
-  exec(`yt-dlp --get-url -f "best[ext=mp4]/best" "${youtubeUrl}"`, { timeout: 8000 }, (err, stdout) => {
-    let directStreamUrl: string | null = null;
-    if (!err && stdout && stdout.trim().startsWith('http')) {
-      directStreamUrl = stdout.trim().split('\n')[0];
-    }
-
-    res.status(200).json({
-      success: true,
-      videoId: targetId,
-      title,
-      author,
-      thumbnail,
-      directStreamUrl,
-      proxyStreamUrl: `/api/media/youtube/stream?videoId=${targetId}`,
-    });
-  });
-});
-
-// GET /api/media/youtube/stream?videoId=... (Proxies MP4 stream with CORS headers for canvas capture and audio DSP)
-router.get('/youtube/stream', (req: Request, res: Response): void => {
-  const videoId = ((req.query.videoId as string) || '').trim();
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-    res.status(400).json({ success: false, error: 'Valid 11-char YouTube videoId is required' });
-    return;
-  }
-
-  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.header('Content-Type', 'video/mp4');
-
-  // Spawn yt-dlp with 2026 InnerTube clients (ANDROID_VR, IOS 19.29.1, ANDROID 19.29.37)
-  const proc = spawn('yt-dlp', [
-    '-o', '-',
-    '-f', 'best[ext=mp4]/best',
-    '--no-playlist',
-    '--extractor-args', 'youtube:player_client=android_vr,ios,android',
-    youtubeUrl,
-  ]);
-
-  proc.stdout.pipe(res);
-
-  proc.stderr.on('data', () => {});
-
-  proc.on('error', () => {
-    if (!res.headersSent) {
-      res.status(501).json({ success: false, error: 'yt-dlp not available on host system. Using IFrame fallback.' });
-    }
-  });
-
-  req.on('close', () => {
-    try {
-      proc.kill();
-    } catch {}
-  });
-});
-
-// GET /api/media/website/proxy?url=...
-// Proxies external websites, stripping X-Frame-Options and frame-ancestors CSP, and injecting <base href="...">
-router.get('/website/proxy', async (req: Request, res: Response): Promise<void> => {
-  const targetUrl = ((req.query.url as string) || '').trim();
-  if (!targetUrl) {
-    res.status(400).send('Missing url query parameter');
-    return;
-  }
-
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(targetUrl.startsWith('http://') || targetUrl.startsWith('https://') ? targetUrl : `https://${targetUrl}`);
-  } catch {
-    res.status(400).send('Invalid url format');
-    return;
-  }
-
-  try {
-    const fetchResponse = await fetch(parsedUrl.toString(), {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      redirect: 'follow',
-    });
-
-    const contentType = fetchResponse.headers.get('content-type') || 'text/html';
-
-    // Allow CORS and iframe embedding
-    res.removeHeader('X-Frame-Options');
-    res.removeHeader('Content-Security-Policy');
-    res.removeHeader('frame-options');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', contentType);
-
-    // If not HTML (e.g. image, css, js), pipe raw stream / arrayBuffer
-    if (!contentType.includes('text/html')) {
-      const buffer = Buffer.from(await fetchResponse.arrayBuffer());
-      res.send(buffer);
-      return;
-    }
-
-    let html = await fetchResponse.text();
-
-    // Inject <base href="..."> right after <head> so relative links and assets load correctly
-    const baseHref = parsedUrl.origin + parsedUrl.pathname.substring(0, parsedUrl.pathname.lastIndexOf('/') + 1);
-    const baseTag = `<base href="${baseHref}">`;
-
-    if (/<head[^>]*>/i.test(html)) {
-      html = html.replace(/<head[^>]*>/i, `$&${baseTag}`);
-    } else {
-      html = baseTag + html;
-    }
-
-    // Strip meta http-equiv="Content-Security-Policy" or "X-Frame-Options" if embedded in HTML head
-    html = html.replace(/<meta[^>]*http-equiv=["']?(?:content-security-policy|x-frame-options)["']?[^>]*>/gi, '');
-
-    res.send(html);
-  } catch (err: any) {
-    console.error('[Website Proxy Error]:', err?.message || err);
-    res.status(502).send(`<html><body style="font-family:sans-serif;padding:24px;background:#0d1117;color:#f85149;">
-      <h3>Unable to load website through proxy</h3>
-      <p style="color:#c9d1d9;">${err?.message || 'Connection failed'}</p>
-      <p style="color:#8b949e;font-size:12px;">Target: ${parsedUrl.toString()}</p>
-    </body></html>`);
   }
 });
 

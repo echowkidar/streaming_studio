@@ -890,9 +890,7 @@ export function calculateStageLayout(
           });
         }
         return {
-          mediaBounds: fullBleed
-            ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
-            : { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true },
+          mediaBounds: { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true },
           participantBounds,
         };
       }
@@ -934,9 +932,7 @@ export function calculateStageLayout(
           });
         }
         return {
-          mediaBounds: fullBleed
-            ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
-            : { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true },
+          mediaBounds: { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true },
           participantBounds,
         };
       }
@@ -1092,10 +1088,8 @@ export function calculateStageLayout(
     }
 
     case "pip": {
-      // StreamYard Picture-in-Picture: Media fills full canvas background, speaker floats in corner!
-      const mediaBounds: ParticipantBounds = fullBleed
-        ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
-        : { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true };
+      // StreamYard Picture-in-Picture: Media fills 100% full canvas background top-to-bottom, speaker floats in corner!
+      const mediaBounds: ParticipantBounds = { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true };
 
       const sizeMap = {
         small: { w: 22, h: 24 },

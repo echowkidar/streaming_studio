@@ -44,7 +44,7 @@ import {
   Clipboard,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem, TacticalMapConfig } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,7 @@ export const StagePreview: React.FC = () => {
     setTileTransform,
     isDrawingMode,
     toggleMediaMute,
+    setMediaVolume,
     toggleParticipantMic,
     mediaSlotIndex,
     setMediaSlotIndex,
@@ -142,10 +143,60 @@ export const StagePreview: React.FC = () => {
   const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY));
   const effectiveObjectPosX = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosX;
   const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosY;
+  const effectiveTransformOriginX = effectiveObjectPosX;
+  const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
+  const normalizedMediaVolumePct = Math.max(0, Math.min(100, activeMedia?.volume ?? 100));
+  const [isMediaHovered, setIsMediaHovered] = useState(false);
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
+  const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
+  const [useYtIframeFallback, setUseYtIframeFallback] = useState(false);
+  const [mediaBoundsHistory, setMediaBoundsHistory] = useState<Array<ParticipantBounds | null>>([]);
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
   const [mediaLoadError, setMediaLoadError] = useState(false);
+  const pushMediaBoundsUndoState = React.useCallback(() => {
+    const currentCustom = useStudioStore.getState().participantBounds["active-media"] || null;
+    setMediaBoundsHistory((prev) => [...prev.slice(-14), currentCustom ? { ...currentCustom } : null]);
+  }, []);
+
+  const handleApplyMediaSizePreset = React.useCallback(
+    (nextBounds: ParticipantBounds) => {
+      pushMediaBoundsUndoState();
+      setParticipantBounds("active-media", nextBounds);
+    },
+    [pushMediaBoundsUndoState, setParticipantBounds]
+  );
+
+  const handleUndoMediaBounds = React.useCallback(
+    (e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      setMediaBoundsHistory((prev) => {
+        if (prev.length === 0) {
+          resetParticipantBounds("active-media");
+          return prev;
+        }
+        const copy = [...prev];
+        const lastState = copy.pop() ?? null;
+        if (lastState) {
+          setParticipantBounds("active-media", lastState);
+        } else {
+          resetParticipantBounds("active-media");
+        }
+        return copy;
+      });
+    },
+    [resetParticipantBounds, setParticipantBounds]
+  );
+
+  const handleResetMediaBoundsToSlot = React.useCallback(
+    (e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      pushMediaBoundsUndoState();
+      resetParticipantBounds("active-media");
+    },
+    [pushMediaBoundsUndoState, resetParticipantBounds]
+  );
+
   const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
   const [isTacticalMapModalOpen, setIsTacticalMapModalOpen] = useState(false);
   const [isYouTubeLibraryModalOpen, setIsYouTubeLibraryModalOpen] = useState(false);
@@ -153,6 +204,8 @@ export const StagePreview: React.FC = () => {
 
   React.useEffect(() => {
     setMediaLoadError(false);
+    setYtStreamAttempt(0);
+    setUseYtIframeFallback(false);
   }, [activeMedia?.id, activeMedia?.url]);
 
   // Media Transport state for active stage video
@@ -161,6 +214,7 @@ export const StagePreview: React.FC = () => {
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [videoSpeed, setVideoSpeed] = useState(1.0);
   const mediaCurrentTimeRef = useRef<number>(0);
+  const mediaDurationRef = useRef<number>(0);
   const isMediaPausedRef = useRef<boolean>(false);
   const ytTelemetryActiveRef = useRef<boolean>(false);
   const [isYtJerking, setIsYtJerking] = useState<boolean>(false);
@@ -183,6 +237,14 @@ export const StagePreview: React.FC = () => {
     if (iframe && iframe.contentWindow) {
       iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
     }
+  };
+  const sendYouTubeIframeCommand = sendYouTubeCommand;
+
+  const getActiveHtmlMediaElement = (): HTMLVideoElement | HTMLAudioElement | null => {
+    return (
+      (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
+      (document.getElementById("livestudio-background-audio") as HTMLAudioElement | null)
+    );
   };
 
   useEffect(() => {
@@ -1182,6 +1244,7 @@ export const StagePreview: React.FC = () => {
     if (!stageContainerRef.current) return;
 
     setSelectedParticipantId("active-media");
+    pushMediaBoundsUndoState();
 
     const startClientX = e.clientX;
     const startClientY = e.clientY;
@@ -1549,9 +1612,14 @@ export const StagePreview: React.FC = () => {
   };
 
   // Helper to render active stage media (video/slides/image)
-  const renderMediaTile = () => {
+  const renderMediaTile = (currentMediaBounds?: ParticipantBounds) => {
     if (!activeMedia) return null;
     const isTransparentCard = Boolean(mediaTransform.isTransparentBg);
+    const isMediaFullBleed = isFullBleedLayout || mediaFitMode === "cover";
+    const effBounds = currentMediaBounds || { x: 0, y: 0, width: 100, height: 100 };
+    const touchesBottomTicker = Boolean(showTicker && effBounds.y + effBounds.height > 88);
+    const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
+
     return (
       <div
         data-stage-tile="true"
@@ -1563,10 +1631,10 @@ export const StagePreview: React.FC = () => {
         className={cn(
           "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all duration-300",
           isMediaTransitioning && "opacity-30 scale-[0.98] blur-[1px]",
-          isFullBleedLayout ? "rounded-none" : "rounded-2xl",
+          isMediaFullBleed ? "rounded-none" : "rounded-2xl",
           isTransparentCard
             ? "bg-transparent border-0 shadow-none"
-            : isFullBleedLayout
+            : isMediaFullBleed
             ? "bg-black border-0 shadow-none"
             : "bg-black/95 border border-indigo-500/30 shadow-2xl"
         )}
@@ -1611,102 +1679,234 @@ export const StagePreview: React.FC = () => {
               </div>
             </div>
           ) : activeMedia.type === "map" && activeMedia.mapConfig ? (
-            <div className="w-full h-full relative overflow-hidden flex items-center justify-center bg-slate-950">
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                transform: [
+                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
+                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
+                    : "",
+                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
+                  isMediaMirrored ? "scaleX(-1)" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined,
+                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
+              }}
+              className="w-full h-full relative pointer-events-auto"
+            >
               <TacticalMapStageCanvas
                 config={activeMedia.mapConfig}
+                fitMode={mediaFitMode}
                 isInteractive={true}
                 onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
+                onConfigChange={(nextMapCfg) => {
+                  const updatedMedia = { ...activeMedia, mapConfig: { ...activeMedia.mapConfig, ...nextMapCfg } as TacticalMapConfig };
+                  setActiveMedia(updatedMedia);
+                  useStudioStore.getState().updateMediaLibraryItem(activeMedia.id, { mapConfig: { ...activeMedia.mapConfig, ...nextMapCfg } as TacticalMapConfig });
+                }}
               />
             </div>
           ) : activeMedia.type === "website" ? (
             <InteractiveWebsiteStageView
               item={activeMedia}
-              zoom={mediaZoom * (isBreathingActive ? breathScale : 1)}
+              zoom={Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3))}
               panX={mediaPanX}
               panY={mediaPanY}
               rotation={mediaTransform.rotation || 0}
-              isMirrored={Boolean(fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo)}
+              isMirrored={isMediaMirrored}
               onOpenLibraryModal={() => setIsWebsiteLibraryModalOpen(true)}
             />
-          ) : activeMedia.type === "youtube" ? (() => {
-            const isYtCover = mediaFitMode === "cover";
-            const effectiveYtZoom = mediaZoom * (isBreathingActive ? breathScale : 1);
-            const ytTotalScale = isYtCover ? Math.max(1.15, effectiveYtZoom * 1.15) : effectiveYtZoom;
-            const maxShiftX = Math.max(0, (ytTotalScale - 1) * 50);
-            const maxShiftY = Math.max(0, (ytTotalScale - 1) * 50);
-            const ytShiftX = Number(((-mediaPanX / 50) * maxShiftX).toFixed(2));
-            const ytShiftY = Number(((-mediaPanY / 50) * maxShiftY).toFixed(2));
+          ) : activeMedia.type === "youtube" && useYtIframeFallback && (activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)) ? (
+            (() => {
+              // Mathematical Aspect-Ratio Cover Scaling for 16:9 YouTube iframe
+              const tileRelAspect = Math.max(
+                0.2,
+                Math.min(4.0, (effBounds.width || 100) / Math.max(1, effBounds.height || 100))
+              );
+              const isCoverFill = mediaFitMode === "cover";
+              const iframeWidthPct = isCoverFill
+                ? tileRelAspect < 1
+                  ? Math.ceil((1 / tileRelAspect) * 108)
+                  : 106
+                : 102;
+              const iframeHeightPct = isCoverFill
+                ? tileRelAspect > 1
+                  ? Math.ceil(tileRelAspect * 124)
+                  : 124
+                : 118;
 
-            const ytRotateStr = mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "";
-            const ytMirrorStr = fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "";
-            const ytJerkStr = isYtJerking ? "scale(1.025) translate(2px, -2px)" : "";
-            const ytTransform = `translate3d(${ytShiftX}%, ${ytShiftY}%, 0) scale(${ytTotalScale.toFixed(3)}) ${ytRotateStr} ${ytMirrorStr} ${ytJerkStr}`.trim();
+              const ytTotalScale = Number(
+                (mediaZoom * (isBreathingActive ? breathScale : 1) * (isYtJerking ? 1.045 : 1)).toFixed(4)
+              );
+              const canPanYt = isCoverFill || mediaZoom > 1;
+              const ytShiftX = canPanYt
+                ? Number((-mediaPanX * 0.65 + (isYtJerking ? 1.4 : 0)).toFixed(2))
+                : isYtJerking
+                ? 1.4
+                : 0;
+              const ytShiftY = canPanYt
+                ? Number((-mediaPanY * 0.65 + (isYtJerking ? -0.9 : 0)).toFixed(2))
+                : isYtJerking
+                ? -0.9
+                : 0;
 
-            return (
-              <div
-                className="relative w-full h-full overflow-hidden flex items-center justify-center pointer-events-auto"
-                onMouseDown={handleMediaPanMouseDown}
-                onTouchStart={handleMediaPanTouchStart}
-                onTouchMove={handleMediaPanTouchMove}
-                onTouchEnd={handleMediaPanTouchEnd}
-                onWheel={handleMediaWheel}
-                style={{
-                  cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
-                  userSelect: "none",
-                }}
-              >
+              const effectiveYtId = activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url);
+
+              return (
                 <div
-                  className="relative w-full h-full flex items-center justify-center"
                   style={{
-                    transform: ytTransform,
+                    width: "100%",
+                    height: "100%",
+                    transform:
+                      [
+                        ytShiftX !== 0 || ytShiftY !== 0
+                          ? `translate3d(${ytShiftX}%, ${ytShiftY}%, 0)`
+                          : "",
+                        ytTotalScale > 1.001 ? `scale(${ytTotalScale})` : "",
+                        mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
+                        isMediaMirrored ? "scaleX(-1)" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined,
                     transformOrigin: "center center",
-                    transition: isDraggingMediaPan ? "none" : "transform 0.15s ease-out",
-                    filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
+                    cursor: canPanYt ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                    filter:
+                      fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
+                        ? "contrast(1.04) saturate(1.04)"
+                        : undefined,
                   }}
+                  className="w-full h-full relative overflow-hidden pointer-events-auto bg-black"
                 >
                   <iframe
-                    id="livestudio-youtube-iframe"
-                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)}?enablejsapi=1&autoplay=1&controls=0&rel=0&modestbranding=1&cc_load_policy=0&iv_load_policy=3&playsinline=1&start=${activeMedia.startTimeSec || 0}${activeMedia.endTimeSec ? `&end=${activeMedia.endTimeSec}` : ""}&origin=${typeof window !== "undefined" ? window.location.origin : ""}`}
-                    title={activeMedia.name || "YouTube Video"}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    className="border-0 pointer-events-auto"
-                    style={{
-                      width: "100%",
-                      height: "118%",
-                      position: "absolute",
-                      top: "-9%",
-                      left: 0,
+                    id="livestudio-active-youtube-iframe"
+                    key={effectiveYtId}
+                    src={`https://www.youtube-nocookie.com/embed/${effectiveYtId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${effectiveYtId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
+                    title={activeMedia.name}
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    onLoad={(e) => {
+                      const win = e.currentTarget.contentWindow;
+                      const initPlayer = () => {
+                        if (!win) return;
+                        win.postMessage(
+                          JSON.stringify({ event: "listening", id: 1, channel: "widget" }),
+                          "*"
+                        );
+                        sendYouTubeIframeCommand("unloadModule", ["captions"]);
+                        sendYouTubeIframeCommand("unloadModule", ["cc"]);
+                        sendYouTubeIframeCommand("setOption", ["captions", "track", {}]);
+                        sendYouTubeIframeCommand("setOption", ["cc", "track", {}]);
+                        if (activeMedia.isMuted || normalizedMediaVolumePct === 0) {
+                          sendYouTubeIframeCommand("mute", []);
+                        } else {
+                          sendYouTubeIframeCommand("unMute", []);
+                          sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+                        }
+                        const rate =
+                          fairUseConfig?.enabled ? fairUseConfig.playbackRate || 1.04 : 1.0;
+                        sendYouTubeIframeCommand("setPlaybackRate", [rate]);
+                      };
+                      initPlayer();
+                      setTimeout(initPlayer, 350);
+                      setTimeout(initPlayer, 900);
                     }}
+                    style={{
+                      width: `${iframeWidthPct}%`,
+                      height: `${iframeHeightPct}%`,
+                      position: "absolute",
+                      top: "50%",
+                      left: "50%",
+                      transform: "translate(-50%, -50%)",
+                    }}
+                    className="border-0 pointer-events-auto"
                   />
                 </div>
-              </div>
-            );
-          })() : activeMedia.type === "video" ? (
+              );
+            })()
+          ) : (activeMedia.type === "video" || (activeMedia.type === "youtube" && !useYtIframeFallback)) ? (
             <video
               id="livestudio-active-media-video"
-              src={activeMedia.url}
+              src={
+                activeMedia.type === "youtube"
+                  ? ytStreamAttempt === 0
+                    ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
+                    : `/youtube-stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
+                  : activeMedia.url
+              }
               autoPlay
               controls={false}
               playsInline
               loop={activeMedia.loop ?? true}
-              muted={activeMedia.isMuted ?? false}
+              muted={Boolean(activeMedia.isMuted)}
               crossOrigin="anonymous"
-              onError={() => setMediaLoadError(true)}
+              onError={() => {
+                if (activeMedia.type === "youtube") {
+                  if (ytStreamAttempt === 0) {
+                    setYtStreamAttempt(1);
+                  } else {
+                    setUseYtIframeFallback(true);
+                  }
+                } else {
+                  setMediaLoadError(true);
+                }
+              }}
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
+                  v.currentTime = activeMedia.startTimeSec;
+                }
+                const dur = activeMedia.endTimeSec || v.duration || 0;
+                setVideoDuration(dur);
+                mediaDurationRef.current = dur;
+              }}
+              onTimeUpdate={(e) => {
+                const ct = e.currentTarget.currentTime;
+                setVideoCurrentTime(ct);
+                mediaCurrentTimeRef.current = ct;
+                if (activeMedia.endTimeSec && activeMedia.endTimeSec > 0 && ct >= activeMedia.endTimeSec) {
+                  if (activeMedia.loop !== false) {
+                    e.currentTarget.currentTime = activeMedia.startTimeSec || 0;
+                    e.currentTarget.play().catch(() => {});
+                  } else {
+                    e.currentTarget.pause();
+                    setIsVideoPlaying(false);
+                    useStudioStore.getState().triggerMediaEnded();
+                  }
+                }
+              }}
+              onEnded={() => {
+                if (activeMedia.loop !== false) {
+                  const el = getActiveHtmlMediaElement();
+                  if (el) {
+                    el.currentTime = activeMedia.startTimeSec || 0;
+                    el.play().catch(() => {});
+                  }
+                } else {
+                  setIsVideoPlaying(false);
+                  useStudioStore.getState().triggerMediaEnded();
+                }
+              }}
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 transform: [
-                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
-                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
+                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
+                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
                     : "",
                   mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
-                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
-                ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                  isMediaMirrored ? "scaleX(-1)" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined,
+                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
-                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
+                filter:
+                  fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
+                    ? "contrast(1.04) saturate(1.04)"
+                    : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
@@ -1721,17 +1921,22 @@ export const StagePreview: React.FC = () => {
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
                 transform: [
-                  (mediaZoom * (isBreathingActive ? breathScale : 1)) > 1 || isBreathingActive
-                    ? `scale(${(mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3)})`
+                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
+                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
                     : "",
                   mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
-                  fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo ? "scaleX(-1)" : "",
-                ].filter(Boolean).join(" ") || undefined,
-                transformOrigin: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                  isMediaMirrored ? "scaleX(-1)" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined,
+                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
                 cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                 userSelect: "none",
                 transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
-                filter: fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter ? "contrast(1.03) saturate(1.03)" : undefined,
+                filter:
+                  fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
+                    ? "contrast(1.04) saturate(1.04)"
+                    : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
@@ -1756,7 +1961,7 @@ export const StagePreview: React.FC = () => {
           )}
         </div>
 
-        {/* Dynamic Film Grain Adjustment Layer (Clean Cinema Texture without 3px Grid Mesh) */}
+        {/* Dynamic Film Grain Adjustment Layer */}
         {fairUseConfig?.enabled && (fairUseConfig?.filmGrainOverlay ?? true) && (
           <div
             className="absolute inset-0 pointer-events-none z-15 mix-blend-overlay opacity-15 select-none"
@@ -1778,7 +1983,7 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* YouTube Fair Use / Reaction Badge (Broadcast watermark at bottom-left corner) */}
+        {/* YouTube Fair Use / Reaction Badge */}
         {fairUseConfig?.enabled && (
           <div
             className={cn(
@@ -1793,88 +1998,38 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-
-        {/* Multi-Slide Presentation Deck Controls (StreamYard Paid Plan) */}
+        {/* Multi-Slide Presentation Deck Controls */}
         {activeMedia.slides && activeMedia.slides.length > 0 && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/50 shadow-2xl pointer-events-auto">
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                prevSlide();
-              }}
-              disabled={(activeMedia.currentSlideIndex || 0) <= 0}
-              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              onClick={prevSlide}
+              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
               title="Previous Slide"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            <span className="text-xs font-mono font-bold text-white px-1">
-              Slide {(activeMedia.currentSlideIndex || 0) + 1} / {activeMedia.slides.length}
+            <span className="text-[11px] font-mono text-indigo-300 font-bold px-2 select-none">
+              {(activeMedia.currentSlideIndex ?? 0) + 1} / {activeMedia.slides.length}
             </span>
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                nextSlide();
-              }}
-              disabled={(activeMedia.currentSlideIndex || 0) >= activeMedia.slides.length - 1}
-              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              onClick={nextSlide}
+              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
               title="Next Slide"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
-
-            {activeMedia.speakerNotes && activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0] && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowSpeakerNotes(!showSpeakerNotes);
-                }}
-                className={cn(
-                  "ml-1.5 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                  showSpeakerNotes
-                    ? "bg-amber-500 text-black border-amber-400 font-bold"
-                    : "bg-white/10 hover:bg-white/20 text-amber-300 border-amber-500/30"
-                )}
-                title="Toggle Speaker Notes for this slide"
-              >
-                <FileText className="w-3 h-3" />
-                <span>Notes</span>
-              </button>
-            )}
           </div>
         )}
 
-        {/* Floating Speaker Notes Overlay for Presenter */}
-        {showSpeakerNotes && activeMedia.slides && activeMedia.speakerNotes?.[activeMedia.currentSlideIndex || 0] && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-14 left-1/2 -translate-x-1/2 max-w-md w-[88%] bg-slate-950/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-3 shadow-2xl z-35 pointer-events-auto text-left"
-          >
-            <div className="flex items-center justify-between pb-1.5 border-b border-white/10 mb-1.5">
-              <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" /> Speaker Notes (Slide {(activeMedia.currentSlideIndex || 0) + 1})
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowSpeakerNotes(false)}
-                className="text-slate-400 hover:text-white text-xs px-1"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-slate-200 leading-relaxed font-sans">
-              {activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0]}
-            </p>
-          </div>
-        )}
-
-        {/* Custom Broadcast Media Transport Bar for Video & YouTube (Overlayed at bottom of video tile in all Fit/Cropped/Zoom modes) */}
+        {/* Custom Broadcast Media Transport Bar for Video & YouTube (Ticker-Aware) */}
         {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
           <div
-            className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all"
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all",
+              touchesBottomTicker ? "bottom-12" : "bottom-2.5"
+            )}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
@@ -1883,7 +2038,7 @@ export const StagePreview: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsYouTubeLibraryModalOpen(true)}
-                className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors"
+                className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
                 title="Edit Start/End Time or Replace YouTube Clip"
               >
                 <Youtube className="w-3 h-3 text-red-400" />
@@ -1895,7 +2050,7 @@ export const StagePreview: React.FC = () => {
             <button
               type="button"
               onClick={handleTogglePlayVideo}
-              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
               title={isVideoPlaying ? "Pause Video" : "Play Video"}
             >
               {isVideoPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
@@ -1905,7 +2060,7 @@ export const StagePreview: React.FC = () => {
             <button
               type="button"
               onClick={() => handleSkipVideo(-10)}
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
               title="Skip back 10 seconds"
             >
               -10s
@@ -1919,8 +2074,8 @@ export const StagePreview: React.FC = () => {
             {/* Interactive Timeline Seekbar */}
             <input
               type="range"
-              min="0"
-              max={videoDuration || 100}
+              min={activeMedia.startTimeSec || 0}
+              max={activeMedia.endTimeSec && activeMedia.endTimeSec > 0 ? activeMedia.endTimeSec : (videoDuration || 100)}
               step="0.5"
               value={videoCurrentTime}
               onChange={(e) => handleSeekVideo(Number(e.target.value))}
@@ -1932,7 +2087,7 @@ export const StagePreview: React.FC = () => {
             <button
               type="button"
               onClick={() => handleSkipVideo(10)}
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
               title="Skip forward 10 seconds"
             >
               +10s
@@ -1947,9 +2102,32 @@ export const StagePreview: React.FC = () => {
             >
               <option value="0.75">0.75x</option>
               <option value="1">1.0x</option>
+              <option value="1.04">1.04x FairUse</option>
               <option value="1.25">1.25x</option>
               <option value="1.5">1.5x</option>
+              <option value="2">2.0x</option>
             </select>
+
+            {/* Volume Mute Toggle */}
+            <button
+              type="button"
+              onClick={() => toggleMediaMute()}
+              className="p-1 rounded bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              title={activeMedia.isMuted ? "Unmute" : "Mute"}
+            >
+              {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-slate-300" />}
+            </button>
+
+            {/* Volume Slider */}
+            <input
+              type="range"
+              min="0"
+              max="200"
+              value={normalizedMediaVolumePct}
+              onChange={(e) => setMediaVolume(Number(e.target.value))}
+              className="w-14 h-1 accent-indigo-400 bg-white/20 rounded cursor-pointer"
+              title={`Volume: ${normalizedMediaVolumePct}%`}
+            />
 
             {/* Loop Toggle */}
             <button
@@ -1961,118 +2139,116 @@ export const StagePreview: React.FC = () => {
                 })
               }
               className={cn(
-                "p-1 rounded text-[10px] transition-colors border",
-                (activeMedia.loop ?? true)
-                  ? "bg-indigo-600/30 text-indigo-300 border-indigo-400/50"
-                  : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
+                "p-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer",
+                activeMedia.loop !== false
+                  ? "bg-indigo-600/50 text-indigo-200 border border-indigo-400/40"
+                  : "bg-white/5 text-slate-400 hover:text-white"
               )}
-              title={(activeMedia.loop ?? true) ? "Loop ON" : "Loop OFF"}
+              title="Toggle Loop"
             >
-              <Repeat className="w-3.5 h-3.5" />
+              <Repeat className="w-3 h-3" />
             </button>
-
-            {/* Volume & Mute */}
-            <button
-              type="button"
-              onClick={toggleMediaMute}
-              className={cn(
-                "p-1 rounded text-[10px] transition-colors",
-                activeMedia.isMuted ? "text-rose-400" : "text-emerald-400 hover:text-emerald-300"
-              )}
-              title={activeMedia.isMuted ? "Unmute" : "Mute"}
-            >
-              {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-            </button>
-
-            <input
-              type="range"
-              min="0"
-              max="200"
-              step="5"
-              value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
-              onChange={(e) => {
-                const vol = Number(e.target.value);
-                setActiveMedia({
-                  ...activeMedia,
-                  volume: vol,
-                  isMuted: vol === 0,
-                });
-              }}
-              className="w-14 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
-              title={`Volume: ${activeMedia.volume ?? 100}%`}
-            />
-            <span className="text-[10px] font-mono text-emerald-300 font-bold min-w-[28px] text-right">
-              {activeMedia.volume ?? 100}%
-            </span>
           </div>
         )}
 
-        {/* Custom Broadcast Media Transport Bar for Tactical Map */}
-        {activeMedia.type === "map" && activeMedia.mapConfig && (
-          <div
-            className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-cyan-500/30 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all"
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-cyan-950/60 border border-cyan-500/40 text-[10px] text-cyan-300 font-bold">
-              <Globe className="w-3.5 h-3.5" />
-              <span>Tactical Map</span>
+        {/* Audio Track Visualizer & Controls */}
+        {activeMedia.type === "audio" && (
+          <div className="flex flex-col items-center justify-center gap-3 p-6 bg-gradient-to-br from-indigo-950/80 to-purple-950/80 rounded-2xl border border-indigo-500/30 w-full h-full">
+            <audio
+              id="livestudio-active-media-audio"
+              src={activeMedia.url}
+              autoPlay
+              loop={activeMedia.loop ?? true}
+              crossOrigin="anonymous"
+            />
+            <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shadow-xl">
+              <Volume2 className="w-8 h-8 animate-pulse" />
             </div>
+            <div className="text-center">
+              <p className="text-sm font-bold text-white max-w-[280px] truncate">{activeMedia.name}</p>
+              <p className="text-xs text-indigo-300/70">Audio Track Active</p>
+            </div>
+          </div>
+        )}
 
+        {/* Floating Undo / Fit Slot Pill on top-right of Resized Media Tile */}
+        {participantBounds["active-media"] && (
+          <div className="absolute top-2 right-2 z-40 flex items-center gap-1 bg-black/85 backdrop-blur-md px-2 py-1 rounded-lg border border-amber-500/40 shadow-xl pointer-events-auto">
             <button
               type="button"
-              onClick={() => setIsTacticalMapModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[10.5px] font-bold flex items-center gap-1 shadow-md"
-              title="Edit Tactical Map Routes, Trajectories & Locations"
+              onClick={handleUndoMediaBounds}
+              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white/10 hover:bg-amber-600 text-amber-300 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+              title="Undo Window Resize"
             >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Edit Map</span>
+              <RotateCcw className="w-3 h-3" />
+              <span>Undo</span>
             </button>
-
             <button
               type="button"
-              onClick={() => {
-                const styles: Array<"dark-radar" | "satellite" | "ocean" | "political" | "vector-grid"> = [
-                  "dark-radar",
-                  "satellite",
-                  "ocean",
-                  "political",
-                  "vector-grid",
-                ];
-                const curIdx = styles.indexOf(activeMedia.mapConfig!.mapStyle);
-                const nextStyle = styles[(curIdx + 1) % styles.length];
-                setActiveMedia({
-                  ...activeMedia,
-                  mapConfig: { ...activeMedia.mapConfig!, mapStyle: nextStyle },
-                });
-              }}
-              className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 text-[10.5px] font-medium"
-              title="Switch Map Theme (Dark Radar / Satellite / Political / Vector Grid)"
+              onClick={handleResetMediaBoundsToSlot}
+              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white/10 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors cursor-pointer"
+              title="Restore to Layout Slot"
             >
-              Theme: <span className="font-bold text-cyan-400 capitalize">{activeMedia.mapConfig.mapStyle}</span>
+              Fit Slot
             </button>
           </div>
+        )}
+
+        {/* 8-Way Interactive Resize Handles around Active Media */}
+        {!isFullBleedLayout && mediaFitMode !== "cover" && (
+          <>
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "nw", effBounds)}
+              className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Corner"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "ne", effBounds)}
+              className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Corner"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "sw", effBounds)}
+              className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Corner"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "se", effBounds)}
+              className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Corner"
+            />
+
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "n", effBounds)}
+              className="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Top Edge"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "s", effBounds)}
+              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Bottom Edge"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "w", effBounds)}
+              className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Left Edge"
+            />
+            <div
+              onMouseDown={(e) => handleMediaResizeMouseDown(e, "e", effBounds)}
+              className="absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors pointer-events-auto"
+              title="Resize Right Edge"
+            />
+          </>
         )}
       </div>
     );
   };
 
-  // Layout Engine: StreamYard-Parity Canvas with Selection Tool & Independent Window Resizing
   const renderLayoutContent = () => {
-    const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
-    const hasVisualMedia = Boolean(
-      activeMedia &&
-        (activeMedia.type === "video" ||
-          activeMedia.type === "image" ||
-          activeMedia.type === "pdf" ||
-          activeMedia.type === "youtube" ||
-          activeMedia.type === "map")
-    );
-
-    if (onStageParticipants.length === 0 && !hasVisualMedia) {
+    // Empty Stage State
+    if (orderedParticipants.length === 0 && !hasVisualMedia && totalGhostSlots === 0) {
       return (
-        <div className="h-full w-full flex flex-col items-center justify-center text-slate-500 gap-3">
+        <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-3">
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
             <Video className="w-10 h-10 text-slate-400" />
           </div>
@@ -2082,32 +2258,388 @@ export const StagePreview: React.FC = () => {
       );
     }
 
-    // Calculate layout using StreamYard-grade layout engine
+    // Auto-Expand Participant Slots When Media is in 25% PiP Mode (width <= 42% && height <= 45%)
+    const customMediaBounds = participantBounds["active-media"];
+    const isMediaInFloatingPip = Boolean(
+      customMediaBounds &&
+      customMediaBounds.width <= 42 &&
+      customMediaBounds.height <= 45
+    );
+    const effectiveHasVisualMedia = hasVisualMedia && !isMediaInFloatingPip;
+    const effectiveMediaCropped = Boolean(isStageCropped || mediaFitMode === "cover");
+
     const stageLayoutResult = calculateStageLayout(
       activeLayout,
       totalPlannedSlots,
-      hasVisualMedia,
+      effectiveHasVisualMedia,
       layoutSplitRatio,
       customLayoutConfig,
       Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
       mediaSlotIndex,
-      isStageCropped
+      effectiveMediaCropped
     );
 
     const defaultMediaBounds: ParticipantBounds =
       stageLayoutResult.mediaBounds || (
         onStageParticipants.length === 0
-          ? { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
           : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
       );
     const mediaBounds: ParticipantBounds = participantBounds["active-media"] || defaultMediaBounds;
     const isMediaSelected = String(selectedParticipantId) === "active-media";
     const isMediaDragging = activeDragState?.participantId === "active-media";
 
-    // Unified Stage Canvas with Independent Moving & Resizing for all Participants & Media
+    // Split Divider Calculation
+    const canShowSplitDivider =
+      !hasAnyCustomBounds &&
+      (activeLayout === "side-by-side" ||
+        activeLayout === "fit" ||
+        activeLayout === "cropped" ||
+        activeLayout === "podcast" ||
+        activeLayout === "interview" ||
+        activeLayout === "stacked") &&
+      ((hasVisualMedia && orderedParticipants.length === 1) || (!hasVisualMedia && orderedParticipants.length === 2));
+
+    const isStackedSplit = activeLayout === "stacked";
+
     return (
-      <div className={cn("w-full h-full relative select-none", isFullBleedLayout ? "p-0" : "p-2")}>
-        {/* Active Stage Media Window (Interactive & Resizable) */}
+      <div className={cn("w-full h-full relative select-none", (isFullBleedLayout || mediaFitMode === "cover") ? "p-0" : "p-2")}>
+        {/* Stage-Level Top-Center Floating Media Action Toolbar */}
+        {hasVisualMedia && activeMedia && (
+          <div
+            className={cn(
+              "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto transition-all duration-150 max-w-[calc(100%-24px)] top-3 left-1/2 -translate-x-1/2"
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            {/* Media Name Tag */}
+            <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[140px] truncate select-none">
+              🎬 {activeMedia.name}
+            </span>
+
+            <span className="w-px h-3 bg-white/20" />
+
+            {/* Multi-Step Undo Button */}
+            {mediaBoundsHistory.length > 0 && (
+              <button
+                type="button"
+                onClick={handleUndoMediaBounds}
+                className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-amber-500/30"
+                title="Undo previous resize / position change"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Undo</span>
+              </button>
+            )}
+
+            {/* Reset to Layout Slot */}
+            {participantBounds["active-media"] && (
+              <button
+                type="button"
+                onClick={handleResetMediaBoundsToSlot}
+                className="px-2 py-0.5 hover:bg-white/15 rounded text-cyan-300 hover:text-cyan-200 text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-cyan-500/30"
+                title="Reset media back to layout slot"
+              >
+                <span>Fit Slot</span>
+              </button>
+            )}
+
+            {/* Crop vs Fit Toggle Button */}
+            <button
+              type="button"
+              onClick={handleToggleMediaCrop}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
+                mediaFitMode === "cover"
+                  ? "bg-indigo-600 text-white border-indigo-400"
+                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
+              )}
+              title="Toggle between edge-to-edge Cropped (Fill) and letterboxed Fit"
+            >
+              <Crop className="w-3 h-3" />
+              <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
+            </button>
+
+            {/* Zoom Out, 1x Reset, Zoom In */}
+            <div className="flex items-center gap-0.5 bg-black/60 rounded px-1 py-0.5 border border-white/10">
+              <button
+                type="button"
+                onClick={handleMediaZoomOut}
+                disabled={mediaZoom <= 1}
+                className="px-1 text-[11px] text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                title="Zoom Out"
+              >
+                -
+              </button>
+              <button
+                type="button"
+                onClick={handleResetMediaTransform}
+                className="px-1 text-[9px] font-mono text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                title="Reset Zoom & Pan"
+              >
+                {mediaZoom.toFixed(1)}x
+              </button>
+              <button
+                type="button"
+                onClick={handleMediaZoomIn}
+                disabled={mediaZoom >= 3}
+                className="px-1 text-[11px] text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                title="Zoom In"
+              >
+                +
+              </button>
+            </div>
+
+            {/* Pan / Align Presets when cropped or zoomed */}
+            {(mediaFitMode === "cover" || mediaZoom > 1) && (
+              <div className="flex items-center gap-0.5 bg-black/60 rounded px-1 py-0.5 border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => handleMediaCropPreset("top")}
+                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === -50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+                  title="Align to Top"
+                >
+                  Top
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMediaCropPreset("center")}
+                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === 0 && mediaPanX === 0 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+                  title="Center"
+                >
+                  Center
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMediaCropPreset("bottom")}
+                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === 50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+                  title="Align to Bottom"
+                >
+                  Btm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMediaCropPreset("left")}
+                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanX === -50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+                  title="Align to Left"
+                >
+                  Left
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMediaCropPreset("right")}
+                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanX === 50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
+                  title="Align to Right"
+                >
+                  Right
+                </button>
+              </div>
+            )}
+
+            {/* Mirror Flip Toggle */}
+            <button
+              type="button"
+              onClick={() => setTileTransform("active-media", { flipH: !isMediaMirrored })}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
+                isMediaMirrored
+                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+              )}
+              title="Mirror Video Horizontally"
+            >
+              <span>Mirror</span>
+            </button>
+
+            {/* Fair-Use Controls */}
+            {fairUseConfig?.enabled && (
+              <>
+                {/* Breathing Animation Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFairUseConfig({
+                      zoomBreathing: !(fairUseConfig?.zoomBreathing ?? true),
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    (fairUseConfig?.zoomBreathing ?? true)
+                      ? "bg-cyan-500/25 text-cyan-300 border-cyan-500/50 font-bold"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle Smooth 60FPS Breathing Zoom Animation"
+                >
+                  <span>Breath {(fairUseConfig?.zoomBreathing ?? true) ? "ON" : "OFF"}</span>
+                </button>
+
+                {/* Breath Intensity Selector */}
+                {(fairUseConfig?.zoomBreathing ?? true) && (
+                  <select
+                    value={fairUseConfig?.breathIntensity || "medium"}
+                    onChange={(e) =>
+                      setFairUseConfig({
+                        breathIntensity: e.target.value as "subtle" | "medium" | "strong",
+                      })
+                    }
+                    className="bg-black/60 border border-cyan-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-cyan-300 focus:outline-none cursor-pointer"
+                    title="Breath Zoom Intensity"
+                  >
+                    <option value="subtle">6% Subtle</option>
+                    <option value="medium">11% Med</option>
+                    <option value="strong">18% Strong</option>
+                  </select>
+                )}
+
+                {/* Dynamic Audio Tempo LFO & Fair-Use EQ Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFairUseConfig({
+                      dynamicTempoVariance: !(fairUseConfig?.dynamicTempoVariance ?? true),
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    (fairUseConfig?.dynamicTempoVariance ?? true)
+                      ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle Dynamic Audio Tempo LFO (1.02x–1.06x) & 3-Band Spectral EQ"
+                >
+                  <span>🎵 Tempo+EQ {(fairUseConfig?.dynamicTempoVariance ?? true) ? "ON" : "OFF"}</span>
+                </button>
+              </>
+            )}
+
+            {/* Quick Window Size Presets */}
+            <div className="flex items-center gap-1 bg-black/60 rounded-lg p-0.5 border border-white/10">
+              <span className="text-[9px] font-bold text-slate-400 px-1 uppercase">Size:</span>
+              {[
+                { label: "25% PiP", bounds: { x: 70, y: 66, width: 28, height: 30, zIndex: 35, isLockedRatio: true } },
+                { label: "50% Half", bounds: { x: 0, y: 0, width: 50, height: 100, zIndex: 10, isLockedRatio: true } },
+                { label: "75% Large", bounds: { x: 0, y: 0, width: 75, height: 100, zIndex: 10, isLockedRatio: true } },
+                { label: "100% Full", bounds: { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true } },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => handleApplyMediaSizePreset(preset.bounds)}
+                  className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  {preset.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handleResetMediaBoundsToSlot}
+                className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors cursor-pointer"
+                title="Reset to Default Layout Slot"
+              >
+                Fit Slot
+              </button>
+            </div>
+
+            {/* Media Stage Position / Slot Selector */}
+            {totalPlannedSlots >= 1 && !isSoloOrCinema && (
+              <div className="flex items-center gap-1 bg-indigo-950/80 border border-indigo-400/50 rounded-lg px-1.5 py-0.5">
+                <span className="text-[9px] font-bold text-indigo-300 uppercase">Pos:</span>
+                <select
+                  value={mediaSlotIndex}
+                  onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
+                  className="bg-transparent text-[10px] font-bold text-white focus:outline-none cursor-pointer"
+                  title="Choose where Media appears on stage (Left, Right, Middle, or Grid Slot)"
+                >
+                  {activeLayout === "cropped" || activeLayout === "podcast" || activeLayout === "side-by-side" || activeLayout === "fit" || activeLayout === "interview" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">◧ Left Side</option>
+                      <option value={1} className="bg-slate-900">◨ Right Side (Host Left)</option>
+                    </>
+                  ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
+                    <>
+                      <option value={0} className="bg-slate-900">◧ Left Col</option>
+                      <option value={1} className="bg-slate-900">⫿ Middle Col</option>
+                      <option value={2} className="bg-slate-900">◨ Right Col</option>
+                    </>
+                  ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
+                    <>
+                      <option value={0} className="bg-slate-900">↖ Top-Left</option>
+                      <option value={1} className="bg-slate-900">↗ Top-Right</option>
+                      <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
+                      <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
+                    </>
+                  ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">★ Hero Left (Large)</option>
+                      <option value={1} className="bg-slate-900">▤ Side Top-Right (Small)</option>
+                      {totalPlannedSlots >= 2 && (
+                        <option value={2} className="bg-slate-900">▤ Side Btm-Right (Small)</option>
+                      )}
+                    </>
+                  ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">⬆ Top Window</option>
+                      <option value={1} className="bg-slate-900">⬇ Bottom Window</option>
+                    </>
+                  ) : (
+                    Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
+                      <option key={sIdx} value={sIdx} className="bg-slate-900">
+                        Slot {sIdx + 1}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            )}
+
+            {/* Solo Button */}
+            <button
+              type="button"
+              onClick={() => toggleSoloParticipant("active-media")}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                soloTargetId === "active-media"
+                  ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
+                  : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
+              )}
+              title="Solo Media Fullscreen"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
+            </button>
+
+            {/* Replace Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+              }}
+              className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+              title="Change / Select Media from Library"
+            >
+              <MonitorUp className="w-3 h-3 text-emerald-400" />
+              <span>Replace</span>
+            </button>
+
+            {/* Remove Button */}
+            <button
+              type="button"
+              onClick={() => {
+                resetParticipantBounds("active-media");
+                setActiveMedia(null);
+              }}
+              className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors cursor-pointer"
+              title="Stop and Remove Media from Stage"
+            >
+              Remove
+            </button>
+          </div>
+        )}
+
+        {/* Active Stage Media Window (Interactive, Draggable & Resizable) */}
         {hasVisualMedia && activeMedia && (
           <div
             key="stage-active-media"
@@ -2130,15 +2662,17 @@ export const StagePreview: React.FC = () => {
               e.stopPropagation();
               setSelectedParticipantId("active-media");
             }}
+            onMouseEnter={() => setIsMediaHovered(true)}
+            onMouseLeave={() => setIsMediaHovered(false)}
             className={cn(
-              "overflow-visible select-none transition-shadow group/mediatile",
-              isFullBleedLayout ? "rounded-none" : "rounded-2xl",
+              "overflow-visible select-none transition-shadow group/mediatile pointer-events-auto",
+              (isFullBleedLayout || mediaFitMode === "cover") ? "rounded-none" : "rounded-2xl",
               isMediaSelected
                 ? cn(
                     "ring-2 ring-indigo-500 ring-inset shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer",
-                    !isFullBleedLayout && "border-indigo-400"
+                    !(isFullBleedLayout || mediaFitMode === "cover") && "border-indigo-400"
                   )
-                : mediaTransform.isTransparentBg || isFullBleedLayout
+                : mediaTransform.isTransparentBg || (isFullBleedLayout || mediaFitMode === "cover")
                 ? "border-0 cursor-pointer"
                 : "border border-white/10 hover:border-indigo-400/50 cursor-pointer"
             )}
@@ -2147,719 +2681,14 @@ export const StagePreview: React.FC = () => {
             <div
               className={cn(
                 "w-full h-full overflow-hidden relative pointer-events-auto",
-                isFullBleedLayout ? "rounded-none" : "rounded-2xl"
+                (isFullBleedLayout || mediaFitMode === "cover") ? "rounded-none" : "rounded-2xl"
               )}
             >
-              {renderMediaTile()}
+              {renderMediaTile(mediaBounds)}
             </div>
-
-            {/* Unified Floating Action Pill Toolbar for Media */}
-            <div
-              className={cn(
-                "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto transition-all duration-150 w-max max-w-[calc(100%-16px)] top-2.5 left-1/2 -translate-x-1/2",
-                isMediaSelected
-                  ? "opacity-100 pointer-events-auto"
-                  : "opacity-0 group-hover/mediatile:opacity-100 pointer-events-none group-hover/mediatile:pointer-events-auto"
-              )}
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              onTouchStart={(e) => e.stopPropagation()}
-            >
-                {/* Media Name Tag */}
-                <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[120px] truncate">
-                  🎬 {activeMedia.name}
-                </span>
-
-                <span className="w-px h-3 bg-white/20" />
-
-                {/* Crop vs Fit Toggle Button */}
-                <button
-                  type="button"
-                  onClick={handleToggleMediaCrop}
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
-                    mediaFitMode === "cover"
-                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
-                  )}
-                  title={
-                    mediaFitMode === "cover"
-                      ? "Currently: Cropped to Fill Window (Click to Fit 100%)"
-                      : "Currently: Fit 100% in Window (Click to Crop & Fill)"
-                  }
-                >
-                  <Crop className="w-3 h-3 text-amber-400" />
-                  <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
-                </button>
-
-                {/* Transparent Card Background Toggle */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setTileTransform("active-media", {
-                      isTransparentBg: !mediaTransform.isTransparentBg,
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
-                    mediaTransform.isTransparentBg
-                      ? "bg-indigo-500/30 text-indigo-300 border-indigo-400 font-bold"
-                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
-                  )}
-                  title={
-                    mediaTransform.isTransparentBg
-                      ? "Card Background: Transparent (Click to switch to Dark Card)"
-                      : "Card Background: Dark Card (Click to make Card Transparent / Show Wallpaper)"
-                  }
-                >
-                  <Layers className="w-3 h-3 text-indigo-400" />
-                  <span>{mediaTransform.isTransparentBg ? "Transparent" : "Card"}</span>
-                </button>
-
-                {/* 📋 Paste Screenshot from Clipboard */}
-                <button
-                  type="button"
-                  onClick={handleClipboardButtonClick}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border border-white/20 bg-white/10 hover:bg-white/20 text-slate-200 transition-colors"
-                  title="Paste Screenshot from Clipboard (Ctrl+V) — Replaces stage media"
-                >
-                  <Clipboard className="w-3 h-3 text-cyan-400" />
-                  <span>Paste</span>
-                </button>
-
-                {/* 🌐 Web URL Modal Trigger */}
-                <button
-                  type="button"
-                  onClick={() => setIsWebsiteLibraryModalOpen(true)}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border border-emerald-500/40 bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 transition-colors"
-                  title="Attach Interactive Website URL with Live Pointer"
-                >
-                  <Globe className="w-3 h-3 text-emerald-400" />
-                  <span>Web URL</span>
-                </button>
-
-                {/* Always-Visible Media Zoom Controls (Works in both Fit & Cropped modes) */}
-                <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
-                  <button
-                    type="button"
-                    onClick={handleMediaZoomOut}
-                    disabled={mediaZoom <= 1}
-                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                    title="Zoom Out"
-                  >
-                    <ZoomOut className="w-3 h-3 text-cyan-400" />
-                  </button>
-                  <input
-                    type="range"
-                    min="100"
-                    max="300"
-                    step="10"
-                    value={Math.round(mediaZoom * 100)}
-                    onChange={(e) => {
-                      const nextZ = Number((Number(e.target.value) / 100).toFixed(2));
-                      setTileTransform("active-media", {
-                        zoom: nextZ,
-                        panX: nextZ <= 1 && mediaFitMode === "contain" ? 0 : mediaPanX,
-                        panY: nextZ <= 1 && mediaFitMode === "contain" ? 0 : mediaPanY,
-                      });
-                    }}
-                    className="w-14 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
-                    title={`Zoom Level: ${Math.round(mediaZoom * 100)}%`}
-                  />
-                  <span className="text-[10px] font-mono font-bold text-cyan-300 min-w-[30px] text-center">
-                    {Math.round(mediaZoom * 100)}%
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleMediaZoomIn}
-                    disabled={mediaZoom >= 3}
-                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                    title="Zoom In"
-                  >
-                    <ZoomIn className="w-3 h-3 text-cyan-400" />
-                  </button>
-                </div>
-
-                {/* Pan Alignment Controls (Shown when Cropped or Zoomed > 100%) */}
-                {(mediaFitMode === "cover" || mediaZoom > 1) && (
-                  <>
-                    <div className="flex items-center gap-0.5 bg-white/5 rounded border border-white/10 px-0.5">
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("left")}
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanX <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Show Left Side"
-                      >
-                        Left
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("center")}
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          Math.abs(mediaPanX) < 20 && Math.abs(mediaPanY) < 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Center Alignment"
-                      >
-                        Mid
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("right")}
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanX >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Show Right Side"
-                      >
-                        Right
-                      </button>
-                      <span className="w-px h-2.5 bg-white/20 mx-0.5" />
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("top")}
-                        className={cn(
-                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanY <= -20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Show Top / Letterhead"
-                      >
-                        Top
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMediaCropPreset("bottom")}
-                        className={cn(
-                          "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                          mediaPanY >= 20 ? "bg-amber-500/30 text-amber-300 font-bold" : "text-slate-300 hover:text-white"
-                        )}
-                        title="Show Bottom / Signatures"
-                      >
-                        Btm
-                      </button>
-                    </div>
-
-                    {/* Vertical Pan Slider */}
-                    <input
-                      type="range"
-                      min="-50"
-                      max="50"
-                      step="1"
-                      value={Math.round(mediaPanY)}
-                      onChange={(e) => {
-                        setTileTransform("active-media", {
-                          panY: Number(e.target.value),
-                        });
-                      }}
-                      className="w-14 h-1 accent-amber-400 bg-white/20 rounded cursor-pointer"
-                      title={`Pan Y: ${Math.round(objectPosY)}% (${objectPosY <= 20 ? "Header / Top" : objectPosY >= 80 ? "Footer / Bottom" : "Center"})`}
-                    />
-
-                    <button
-                      type="button"
-                      onClick={handleResetMediaTransform}
-                      className="p-1 rounded text-slate-400 hover:text-amber-300"
-                      title="Reset Crop to Fit"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                    </button>
-                  </>
-                )}
-
-                {/* Tactical Map Edit Button */}
-                {activeMedia.type === "map" && (
-                  <button
-                    type="button"
-                    onClick={() => setIsTacticalMapModalOpen(true)}
-                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-400/40 flex items-center gap-1 transition-colors"
-                    title="Open Tactical Map Trajectory Editor"
-                  >
-                    <Globe className="w-3 h-3 text-cyan-400" />
-                    <span>Edit Map</span>
-                  </button>
-                )}
-
-                {/* Auto-Repeat Toggle Button for Video & YouTube */}
-                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActiveMedia({
-                        ...activeMedia,
-                        loop: !(activeMedia.loop ?? true),
-                      })
-                    }
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
-                      (activeMedia.loop ?? true)
-                        ? "bg-indigo-500/30 text-indigo-300 border-indigo-400 font-bold"
-                        : "bg-white/10 text-slate-300 border-white/20"
-                    )}
-                    title={
-                      (activeMedia.loop ?? true)
-                        ? "Auto-Repeat ON (Click to play once)"
-                        : "Auto-Repeat OFF (Click to loop)"
-                    }
-                  >
-                    <Repeat className="w-3 h-3 text-indigo-400" />
-                    <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
-                  </button>
-                )}
-
-                {/* Audio Mute / Unmute Button for Video / Audio / YouTube */}
-                {(activeMedia.type === "video" || activeMedia.type === "audio" || activeMedia.type === "youtube") && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMediaMute();
-                    }}
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
-                      activeMedia.isMuted
-                        ? "bg-rose-500/25 border-rose-500/50 text-rose-300 font-bold"
-                        : "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
-                    )}
-                    title={
-                      activeMedia.isMuted
-                        ? "Media Audio is Muted (Click to Unmute)"
-                        : "Media Audio is Playing (Click to Mute)"
-                    }
-                  >
-                    {activeMedia.isMuted ? (
-                      <>
-                        <VolumeX className="w-3 h-3 text-rose-400" />
-                        <span>Muted</span>
-                      </>
-                    ) : (
-                      <>
-                        <Volume2 className="w-3 h-3 text-emerald-400" />
-                        <span>Audio</span>
-                      </>
-                    )}
-                  </button>
-                )}
-
-                {/* Volume Slider (0% - 200%) */}
-                {(activeMedia.type === "video" || activeMedia.type === "audio" || activeMedia.type === "youtube") && (
-                  <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
-                    <input
-                      type="range"
-                      min="0"
-                      max="200"
-                      step="5"
-                      value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
-                      onChange={(e) => {
-                        const vol = Number(e.target.value);
-                        setActiveMedia({
-                          ...activeMedia,
-                          volume: vol,
-                          isMuted: vol === 0,
-                        });
-                      }}
-                      className="w-14 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
-                      title={`Volume: ${activeMedia.volume ?? 100}%`}
-                    />
-                    <span className="text-[10px] font-mono font-bold text-emerald-300 min-w-[28px] text-center">
-                      {activeMedia.volume ?? 100}%
-                    </span>
-                  </div>
-                )}
-
-                {/* YouTube Fair-Use & Anti-Reused Content Protection Controls */}
-                <button
-                  type="button"
-                  onClick={() => setFairUseConfig({ enabled: !fairUseConfig.enabled })}
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                    fairUseConfig?.enabled
-                      ? "bg-amber-500/25 text-amber-300 border-amber-500/50"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle YouTube Fair-Use & Anti-Reused Content Safe Mode"
-                >
-                  <ShieldAlert className="w-3 h-3 text-amber-400" />
-                  <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
-                </button>
-
-                {fairUseConfig?.enabled && (
-                  <>
-                    {/* Inline Auto-Ducking ON/OFF Toggle */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextDucking = !(fairUseConfig?.duckingActive ?? false);
-                        setFairUseConfig({
-                          duckingActive: nextDucking,
-                          autoAudioDucking: nextDucking,
-                        });
-                      }}
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        (fairUseConfig?.duckingActive ?? false)
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Toggle auto-ducking when mic is active"
-                    >
-                      <span>Duck {(fairUseConfig?.duckingActive ?? false) ? "ON" : "OFF"}</span>
-                    </button>
-
-                    {/* 8-12s Random Jerk / Frame-Skip / Pause Selector */}
-                    <select
-                      value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
-                      onChange={(e) => {
-                        const [sec, mode] = e.target.value.split(":");
-                        setFairUseConfig({
-                          autoPauseIntervalSec: Number(sec),
-                          antiMatchMode: (mode as any) || "jerk-skip",
-                        });
-                      }}
-                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
-                      title="Anti-Content ID Jerk / Frame-Skip / Pause Mode"
-                    >
-                      <option value="0:jerk-skip">Jerk/Pause: Off</option>
-                      <option value="8:jerk-skip">8-12s Frame-Skip Jerk (Best)</option>
-                      <option value="8:micro-pause">8-12s Micro-Pause (0.4s)</option>
-                      <option value="10:pause">10s Full Pause (1.8s)</option>
-                      <option value="15:pause">15s Full Pause (1.8s)</option>
-                    </select>
-
-                    {/* Purani Movies Wali Bareek Lines (Vintage Scratches) Toggle */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFairUseConfig({
-                          vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
-                        })
-                      }
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        (fairUseConfig?.vintageLinesOverlay ?? true)
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Toggle Old-Movie Fine Vertical Lines & Scratches Overlay"
-                    >
-                      <Sparkles className="w-3 h-3 text-amber-400" />
-                      <span>Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}</span>
-                    </button>
-
-                    {/* Dynamic Film Grain / Micro-Noise Toggle */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFairUseConfig({
-                          filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
-                        })
-                      }
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        (fairUseConfig?.filmGrainOverlay ?? true)
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Toggle Dynamic Film-Grain Adjustment Layer"
-                    >
-                      <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
-                    </button>
-
-                    {/* Grain Intensity Selector */}
-                    <select
-                      value={fairUseConfig?.grainIntensity || "random"}
-                      onChange={(e) =>
-                        setFairUseConfig({
-                          grainIntensity: e.target.value as any,
-                          filmGrainOverlay: true,
-                        })
-                      }
-                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
-                      title="Dynamic Grain Intensity Mode"
-                    >
-                      <option value="random">🎲 Random Grain</option>
-                      <option value="light">Light Grain</option>
-                      <option value="medium">Medium Grain</option>
-                      <option value="strong">Strong Grain</option>
-                    </select>
-
-                    {/* Subtle Zoom Breathing Toggle */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFairUseConfig({
-                          isBreathingEnabled: !fairUseConfig?.isBreathingEnabled,
-                        })
-                      }
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        fairUseConfig?.isBreathingEnabled
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Cinematic Zoom Breathing continuously shifts DCT block boundaries"
-                    >
-                      <span>Breath {fairUseConfig?.isBreathingEnabled ? "ON" : "OFF"}</span>
-                    </button>
-
-                    {/* Breath Intensity Selector */}
-                    <select
-                      value={fairUseConfig?.breathingIntensity || "subtle"}
-                      onChange={(e) =>
-                        setFairUseConfig({
-                          breathingIntensity: e.target.value as "subtle" | "medium" | "strong",
-                          isBreathingEnabled: true,
-                        })
-                      }
-                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[10px] text-amber-300 font-mono focus:outline-none"
-                      title="Breath Zoom Intensity (6% Subtle, 11% Medium, 18% Strong)"
-                    >
-                      <option value="subtle">6% Subtle</option>
-                      <option value="medium">11% Med</option>
-                      <option value="strong">18% Strong</option>
-                    </select>
-
-                    {/* Mirror Video Toggle */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFairUseConfig({
-                          mirrorMediaVideo: !fairUseConfig?.mirrorMediaVideo,
-                        })
-                      }
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        fairUseConfig?.mirrorMediaVideo
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Mirror / Flip Media Horizontally for Copyright Protection"
-                    >
-                      <span>Flip {fairUseConfig?.mirrorMediaVideo ? "ON" : "OFF"}</span>
-                    </button>
-
-                    {/* Dynamic Audio Tempo LFO & Fair-Use EQ Toggle */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFairUseConfig({
-                          enableAudioFairUse: !(fairUseConfig?.enableAudioFairUse ?? true),
-                        })
-                      }
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                        (fairUseConfig?.enableAudioFairUse ?? true)
-                          ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                          : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                      )}
-                      title="Toggle Dynamic Audio Tempo LFO (1.02x–1.06x) & 3-Band Spectral EQ / Highpass Filter"
-                    >
-                      <span>🎵 Tempo+EQ {(fairUseConfig?.enableAudioFairUse ?? true) ? "ON" : "OFF"}</span>
-                    </button>
-                  </>
-                )}
-
-                {/* Reset to Default */}
-                {participantBounds["active-media"] && (
-                  <button
-                    type="button"
-                    onClick={() => resetParticipantBounds("active-media")}
-                    className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
-                    title="Reset Media Position"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Reset</span>
-                  </button>
-                )}
-
-                {/* Quick Window Size Presets */}
-                <div className="flex items-center gap-1 bg-black/60 rounded-lg p-0.5 border border-white/10">
-                  <span className="text-[9px] font-bold text-slate-400 px-1 uppercase">Size:</span>
-                  {[
-                    { label: "25% PiP", bounds: { x: 72, y: 70, width: 26, height: 26 } },
-                    { label: "50% Half", bounds: { x: 2, y: 4, width: 48, height: 92 } },
-                    { label: "75% Large", bounds: { x: 2, y: 4, width: 72, height: 92 } },
-                    { label: "100% Full", bounds: { x: 0, y: 0, width: 100, height: 100 } },
-                  ].map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => setParticipantBounds("active-media", preset.bounds)}
-                      className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => resetParticipantBounds("active-media")}
-                    className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors"
-                    title="Reset to Default Layout Slot"
-                  >
-                    Fit Slot
-                  </button>
-                </div>
-
-                {/* Media Stage Position / Slot Selector (Left, Right, Middle, Corners) */}
-                {totalPlannedSlots >= 1 && !isSoloOrCinema && (
-                  <div className="flex items-center gap-1 bg-indigo-950/80 border border-indigo-400/50 rounded-lg px-1.5 py-0.5">
-                    <span className="text-[9px] font-bold text-indigo-300 uppercase">Pos:</span>
-                    <select
-                      value={mediaSlotIndex}
-                      onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
-                      className="bg-transparent text-[10px] font-bold text-white focus:outline-none cursor-pointer"
-                      title="Choose where Media appears on stage (Left, Right, Middle, or Grid Slot)"
-                    >
-                      {activeLayout === "cropped" || activeLayout === "podcast" || activeLayout === "side-by-side" || activeLayout === "fit" || activeLayout === "interview" ? (
-                        <>
-                          <option value={0} className="bg-slate-900">◧ Left Side</option>
-                          <option value={1} className="bg-slate-900">◨ Right Side (Host Left)</option>
-                        </>
-                      ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
-                        <>
-                          <option value={0} className="bg-slate-900">◧ Left Col</option>
-                          <option value={1} className="bg-slate-900">⫿ Middle Col</option>
-                          <option value={2} className="bg-slate-900">◨ Right Col</option>
-                        </>
-                      ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
-                        <>
-                          <option value={0} className="bg-slate-900">↖ Top-Left</option>
-                          <option value={1} className="bg-slate-900">↗ Top-Right</option>
-                          <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
-                          <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
-                        </>
-                      ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
-                        <>
-                          <option value={0} className="bg-slate-900">★ Hero Left (Large)</option>
-                          <option value={1} className="bg-slate-900">▤ Side Top-Right (Small)</option>
-                          {totalPlannedSlots >= 2 && (
-                            <option value={2} className="bg-slate-900">▤ Side Btm-Right (Small)</option>
-                          )}
-                        </>
-                      ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
-                        <>
-                          <option value={0} className="bg-slate-900">⬆ Top Window</option>
-                          <option value={1} className="bg-slate-900">⬇ Bottom Window</option>
-                        </>
-                      ) : (
-                        Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
-                          <option key={sIdx} value={sIdx} className="bg-slate-900">
-                            Slot {sIdx + 1}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </div>
-                )}
-
-                {/* 1-Click Solo / Restore Media Button */}
-                <button
-                  type="button"
-                  onClick={() => toggleSoloParticipant("active-media")}
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
-                    soloTargetId === "active-media"
-                      ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
-                      : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
-                  )}
-                  title="Solo Media Fullscreen (click again to restore previous layout)"
-                >
-                  <Maximize2 className="w-3 h-3" />
-                  <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
-                </button>
-
-                {/* Change / Replace Media from library */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
-                  }}
-                  className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-medium flex items-center gap-1 transition-colors"
-                  title="Change / Select Media from Library"
-                >
-                  <MonitorUp className="w-3 h-3 text-emerald-400" />
-                  <span>Replace</span>
-                </button>
-
-                {/* Stop / Remove Media */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetParticipantBounds("active-media");
-                    setActiveMedia(null);
-                  }}
-                  className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors"
-                  title="Stop and Remove Media from Stage"
-                >
-                  Remove
-                </button>
-
-                {/* Deselect / Close Toolbar (shown when selected) */}
-                {isMediaSelected && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedParticipantId(null)}
-                    className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
-                    title="Deselect window"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-            {/* 8-Way Interactive Resize Handles around Active Media (Corners & Edges) */}
-            {isMediaSelected && !isFullBleedLayout && (
-              <>
-                {/* 4 Corner Handles */}
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "nw", mediaBounds)}
-                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors"
-                  title="Resize Corner"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "ne", mediaBounds)}
-                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors"
-                  title="Resize Corner"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "sw", mediaBounds)}
-                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors"
-                  title="Resize Corner"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "se", mediaBounds)}
-                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors"
-                  title="Resize Corner"
-                />
-
-                {/* 4 Edge Handles */}
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "n", mediaBounds)}
-                  className="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors"
-                  title="Resize Top Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "s", mediaBounds)}
-                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors"
-                  title="Resize Bottom Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "w", mediaBounds)}
-                  className="absolute top-1/2 -translate-y-1/2 -left-1 h-6 w-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors"
-                  title="Resize Left Edge"
-                />
-                <div
-                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "e", mediaBounds)}
-                  className="absolute top-1/2 -translate-y-1/2 -right-1 h-6 w-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors"
-                  title="Resize Right Edge"
-                />
-              </>
-            )}
           </div>
         )}
+
         {orderedParticipants.map((p, idx) => {
           const calculatedBounds = stageLayoutResult.participantBounds[idx] || getDefaultSlotBounds(
             activeLayout,
