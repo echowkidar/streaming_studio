@@ -28,6 +28,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
-EXPOSE 4000
+ARG ENTRY_POINT=dist/server.js
+ENV ENTRY_POINT=${ENTRY_POINT}
 
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/seed.js && node dist/server.js"]
+EXPOSE 4000 4001
+
+CMD ["sh", "-c", "if [ \"$ENTRY_POINT\" = \"ws\" ]; then if [ -f \"dist/ws-server.js\" ]; then node dist/ws-server.js; else node dist/src/ws-server.js; fi; elif [ \"$ENTRY_POINT\" = \"worker\" ]; then if [ -f \"dist/worker-server.js\" ]; then node dist/worker-server.js; else node dist/src/worker-server.js; fi; else npx prisma db push --skip-generate --accept-data-loss || true; if [ -f \"dist/seed.js\" ]; then node dist/seed.js || true; fi; if [ -f \"dist/server.js\" ]; then node dist/server.js; elif [ -f \"dist/src/server.js\" ]; then node dist/src/server.js; else node ${ENTRY_POINT}; fi; fi"]
