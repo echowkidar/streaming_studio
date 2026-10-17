@@ -786,7 +786,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                   {(() => {
                     const hasVisualMedia = Boolean(
                       activeMedia &&
-                        (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                        (activeMedia.type === "video" ||
+                          activeMedia.type === "image" ||
+                          activeMedia.type === "pdf" ||
+                          activeMedia.type === "youtube" ||
+                          activeMedia.type === "map" ||
+                          activeMedia.type === "website")
                     );
 
                     if (hasVisualMedia && activeMedia) {
@@ -1075,7 +1080,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                       {(() => {
                         const hasVisualMedia = Boolean(
                           activeMedia &&
-                            (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                            (activeMedia.type === "video" ||
+                              activeMedia.type === "image" ||
+                              activeMedia.type === "pdf" ||
+                              activeMedia.type === "youtube" ||
+                              activeMedia.type === "map" ||
+                              activeMedia.type === "website")
                         );
 
                         if (hasVisualMedia && activeMedia) {
@@ -1281,7 +1291,12 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                     {(() => {
                       const hasVisualMedia = Boolean(
                         activeMedia &&
-                          (activeMedia.type === "video" || activeMedia.type === "image" || activeMedia.type === "pdf")
+                          (activeMedia.type === "video" ||
+                            activeMedia.type === "image" ||
+                            activeMedia.type === "pdf" ||
+                            activeMedia.type === "youtube" ||
+                            activeMedia.type === "map" ||
+                            activeMedia.type === "website")
                       );
                       const isFullBleedGuest =
                         isStageCropped ||
@@ -1366,6 +1381,13 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                       transformOrigin: "center center",
                                     }}
                                     className="w-full h-full"
+                                  />
+                                )}
+                                {activeMedia.type === "website" && (
+                                  <iframe
+                                    src={`/web-proxy?url=${encodeURIComponent(activeMedia.websiteConfig?.url || activeMedia.url || "")}`}
+                                    className="w-full h-full border-0 pointer-events-none bg-white"
+                                    title={activeMedia.name}
                                   />
                                 )}
                                 <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
