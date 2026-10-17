@@ -99,16 +99,27 @@ export class StudioStageRecorder {
 
       // 1. Ensure stage broadcaster compositing is running and mark local recorder active
       stageBroadcaster.setLocalRecordingActive(true);
+      stageBroadcaster.ensureAudioContext();
+      stageBroadcaster.refreshAudioConnections();
       let stream = stageBroadcaster.getCompositeStream();
 
       if (!stream || stream.getVideoTracks().length === 0) {
         // Broadcaster composite is not running yet (e.g. host is not LIVE on YouTube)
         // Activate stage composite engine on demand to render stage canvas + mixed audio at 30 FPS!
-        stageBroadcaster.ensureAudioContext();
         const composite = stageBroadcaster.startStageComposite(container);
         if (composite) {
           this.didStartBroadcasterComposite = true;
+          stageBroadcaster.refreshAudioConnections();
           stream = stageBroadcaster.getCompositeStream();
+        }
+      }
+
+      // Guarantee audio track is present in the recorded stream
+      if (stream && stream.getAudioTracks().length === 0) {
+        stageBroadcaster.refreshAudioConnections();
+        const aTrack = stageBroadcaster.getCompositeAudioTrack();
+        if (aTrack) {
+          stream.addTrack(aTrack);
         }
       }
 

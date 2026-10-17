@@ -156,6 +156,10 @@ class StageBroadcaster {
     return tracks.length > 0 ? new MediaStream(tracks) : null;
   }
 
+  public getCompositeAudioTrack(): MediaStreamTrack | null {
+    return this.activeAudioTrack;
+  }
+
   /**
    * Start 30 FPS Canvas render loop & Web Audio mix, returning live MediaStreamTracks for WebRTC
    * This allows LiveKit to stream the exact stage (with overlays, tickers, banners, backgrounds) to YouTube!
@@ -202,10 +206,13 @@ class StageBroadcaster {
 
     // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
     try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioCtx = new AudioContextClass();
+      this.ensureAudioContext();
+      if (!this.audioCtx) {
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioCtx = new AudioContextClass();
+      }
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch((audioResumeErr) => {
           console.warn("[StageBroadcaster] AudioContext resume warning:", audioResumeErr);
@@ -327,7 +334,7 @@ class StageBroadcaster {
     const mediaVideo =
       (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
       (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
-    if (!mediaVideo || !activeMedia || (activeMedia.type !== "video" && activeMedia.type !== "audio")) return;
+    if (!mediaVideo || !activeMedia || (activeMedia.type !== "video" && activeMedia.type !== "audio" && activeMedia.type !== "youtube")) return;
 
     // 1. Auto-Advance Scene when Video Ends
     if (!this.boundEndedElements.has(mediaVideo)) {
@@ -340,14 +347,16 @@ class StageBroadcaster {
     if (!fairUseConfig || !fairUseConfig.enabled) return;
 
     // 2. Playback Speed Shift & Dynamic Tempo Variance (Anti-Fingerprint)
-    const baseRate = fairUseConfig.playbackRate || 1.04;
-    const tempoVariance = fairUseConfig.enableAudioFairUse ? Math.sin(now / 3500) * 0.02 : 0;
-    const targetRate = Math.max(0.8, Math.min(1.5, baseRate + tempoVariance));
+    const isAudioFairUse = Boolean(fairUseConfig.enableAudioFairUse ?? true);
+    const baseRate = isAudioFairUse ? (fairUseConfig.playbackRate || 1.04) : 1.0;
+    const isTempoVar = Boolean(fairUseConfig.dynamicTempoVariance ?? true);
+    const tempoVariance = (isAudioFairUse && isTempoVar) ? Math.sin(now / 3500) * 0.02 : 0;
+    const targetRate = isAudioFairUse ? Math.max(0.8, Math.min(1.5, baseRate + tempoVariance)) : 1.0;
     if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.005) {
       mediaVideo.playbackRate = targetRate;
-      (mediaVideo as any).preservesPitch = !fairUseConfig.enableAudioFairUse;
-      (mediaVideo as any).mozPreservesPitch = !fairUseConfig.enableAudioFairUse;
-      (mediaVideo as any).webkitPreservesPitch = !fairUseConfig.enableAudioFairUse;
+      (mediaVideo as any).preservesPitch = !isAudioFairUse;
+      (mediaVideo as any).mozPreservesPitch = !isAudioFairUse;
+      (mediaVideo as any).webkitPreservesPitch = !isAudioFairUse;
     }
 
     // 3. 8-12s Random Jerk / Frame-Skip / Pause (Anti-Content ID Continuous Match)
@@ -428,13 +437,6 @@ class StageBroadcaster {
 
     this.stopWorkerClock();
 
-    if (this.audioCtx) {
-      try {
-        this.audioCtx.close();
-      } catch {}
-      this.audioCtx = null;
-    }
-
     if (this.mediaGainNode) {
       try {
         this.mediaGainNode.disconnect();
@@ -447,6 +449,13 @@ class StageBroadcaster {
         this.hpFilter.disconnect();
       } catch {}
       this.hpFilter = null;
+    }
+
+    if (this.sweepingNotchFilter) {
+      try {
+        this.sweepingNotchFilter.disconnect();
+      } catch {}
+      this.sweepingNotchFilter = null;
     }
 
     if (this.formantFilter) {
@@ -878,23 +887,25 @@ class StageBroadcaster {
             : this.mediaGainNode || this.audioDestination;
 
         try {
-          let connected = false;
-          if (!this.connectedMediaElements.has(mediaVideo)) {
+          let srcNode = (mediaVideo as any).__lsSourceNode as MediaElementAudioSourceNode | null;
+          if (!srcNode) {
             try {
-              const src = this.audioCtx.createMediaElementSource(mediaVideo);
-              src.connect(targetInputNode);
-              src.connect(this.audioCtx.destination);
+              srcNode = this.audioCtx.createMediaElementSource(mediaVideo);
+              (mediaVideo as any).__lsSourceNode = srcNode;
               this.connectedMediaElements.add(mediaVideo);
-              connected = true;
               console.log("[StageBroadcaster] Connected media element source node to broadcast mix");
             } catch (elemErr) {
-              // May throw if CORS-restricted or already connected
+              console.warn("[StageBroadcaster] createMediaElementSource note:", elemErr);
             }
-          } else {
-            connected = true;
           }
 
-          if (!connected) {
+          if (srcNode) {
+            try {
+              srcNode.disconnect();
+            } catch {}
+            srcNode.connect(targetInputNode);
+            srcNode.connect(this.audioCtx.destination);
+          } else {
             const stream =
               (mediaVideo as any).captureStream?.() ||
               (mediaVideo as any).mozCaptureStream?.();
@@ -902,9 +913,9 @@ class StageBroadcaster {
             if (stream) {
               const audioTrack = stream.getAudioTracks()[0];
               if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
-                const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-                srcNode.connect(targetInputNode);
-                this.mediaStreamSources.set(audioTrack.id, srcNode);
+                const streamSrcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+                streamSrcNode.connect(targetInputNode);
+                this.mediaStreamSources.set(audioTrack.id, streamSrcNode);
                 console.log("[StageBroadcaster] Connected media video captureStream audio to broadcast mix");
               }
             }
@@ -1057,13 +1068,25 @@ class StageBroadcaster {
         }
         if (mediaVideo && !mediaVideo.paused) {
           try {
-            (mediaVideo as any).preservesPitch = false;
-            (mediaVideo as any).mozPreservesPitch = false;
-            (mediaVideo as any).webkitPreservesPitch = false;
-            if (currentStore.fairUseConfig?.dynamicTempoVariance ?? true) {
-              const baseRate = currentStore.fairUseConfig?.playbackRate || 1.04;
-              const irrationalMod = (Math.sin(timestamp / 1650) + Math.cos(timestamp / 2900)) * 0.018;
-              mediaVideo.playbackRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
+            const isAudioFairUse = Boolean(
+              currentStore.fairUseConfig?.enabled &&
+              (currentStore.fairUseConfig?.enableAudioFairUse ?? true)
+            );
+            (mediaVideo as any).preservesPitch = !isAudioFairUse;
+            (mediaVideo as any).mozPreservesPitch = !isAudioFairUse;
+            (mediaVideo as any).webkitPreservesPitch = !isAudioFairUse;
+
+            const baseRate = isAudioFairUse ? (currentStore.fairUseConfig?.playbackRate || 1.04) : 1.0;
+            const isTempoVar = Boolean(
+              currentStore.fairUseConfig?.enabled &&
+              (currentStore.fairUseConfig?.dynamicTempoVariance ?? true)
+            );
+            const irrationalMod = (isAudioFairUse && isTempoVar)
+              ? (Math.sin(timestamp / 2200) + Math.cos(timestamp / 3600)) * 0.015
+              : 0;
+            const targetRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
+            if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.005) {
+              mediaVideo.playbackRate = targetRate;
             }
           } catch {}
         }
@@ -1272,6 +1295,19 @@ class StageBroadcaster {
           try {
             ctx.drawImage(mediaCanvas, x, y, w, h);
           } catch {}
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+            this.drawFilmGrainOverlay(ctx, x, y, w, h);
+          }
+          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+            this.drawVintageFilmLinesOverlay(
+              ctx,
+              x,
+              y,
+              w,
+              h,
+              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+            );
+          }
         } else if (currentStore.activeMedia?.type === "website") {
           // Dedicated High-Fidelity Website Renderer for Broadcast & Recording
           const webItem = currentStore.activeMedia;
@@ -1469,6 +1505,16 @@ class StageBroadcaster {
                 );
               }
             }
+          }
+        }
+
+        // Draw Fair Use Canvas Overlay directly from DOM if present
+        if (typeof document !== "undefined" && currentStore.fairUseConfig?.enabled) {
+          const domFairUseCanvas = document.getElementById("livestudio-fairuse-overlay-canvas") as HTMLCanvasElement | null;
+          if (domFairUseCanvas && domFairUseCanvas.width > 0 && domFairUseCanvas.height > 0) {
+            try {
+              ctx.drawImage(domFairUseCanvas, x, y, w, h);
+            } catch {}
           }
         }
 
@@ -2265,7 +2311,7 @@ class StageBroadcaster {
     const intensity = store.fairUseConfig?.grainIntensity || "random";
     this.grainFrameCount++;
 
-    if (intensity === "random" && this.grainFrameCount % 12 === 0) {
+    if (intensity === "random" && this.grainFrameCount % 10 === 0) {
       this.initDynamicFilmGrainPattern();
     } else if (!this.grainCanvas) {
       this.initFilmGrainPattern();
@@ -2277,16 +2323,16 @@ class StageBroadcaster {
     ctx.rect(x, y, w, h);
     ctx.clip();
 
-    let alpha = 0.14;
-    if (intensity === "light") alpha = 0.08;
-    else if (intensity === "medium") alpha = 0.14;
-    else if (intensity === "strong") alpha = 0.22;
+    let alpha = 0.28;
+    if (intensity === "light") alpha = 0.18;
+    else if (intensity === "medium") alpha = 0.28;
+    else if (intensity === "strong") alpha = 0.44;
     else if (intensity === "random") {
-      alpha = 0.12 + Math.sin(this.grainFrameCount / 16) * 0.08; // 8% to 20%
+      alpha = 0.24 + Math.sin(this.grainFrameCount / 14) * 0.14; // 10% to 38%
     }
 
     ctx.globalAlpha = alpha;
-    ctx.globalCompositeOperation = "overlay";
+    ctx.globalCompositeOperation = "source-over";
 
     // Random UV jitter per frame to animate grain particles continuously at 60 FPS
     const jitterX = (Math.random() * 160) | 0;
@@ -2298,22 +2344,22 @@ class StageBroadcaster {
       }
     }
 
-    // Dynamic Micro Specular Noise Flecks (1.8px - 3.5px) to defeat perceptual hashes
-    ctx.globalCompositeOperation = "source-over";
-    const fleckCount = intensity === "strong" ? 8 : intensity === "light" ? 3 : 5;
+    // Dynamic High-Contrast Micro Specular Flecks (2.0px - 4.2px) to mutate video macroblocks
+    const fleckCount = intensity === "strong" ? 14 : intensity === "light" ? 6 : 10;
     for (let f = 0; f < fleckCount; f++) {
       const fx = x + Math.random() * w;
       const fy = y + Math.random() * h;
-      const size = 1.8 + Math.random() * 1.7; // 1.8px to 3.5px
-      ctx.fillStyle = `rgba(255, 255, 255, ${(0.18 + Math.random() * 0.22) * (alpha / 0.14)})`;
+      const size = 2.0 + Math.random() * 2.2;
+      const fleckAlpha = Math.min(0.92, 0.40 + Math.random() * 0.50);
+      ctx.fillStyle = `rgba(255, 255, 255, ${fleckAlpha})`;
       ctx.fillRect(fx, fy, size, size);
     }
     ctx.restore();
   }
 
   /**
-   * Draws Old-Movie Projector Fine Vertical Scratches, Flickering Hairlines & Micro-Scanlines
-   * Visually looks like a classic retro cinema filter, while completely breaking video block/edge hashing.
+   * Draws Old-Movie Projector Fine Vertical Scratches, Flickering Hairlines & Micro-Scanlines.
+   * Solid, bold dual-core strokes engineered to survive H.264/VP9/WebM video encoding & defeat Content-ID DCT hashes.
    */
   private drawVintageFilmLinesOverlay(
     ctx: CanvasRenderingContext2D,
@@ -2328,26 +2374,26 @@ class StageBroadcaster {
     ctx.rect(x, y, w, h);
     ctx.clip();
 
-    const lineCount = intensity === "light" ? 4 : intensity === "strong" ? 9 : 6;
-    const baseAlpha = intensity === "light" ? 0.18 : intensity === "strong" ? 0.38 : 0.26;
-    const targetWidth = intensity === "light" ? 1.5 : intensity === "strong" ? 3.5 : 2.4;
+    const lineCount = intensity === "light" ? 5 : intensity === "strong" ? 11 : 8;
+    const baseAlpha = intensity === "light" ? 0.65 : intensity === "strong" ? 0.95 : 0.82;
+    const targetWidth = intensity === "light" ? 2.8 : intensity === "strong" ? 5.2 : 3.8;
 
     // 1. Dual-Core Vertical & Slightly Tilted Cinema Projector Scratches
     for (let i = 0; i < lineCount; i++) {
       const lx = x + Math.random() * w;
       const tilt = (Math.random() - 0.5) * 6;
-      const isDarkLine = Math.random() > 0.6;
-      const alpha = baseAlpha * (0.6 + Math.random() * 0.6);
+      const isDarkLine = Math.random() > 0.5;
+      const alpha = Math.min(1.0, baseAlpha * (0.8 + Math.random() * 0.4));
 
       const startY = Math.random() < 0.6 ? y : y + Math.random() * (h * 0.4);
-      const endY = Math.random() < 0.6 ? y + h : startY + h * (0.35 + Math.random() * 0.5);
+      const endY = Math.random() < 0.6 ? y + h : startY + h * (0.4 + Math.random() * 0.5);
 
-      // Outer glow / contrast boundary
+      // Outer glow / contrast boundary (thick outer stroke ensures encoder preserves the line edge)
       ctx.beginPath();
-      ctx.lineWidth = targetWidth + 1.2;
+      ctx.lineWidth = targetWidth + 2.0;
       ctx.strokeStyle = isDarkLine
-        ? `rgba(255, 255, 255, ${alpha * 0.35})`
-        : `rgba(0, 0, 0, ${alpha * 0.45})`;
+        ? `rgba(255, 255, 255, ${Math.min(1.0, alpha * 0.85)})`
+        : `rgba(0, 0, 0, ${Math.min(1.0, alpha * 0.90)})`;
       ctx.moveTo(lx, startY);
       ctx.lineTo(lx + tilt, Math.min(y + h, endY));
       ctx.stroke();
@@ -2356,20 +2402,20 @@ class StageBroadcaster {
       ctx.beginPath();
       ctx.lineWidth = targetWidth;
       ctx.strokeStyle = isDarkLine
-        ? `rgba(18, 18, 24, ${alpha})`
-        : `rgba(255, 248, 225, ${alpha})`;
+        ? `rgba(10, 10, 15, ${alpha})`
+        : `rgba(255, 250, 230, ${alpha})`;
       ctx.moveTo(lx, startY);
       ctx.lineTo(lx + tilt, Math.min(y + h, endY));
       ctx.stroke();
     }
 
-    // 2. Traveling Cinema Reel Dust Flecks (2.5px x 1.8px)
-    const speckCount = intensity === "strong" ? 6 : intensity === "light" ? 2 : 4;
+    // 2. Traveling Cinema Reel Dust Flecks (3.2px x 2.4px)
+    const speckCount = intensity === "strong" ? 8 : intensity === "light" ? 3 : 5;
     for (let s = 0; s < speckCount; s++) {
       const sx = x + Math.random() * w;
       const sy = y + Math.random() * h;
-      ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.75})`;
-      ctx.fillRect(sx, sy, 2.5, 1.8);
+      ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1.0, baseAlpha * 0.9)})`;
+      ctx.fillRect(sx, sy, 3.2, 2.4);
     }
 
     ctx.restore();

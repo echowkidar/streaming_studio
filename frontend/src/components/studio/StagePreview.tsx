@@ -132,21 +132,21 @@ const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) =
       // 2. Film Grain Overlay
       if (showGrain) {
         const grainIntensity = config?.grainIntensity || "random";
-        if (grainIntensity === "random" && frameCount % 12 === 0) {
+        if (grainIntensity === "random" && frameCount % 10 === 0) {
           refreshGrainTile();
         }
 
         ctx.save();
-        let alpha = 0.14;
-        if (grainIntensity === "light") alpha = 0.08;
-        else if (grainIntensity === "medium") alpha = 0.14;
-        else if (grainIntensity === "strong") alpha = 0.22;
+        let alpha = 0.28;
+        if (grainIntensity === "light") alpha = 0.18;
+        else if (grainIntensity === "medium") alpha = 0.28;
+        else if (grainIntensity === "strong") alpha = 0.44;
         else if (grainIntensity === "random") {
-          alpha = 0.12 + Math.sin(frameCount / 16) * 0.08;
+          alpha = 0.24 + Math.sin(frameCount / 14) * 0.14; // 10% to 38%
         }
 
         ctx.globalAlpha = alpha;
-        ctx.globalCompositeOperation = "overlay";
+        ctx.globalCompositeOperation = "source-over";
 
         const jitterX = (Math.random() * 160) | 0;
         const jitterY = (Math.random() * 160) | 0;
@@ -156,42 +156,42 @@ const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) =
           }
         }
 
-        // Specular flecks
-        ctx.globalCompositeOperation = "source-over";
-        const fleckCount = grainIntensity === "strong" ? 8 : grainIntensity === "light" ? 3 : 5;
+        // High-contrast Specular Flecks
+        const fleckCount = grainIntensity === "strong" ? 14 : grainIntensity === "light" ? 6 : 10;
         for (let f = 0; f < fleckCount; f++) {
           const fx = Math.random() * w;
           const fy = Math.random() * h;
-          const size = 1.8 + Math.random() * 1.7;
-          ctx.fillStyle = `rgba(255, 255, 255, ${(0.18 + Math.random() * 0.22) * (alpha / 0.14)})`;
+          const size = 2.0 + Math.random() * 2.2;
+          const fleckAlpha = Math.min(0.92, 0.40 + Math.random() * 0.50);
+          ctx.fillStyle = `rgba(255, 255, 255, ${fleckAlpha})`;
           ctx.fillRect(fx, fy, size, size);
         }
         ctx.restore();
       }
 
-      // 3. Dual-Core Bold Vintage Projector Lines
+      // 3. Dual-Core Bold Vintage Projector Lines (Video-Compression Proof)
       if (showLines) {
         const linesIntensity = config?.vintageLinesIntensity || "medium";
-        const lineCount = linesIntensity === "light" ? 4 : linesIntensity === "strong" ? 9 : 6;
-        const baseAlpha = linesIntensity === "light" ? 0.18 : linesIntensity === "strong" ? 0.38 : 0.26;
-        const targetWidth = linesIntensity === "light" ? 1.5 : linesIntensity === "strong" ? 3.5 : 2.4;
+        const lineCount = linesIntensity === "light" ? 5 : linesIntensity === "strong" ? 11 : 8;
+        const baseAlpha = linesIntensity === "light" ? 0.65 : linesIntensity === "strong" ? 0.95 : 0.82;
+        const targetWidth = linesIntensity === "light" ? 2.8 : linesIntensity === "strong" ? 5.2 : 3.8;
 
         ctx.save();
         for (let i = 0; i < lineCount; i++) {
           const lx = Math.random() * w;
           const tilt = (Math.random() - 0.5) * 6;
-          const isDarkLine = Math.random() > 0.6;
-          const alpha = baseAlpha * (0.6 + Math.random() * 0.6);
+          const isDarkLine = Math.random() > 0.5;
+          const alpha = Math.min(1.0, baseAlpha * (0.8 + Math.random() * 0.4));
 
           const startY = Math.random() < 0.6 ? 0 : Math.random() * (h * 0.4);
-          const endY = Math.random() < 0.6 ? h : startY + h * (0.35 + Math.random() * 0.5);
+          const endY = Math.random() < 0.6 ? h : startY + h * (0.4 + Math.random() * 0.5);
 
-          // Outer contrast boundary
+          // Outer contrast boundary (thick outer stroke ensures encoder preserves the line edge)
           ctx.beginPath();
-          ctx.lineWidth = targetWidth + 1.2;
+          ctx.lineWidth = targetWidth + 2.0;
           ctx.strokeStyle = isDarkLine
-            ? `rgba(255, 255, 255, ${alpha * 0.35})`
-            : `rgba(0, 0, 0, ${alpha * 0.45})`;
+            ? `rgba(255, 255, 255, ${Math.min(1.0, alpha * 0.85)})`
+            : `rgba(0, 0, 0, ${Math.min(1.0, alpha * 0.90)})`;
           ctx.moveTo(lx, startY);
           ctx.lineTo(lx + tilt, Math.min(h, endY));
           ctx.stroke();
@@ -200,20 +200,20 @@ const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) =
           ctx.beginPath();
           ctx.lineWidth = targetWidth;
           ctx.strokeStyle = isDarkLine
-            ? `rgba(18, 18, 24, ${alpha})`
-            : `rgba(255, 248, 225, ${alpha})`;
+            ? `rgba(10, 10, 15, ${alpha})`
+            : `rgba(255, 250, 230, ${alpha})`;
           ctx.moveTo(lx, startY);
           ctx.lineTo(lx + tilt, Math.min(h, endY));
           ctx.stroke();
         }
 
         // Reel dust flecks
-        const speckCount = linesIntensity === "strong" ? 6 : linesIntensity === "light" ? 2 : 4;
+        const speckCount = linesIntensity === "strong" ? 8 : linesIntensity === "light" ? 3 : 5;
         for (let s = 0; s < speckCount; s++) {
           const sx = Math.random() * w;
           const sy = Math.random() * h;
-          ctx.fillStyle = `rgba(255, 255, 255, ${baseAlpha * 0.75})`;
-          ctx.fillRect(sx, sy, 2.5, 1.8);
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1.0, baseAlpha * 0.9)})`;
+          ctx.fillRect(sx, sy, 3.2, 2.4);
         }
         ctx.restore();
       }
@@ -425,27 +425,36 @@ export const StagePreview: React.FC = () => {
       playbackRate: rate,
       enableAudioFairUse: enablePitchShift,
     });
+    stageBroadcaster.refreshAudioConnections();
   };
 
-  // Local preview dynamic tempo variance LFO loop (audible modulation)
+  // Local preview dynamic tempo variance LFO loop (audible modulation when broadcaster composite is idle)
   useEffect(() => {
     if (!fairUseConfig?.enabled || !fairUseConfig?.dynamicTempoVariance) return;
     const interval = setInterval(() => {
+      if (stageBroadcaster.isCompositeRunning()) return;
       const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
       const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+      const isPitchActive = fairUseConfig.enableAudioFairUse !== false;
       const baseRate = fairUseConfig.playbackRate || 1.04;
       const now = performance.now();
-      const irrationalMod = (Math.sin(now / 1650) + Math.cos(now / 2900)) * 0.018;
+      const irrationalMod = isPitchActive ? (Math.sin(now / 1650) + Math.cos(now / 2900)) * 0.018 : 0;
       const currentRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
       if (videoEl && !videoEl.paused) {
+        (videoEl as any).preservesPitch = !isPitchActive;
+        (videoEl as any).mozPreservesPitch = !isPitchActive;
+        (videoEl as any).webkitPreservesPitch = !isPitchActive;
         videoEl.playbackRate = currentRate;
       }
       if (audioEl && !audioEl.paused) {
+        (audioEl as any).preservesPitch = !isPitchActive;
+        (audioEl as any).mozPreservesPitch = !isPitchActive;
+        (audioEl as any).webkitPreservesPitch = !isPitchActive;
         audioEl.playbackRate = currentRate;
       }
     }, 250);
     return () => clearInterval(interval);
-  }, [fairUseConfig?.enabled, fairUseConfig?.dynamicTempoVariance, fairUseConfig?.playbackRate]);
+  }, [fairUseConfig?.enabled, fairUseConfig?.dynamicTempoVariance, fairUseConfig?.playbackRate, fairUseConfig?.enableAudioFairUse]);
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
   const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
@@ -2779,8 +2788,28 @@ export const StagePreview: React.FC = () => {
               <span>Mirror</span>
             </button>
 
-            {/* Fair-Use Controls */}
-            {fairUseConfig?.enabled && (
+            {/* Master Fair-Use ON/OFF Button (ALWAYS visible so user can toggle in 1-click) */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !(fairUseConfig?.enabled ?? true);
+                setFairUseConfig({ enabled: nextVal });
+                stageBroadcaster.refreshAudioConnections();
+              }}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-all cursor-pointer shadow-sm",
+                (fairUseConfig?.enabled ?? true)
+                  ? "bg-amber-500 text-slate-950 border-amber-400 font-black hover:bg-amber-400 shadow-amber-500/20"
+                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+              )}
+              title="Toggle Fair-Use 60FPS Video/Audio Protection Engine"
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Fair Use {(fairUseConfig?.enabled ?? true) ? "ON" : "OFF"}</span>
+            </button>
+
+            {/* Fair-Use Controls (Active Sub-Controls) */}
+            {(fairUseConfig?.enabled ?? true) && (
               <>
                 {/* Breathing Animation Toggle */}
                 <button
@@ -2899,9 +2928,9 @@ export const StagePreview: React.FC = () => {
                     className="bg-black/60 border border-emerald-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-emerald-300 focus:outline-none cursor-pointer"
                     title="Vintage Lines Thickness"
                   >
-                    <option value="light">Light 1.5px</option>
-                    <option value="medium">Medium 2.4px</option>
-                    <option value="strong">Strong 3.5px</option>
+                    <option value="light">Light 2.8px</option>
+                    <option value="medium">Medium 3.8px</option>
+                    <option value="strong">Strong 5.2px</option>
                   </select>
                 )}
 
