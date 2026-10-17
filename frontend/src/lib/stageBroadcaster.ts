@@ -381,7 +381,9 @@ class StageBroadcaster {
           setTimeout(() => {
             if (this.isAutoPausedByFairUse) {
               this.isAutoPausedByFairUse = false;
-              if (mediaVideo.duration && mediaVideo.currentTime + 0.35 < mediaVideo.duration) {
+              const dur = mediaVideo.duration || 0;
+              const isNearEnd = dur > 0 && isFinite(dur) && mediaVideo.currentTime + 0.5 >= dur;
+              if (!isNearEnd) {
                 mediaVideo.currentTime += 0.24 + Math.random() * 0.12;
               }
               this.lastAutoPauseTimestamp = performance.now();

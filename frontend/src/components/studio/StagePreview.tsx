@@ -541,9 +541,48 @@ export const StagePreview: React.FC = () => {
   };
 
   const sendYouTubeCommand = (func: string, args: any[] = []) => {
+    // 1. Send to fallback iframe if active
     const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
     if (iframe && iframe.contentWindow) {
       iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
+    }
+
+    // 2. Also control active HTML5 video element (YouTube direct backend stream or local video)
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      if (func === "playVideo") {
+        videoEl.play().catch(() => {});
+        isMediaPausedRef.current = false;
+        setIsVideoPlaying(true);
+      } else if (func === "pauseVideo") {
+        videoEl.pause();
+        isMediaPausedRef.current = true;
+        setIsVideoPlaying(false);
+      } else if (func === "seekTo") {
+        const sec = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
+        if (!isNaN(sec)) {
+          const dur = videoEl.duration || videoDuration || 0;
+          const target = dur > 0 && isFinite(dur) ? Math.max(0, Math.min(dur, sec)) : Math.max(0, sec);
+          videoEl.currentTime = target;
+          mediaCurrentTimeRef.current = target;
+          setVideoCurrentTime(target);
+        }
+      } else if (func === "setPlaybackRate") {
+        const rate = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
+        if (!isNaN(rate)) {
+          videoEl.playbackRate = rate;
+          setVideoSpeed(rate);
+        }
+      } else if (func === "setVolume") {
+        const vol = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
+        if (!isNaN(vol)) {
+          videoEl.volume = Math.max(0, Math.min(1, vol / 100));
+        }
+      } else if (func === "mute") {
+        videoEl.muted = true;
+      } else if (func === "unMute") {
+        videoEl.muted = false;
+      }
     }
   };
   const sendYouTubeIframeCommand = sendYouTubeCommand;
@@ -737,6 +776,18 @@ export const StagePreview: React.FC = () => {
   }, [activeMedia?.id, activeMedia?.url]);
 
   const handleTogglePlayVideo = () => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      if (videoEl.paused) {
+        videoEl.play().catch(() => {});
+        isMediaPausedRef.current = false;
+        setIsVideoPlaying(true);
+      } else {
+        videoEl.pause();
+        isMediaPausedRef.current = true;
+        setIsVideoPlaying(false);
+      }
+    }
     if (activeMedia?.type === "youtube") {
       if (isVideoPlaying) {
         sendYouTubeCommand("pauseVideo");
@@ -747,60 +798,59 @@ export const StagePreview: React.FC = () => {
         isMediaPausedRef.current = false;
         setIsVideoPlaying(true);
       }
-      return;
-    }
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (!videoEl) return;
-    if (videoEl.paused) {
-      videoEl.play().catch(() => {});
-      isMediaPausedRef.current = false;
-      setIsVideoPlaying(true);
-    } else {
-      videoEl.pause();
-      isMediaPausedRef.current = true;
-      setIsVideoPlaying(false);
     }
   };
 
   const handleSeekVideo = (time: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      const dur = videoEl.duration || videoDuration || 0;
+      const targetTime = dur > 0 && isFinite(dur) ? Math.max(0, Math.min(dur, time)) : Math.max(0, time);
+      videoEl.currentTime = targetTime;
+      mediaCurrentTimeRef.current = targetTime;
+      setVideoCurrentTime(targetTime);
+    }
     if (activeMedia?.type === "youtube") {
       mediaCurrentTimeRef.current = time;
       sendYouTubeCommand("seekTo", [time, true]);
       setVideoCurrentTime(time);
-      return;
     }
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (!videoEl) return;
-    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, time));
-    mediaCurrentTimeRef.current = videoEl.currentTime;
-    setVideoCurrentTime(videoEl.currentTime);
   };
 
   const handleSkipVideo = (deltaSec: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      const cur = videoEl.currentTime || mediaCurrentTimeRef.current || videoCurrentTime || 0;
+      const dur = videoEl.duration || videoDuration || 0;
+      const targetTime =
+        dur > 0 && isFinite(dur)
+          ? Math.max(0, Math.min(dur, cur + deltaSec))
+          : Math.max(0, cur + deltaSec);
+      videoEl.currentTime = targetTime;
+      mediaCurrentTimeRef.current = targetTime;
+      setVideoCurrentTime(targetTime);
+    }
     if (activeMedia?.type === "youtube") {
-      const cur = mediaCurrentTimeRef.current || videoCurrentTime;
-      const nextTime = Math.max(0, Math.min(videoDuration || 0, cur + deltaSec));
+      const cur = mediaCurrentTimeRef.current || videoCurrentTime || 0;
+      const dur = videoDuration || 0;
+      const nextTime =
+        dur > 0 && isFinite(dur)
+          ? Math.max(0, Math.min(dur, cur + deltaSec))
+          : Math.max(0, cur + deltaSec);
       mediaCurrentTimeRef.current = nextTime;
       sendYouTubeCommand("seekTo", [nextTime, true]);
       setVideoCurrentTime(nextTime);
-      return;
     }
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (!videoEl) return;
-    videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || 0, videoEl.currentTime + deltaSec));
-    mediaCurrentTimeRef.current = videoEl.currentTime;
-    setVideoCurrentTime(videoEl.currentTime);
   };
 
   const handleChangeVideoSpeed = (rate: number) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    if (videoEl) {
+      videoEl.playbackRate = rate;
+    }
     if (activeMedia?.type === "youtube") {
       sendYouTubeCommand("setPlaybackRate", [rate]);
-      setVideoSpeed(rate);
-      return;
     }
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (!videoEl) return;
-    videoEl.playbackRate = rate;
     setVideoSpeed(rate);
   };
 
@@ -1022,7 +1072,7 @@ export const StagePreview: React.FC = () => {
       (audioEl as any).webkitPreservesPitch = false;
     }
     if (activeMedia.type !== "video" && activeMedia.type !== "youtube") return;
-    if (!fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
+    if (!fairUseConfig?.enabled || !fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
 
     let timer: NodeJS.Timeout;
     const runCycle = () => {
@@ -1032,41 +1082,46 @@ export const StagePreview: React.FC = () => {
           : fairUseConfig.autoPauseIntervalSec * 1000;
 
       timer = setTimeout(() => {
-        if (activeMedia.type === "youtube") {
-          const mode = fairUseConfig.antiMatchMode || "jerk-skip";
-          if (isMediaPausedRef.current) {
-            runCycle();
-            return;
-          }
+        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+        const mode = fairUseConfig.antiMatchMode || "jerk-skip";
 
-          setIsYtJerking(true);
-          sendYouTubeCommand("pauseVideo");
+        if (isMediaPausedRef.current || (v && v.paused)) {
+          runCycle();
+          return;
+        }
 
-          setTimeout(() => {
-            const currentSec = mediaCurrentTimeRef.current;
-            // Advance +0.3s ONLY when live telemetry confirms currentTime > 2s to NEVER seek to 0:00!
-            if (mode === "jerk-skip" && currentSec > 2) {
-              const nextSec = currentSec + 0.3;
-              mediaCurrentTimeRef.current = nextSec;
-              sendYouTubeCommand("seekTo", [nextSec, true]);
-            }
-            sendYouTubeCommand("playVideo");
-            setTimeout(() => {
-              setIsYtJerking(false);
-            }, 100);
-          }, 160);
-        } else {
-          const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-          // Agar broadcaster chal raha hai to broadcaster khud handle karega, warna preview handle karega
-          if (v && !v.paused && !stageBroadcaster.isStreaming()) {
-            const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+        // If broadcaster is actively running composite loop, stageBroadcaster handles it; otherwise preview handles it
+        if (!stageBroadcaster.isCompositeRunning()) {
+          if (v && !v.paused) {
             v.pause();
             setTimeout(() => {
-              if (mode === "jerk-skip" && v.duration && v.currentTime + 0.35 < v.duration) {
-                v.currentTime += 0.25;
+              const dur = v.duration || videoDuration || 0;
+              const isNearEnd = dur > 0 && isFinite(dur) && v.currentTime + 0.5 >= dur;
+              if (mode === "jerk-skip" && !isNearEnd) {
+                v.currentTime += 0.25 + Math.random() * 0.15;
+                mediaCurrentTimeRef.current = v.currentTime;
+                setVideoCurrentTime(v.currentTime);
               }
               v.play().catch(() => {});
             }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
+          }
+
+          if (activeMedia.type === "youtube" && useYtIframeFallback) {
+            setIsYtJerking(true);
+            sendYouTubeCommand("pauseVideo");
+
+            setTimeout(() => {
+              const currentSec = mediaCurrentTimeRef.current;
+              if (mode === "jerk-skip" && currentSec > 2) {
+                const nextSec = currentSec + 0.3;
+                mediaCurrentTimeRef.current = nextSec;
+                sendYouTubeCommand("seekTo", [nextSec, true]);
+              }
+              sendYouTubeCommand("playVideo");
+              setTimeout(() => {
+                setIsYtJerking(false);
+              }, 100);
+            }, 160);
           }
         }
         runCycle();
@@ -1077,6 +1132,7 @@ export const StagePreview: React.FC = () => {
   }, [
     activeMedia?.id,
     activeMedia?.type,
+    useYtIframeFallback,
     fairUseConfig?.enabled,
     fairUseConfig?.autoPauseIntervalSec,
     fairUseConfig?.antiMatchMode,
@@ -2952,6 +3008,42 @@ export const StagePreview: React.FC = () => {
                 >
                   <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
                 </button>
+
+                {/* 8-12s Random Frame-Skip / Micro-Jerk Anti-Content-ID Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFairUseConfig({
+                      autoPauseIntervalSec: (fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 ? 0 : 8,
+                    })
+                  }
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    (fairUseConfig?.autoPauseIntervalSec ?? 8) > 0
+                      ? "bg-rose-500/25 text-rose-300 border-rose-500/50 font-bold"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle 8-12s Random Frame-Skip / Micro-Jerk (Anti-Content ID Continuous Match)"
+                >
+                  <span>⚡ 8-12s Skip {(fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 ? "ON" : "OFF"}</span>
+                </button>
+                {(fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 && (
+                  <select
+                    value={fairUseConfig?.autoPauseIntervalSec || 8}
+                    onChange={(e) =>
+                      setFairUseConfig({
+                        autoPauseIntervalSec: Number(e.target.value),
+                      })
+                    }
+                    className="bg-black/60 border border-rose-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-rose-300 focus:outline-none cursor-pointer"
+                    title="Frame-Skip & Micro-Jerk Interval"
+                  >
+                    <option value={8}>8-12s Random</option>
+                    <option value={5}>5s Fast</option>
+                    <option value={10}>10s Steady</option>
+                    <option value={15}>15s Extended</option>
+                  </select>
+                )}
               </>
             )}
 
