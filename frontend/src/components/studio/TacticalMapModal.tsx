@@ -12,15 +12,19 @@ import {
   RotateCcw,
   X,
   Crosshair,
-  Navigation,
   Sparkles,
   Upload,
   Check,
   MapPin,
-  Layers,
   Edit2,
   Shield,
-  Anchor,
+  Compass,
+  Box,
+  Gamepad2,
+  Flame,
+  ZoomIn,
+  ZoomOut,
+  Move,
 } from "lucide-react";
 import {
   MediaFileItem,
@@ -121,7 +125,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "New York City, USA", lat: 40.7128, lon: -74.006 },
 ];
 
-// Haversine distance in kilometers between two Lat/Lon points
 export function computeGreatCircleDistanceKm(a: TacticalMapPoint, b: TacticalMapPoint): number {
   const R = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
@@ -194,14 +197,115 @@ export function canvasXYToLatLon(
   };
 }
 
+/**
+ * Projects a 2D map coordinate (x, y) + altitude (zPx) through a 3D Tilted Camera Matrix (pitchDeg + yawDeg)
+ */
+function projectPoint3D(
+  mapX: number,
+  mapY: number,
+  altitudePx: number,
+  W: number,
+  H: number,
+  pitchDeg: number,
+  yawDeg: number
+): { x: number; y: number; scale: number } {
+  if (pitchDeg <= 1 && Math.abs(yawDeg) <= 1 && altitudePx === 0) {
+    return { x: mapX, y: mapY, scale: 1 };
+  }
+  const cx = W / 2;
+  const cy = H * 0.54;
+  const dx = mapX - cx;
+  const dy = mapY - cy;
+
+  const yawRad = (yawDeg * Math.PI) / 180;
+  const cosY = Math.cos(yawRad);
+  const sinY = Math.sin(yawRad);
+  const rx = dx * cosY - dy * sinY;
+  const ry = dx * sinY + dy * cosY;
+
+  const pitchRad = (Math.max(0, Math.min(64, pitchDeg)) * Math.PI) / 180;
+  const cosP = Math.cos(pitchRad);
+  const sinP = Math.sin(pitchRad);
+
+  const fov = 1100;
+  const depthZ = ry * sinP;
+  const perspectiveFactor = fov / Math.max(280, fov - depthZ * 0.55);
+
+  const screenX = cx + rx * perspectiveFactor;
+  // Ground plane foreshortening + vertical altitude lift in 3D space
+  const screenY = cy + ry * cosP * perspectiveFactor - altitudePx * (0.7 + sinP * 0.55) * perspectiveFactor;
+  return { x: screenX, y: screenY, scale: Math.max(0.55, Math.min(1.65, perspectiveFactor)) };
+}
+
+/**
+ * Inverse projection from clicked 3D screen coordinate back to 2D Map plane coordinate
+ */
+function unprojectScreenToMapXY(
+  screenX: number,
+  screenY: number,
+  W: number,
+  H: number,
+  pitchDeg: number,
+  yawDeg: number
+): { x: number; y: number } {
+  if (pitchDeg <= 1 && Math.abs(yawDeg) <= 1) {
+    return { x: screenX, y: screenY };
+  }
+  const cx = W / 2;
+  const cy = H * 0.54;
+  const pitchRad = (Math.max(0, Math.min(64, pitchDeg)) * Math.PI) / 180;
+  const cosP = Math.max(0.35, Math.cos(pitchRad));
+
+  const ryApprox = (screenY - cy) / cosP;
+  const rxApprox = screenX - cx;
+
+  const yawRad = (-yawDeg * Math.PI) / 180;
+  const cosY = Math.cos(yawRad);
+  const sinY = Math.sin(yawRad);
+  const dx = rxApprox * cosY - ryApprox * sinY;
+  const dy = rxApprox * sinY + ryApprox * cosY;
+
+  return { x: cx + dx, y: cy + dy };
+}
+
+/**
+ * Projects Lat/Lon onto a 3D Orthographic Spherical Globe
+ */
+function latLonToGlobe3D(
+  lat: number,
+  lon: number,
+  centerLat: number,
+  centerLon: number,
+  radius: number,
+  cx: number,
+  cy: number,
+  altitudePx: number = 0
+): { x: number; y: number; visible: boolean; z: number } {
+  const phi = (lat * Math.PI) / 180;
+  const lambda = (lon * Math.PI) / 180;
+  const phi0 = (centerLat * Math.PI) / 180;
+  const lambda0 = (centerLon * Math.PI) / 180;
+  const dLambda = lambda - lambda0;
+
+  const cosC =
+    Math.sin(phi0) * Math.sin(phi) +
+    Math.cos(phi0) * Math.cos(phi) * Math.cos(dLambda);
+
+  const rEff = radius + altitudePx;
+  const x = cx + rEff * Math.cos(phi) * Math.sin(dLambda);
+  const y =
+    cy -
+    rEff *
+      (Math.cos(phi0) * Math.sin(phi) -
+        Math.sin(phi0) * Math.cos(phi) * Math.cos(dLambda));
+
+  return { x, y, visible: cosC >= -0.15, z: cosC };
+}
+
 // Shared tile cache so switching scenes or frames never re-fetches map tiles
 const globalTileCache = new Map<string, HTMLImageElement>();
 const customIconCache = new Map<string, HTMLImageElement>();
 
-/**
- * 100% Free, Zero-API-Key, Zero-Watermark Esri ArcGIS World MapServer Tile URLs!
- * Replaces basemaps.cartocdn.com which showed "API KEY REQUIRED" on custom domains.
- */
 function getTileUrl(style: TacticalMapConfig["mapStyle"], z: number, x: number, y: number): string | null {
   const maxTile = Math.pow(2, z);
   const wrappedX = ((x % maxTile) + maxTile) % maxTile;
@@ -213,7 +317,6 @@ function getTileUrl(style: TacticalMapConfig["mapStyle"], z: number, x: number, 
   if (style === "ocean") {
     return `https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/${z}/${y}/${wrappedX}`;
   }
-  // Both "satellite" and "dark-radar" use Esri World_Imagery (with night-vision radar filter applied on canvas for dark-radar!)
   return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${wrappedX}`;
 }
 
@@ -227,7 +330,6 @@ function getBoundariesOverlayTileUrl(style: TacticalMapConfig["mapStyle"], z: nu
   return null;
 }
 
-// Draw static target marker at Point B (e.g., Enemy Warship in sea, Cargo Tanker, Airbase, Radar/SAM site)
 function drawDestinationTargetObject(
   ctx: CanvasRenderingContext2D,
   markerType: TacticalTargetMarkerType | undefined,
@@ -240,7 +342,6 @@ function drawDestinationTargetObject(
   ctx.translate(x, y);
 
   if (markerType === "warship" || markerType === "cargo-ship") {
-    // Subtle ocean ripple rings around target ship
     const waveR = 14 + ((now / 60) % 18);
     ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
     ctx.lineWidth = 1.5;
@@ -248,7 +349,6 @@ function drawDestinationTargetObject(
     ctx.ellipse(0, 0, waveR * 1.4, waveR * 0.65, 0, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Ship Hull at Point B
     ctx.fillStyle = markerType === "warship" ? "#94a3b8" : "#f59e0b";
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 1.5;
@@ -263,11 +363,9 @@ function drawDestinationTargetObject(
     ctx.fill();
     ctx.stroke();
 
-    // Superstructure / Containers
     ctx.fillStyle = markerType === "warship" ? "#e2e8f0" : "#ef4444";
     ctx.fillRect(-10, -4, 14, 8);
   } else if (markerType === "airbase") {
-    // Runway strip icon
     ctx.fillStyle = "#1e293b";
     ctx.strokeStyle = "#38bdf8";
     ctx.lineWidth = 2;
@@ -282,7 +380,6 @@ function drawDestinationTargetObject(
     ctx.lineTo(16, 0);
     ctx.stroke();
   } else if (markerType === "radar-site") {
-    // SAM / Radar Dome + Rotating Dish
     ctx.fillStyle = "#0f172a";
     ctx.strokeStyle = "#10b981";
     ctx.lineWidth = 2;
@@ -301,7 +398,6 @@ function drawDestinationTargetObject(
   ctx.restore();
 }
 
-// Draw procedural vector vehicle/projectile along tangent angle `theta`
 function drawTacticalAssetIcon(
   ctx: CanvasRenderingContext2D,
   assetType: TacticalRouteAssetType,
@@ -473,7 +569,6 @@ function drawTacticalAssetIcon(
     ctx.stroke();
     ctx.restore();
   } else if (assetType === "warship" || assetType === "cargo-ship") {
-    // Animated White V-Shaped Sea Water Wake Waves Behind Ship!
     const wakeWave = (now / 40) % 14;
     ctx.strokeStyle = "rgba(224, 242, 254, 0.7)";
     ctx.lineWidth = 2;
@@ -484,7 +579,6 @@ function drawTacticalAssetIcon(
     ctx.lineTo(-34 - wakeWave, 12 + wakeWave * 0.3);
     ctx.stroke();
 
-    // Naval Destroyer / Cargo Ship Hull
     ctx.shadowColor = color;
     ctx.shadowBlur = 10;
     ctx.fillStyle = assetType === "cargo-ship" ? "#f59e0b" : "#94a3b8";
@@ -501,11 +595,9 @@ function drawTacticalAssetIcon(
     ctx.fill();
     ctx.stroke();
 
-    // Bridge / Deck Turret
     ctx.fillStyle = assetType === "cargo-ship" ? "#ef4444" : "#f8fafc";
     ctx.fillRect(-8, -4, 14, 8);
   } else if (assetType === "tank") {
-    // Armored Tank / Ground Convoy
     ctx.fillStyle = "#4d7c0f";
     ctx.strokeStyle = "#ecfccb";
     ctx.lineWidth = 1.5;
@@ -513,7 +605,6 @@ function drawTacticalAssetIcon(
     ctx.roundRect(-16, -9, 32, 18, 4);
     ctx.fill();
     ctx.stroke();
-    // Turret & Main Gun Barrel
     ctx.fillStyle = "#365314";
     ctx.beginPath();
     ctx.arc(-2, 0, 6.5, 0, Math.PI * 2);
@@ -529,17 +620,16 @@ function drawTacticalAssetIcon(
   ctx.restore();
 }
 
-// Helper to draw fiery explosion & shockwave at any (x, y) coordinate
 function drawExplosionShockwave(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  impactPhase: number, // 0.0 to 1.0
+  impactPhase: number,
   isMidAirIntercept: boolean = false
 ) {
   ctx.save();
-  const r1 = 14 + impactPhase * 72;
-  const r2 = 8 + impactPhase * 42;
+  const r1 = 14 + impactPhase * 76;
+  const r2 = 8 + impactPhase * 46;
   const alpha = Math.max(0, 1 - impactPhase);
 
   const blastGrad = ctx.createRadialGradient(x, y, 2, x, y, r1);
@@ -570,7 +660,6 @@ function drawExplosionShockwave(
   ctx.restore();
 }
 
-// Helper to draw status callout badge near target
 function drawStatusPill(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -596,10 +685,18 @@ function drawStatusPill(
   ctx.restore();
 }
 
+export type SimulatorCommandTool =
+  | "launch-missile"
+  | "air-defense-intercept"
+  | "fighter-airstrike"
+  | "naval-strike"
+  | "airliner-flight";
+
 export interface TacticalMapStageCanvasProps {
   config: TacticalMapConfig;
   isInteractive?: boolean;
   onMapClickLatLon?: (lat: number, lon: number) => void;
+  onConfigChange?: (updates: Partial<TacticalMapConfig>) => void;
   onOpenEditorModal?: () => void;
 }
 
@@ -607,27 +704,311 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   config,
   isInteractive = true,
   onMapClickLatLon,
+  onConfigChange,
   onOpenEditorModal,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const offscreenMapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [localStyle, setLocalStyle] = useState<TacticalMapConfig["mapStyle"]>(
-    config.mapStyle || "dark-radar"
+    config.mapStyle || "satellite"
   );
-  const progressRef = useRef(0); // 0.0 to 1.32
+  const [viewMode, setViewMode] = useState<"2d" | "3d-perspective" | "3d-globe">(
+    config.viewMode || "3d-perspective"
+  );
+  const [pitchDeg, setPitchDeg] = useState<number>(config.pitchDeg ?? 42);
+  const [yawDeg, setYawDeg] = useState<number>(config.yawDeg ?? 0);
+  const [centerLat, setCenterLat] = useState<number>(config.centerLat || 32.8);
+  const [centerLon, setCenterLon] = useState<number>(config.centerLon || 44.0);
+  const [zoom, setZoom] = useState<number>(config.zoom || 5);
+
+  // Interactive Simulator State (Works live on Stage & inside Editor!)
+  const [simulatorActive, setSimulatorActive] = useState<boolean>(
+    config.simulatorEnabled ?? false
+  );
+  const [simTool, setSimTool] = useState<SimulatorCommandTool>("launch-missile");
+  const [simRoutes, setSimRoutes] = useState<
+    Array<TacticalMapRoute & { spawnedAt: number; simProgress: number }>
+  >([]);
+
+  // Mouse Drag Pan / 3D Orbit State
+  const [isDraggingMap, setIsDraggingMap] = useState(false);
+  const dragModeRef = useRef<"pan" | "orbit">("pan");
+  const dragStartRef = useRef({
+    clientX: 0,
+    clientY: 0,
+    startLat: 0,
+    startLon: 0,
+    startPitch: 42,
+    startYaw: 0,
+    movedPx: 0,
+  });
+
+  const progressRef = useRef(0);
   const lastTimeRef = useRef<number>(performance.now());
+  const simRoutesRef = useRef<
+    Array<TacticalMapRoute & { spawnedAt: number; simProgress: number }>
+  >([]);
 
   useEffect(() => {
-    setLocalStyle(config.mapStyle || "dark-radar");
-    progressRef.current = 0;
-    setIsPlaying(true);
-  }, [config]);
+    simRoutesRef.current = simRoutes;
+  }, [simRoutes]);
+
+  useEffect(() => {
+    setLocalStyle(config.mapStyle || "satellite");
+    if (config.viewMode) setViewMode(config.viewMode);
+    if (typeof config.pitchDeg === "number") setPitchDeg(config.pitchDeg);
+    if (typeof config.yawDeg === "number") setYawDeg(config.yawDeg);
+    if (typeof config.centerLat === "number") setCenterLat(config.centerLat);
+    if (typeof config.centerLon === "number") setCenterLon(config.centerLon);
+    if (typeof config.zoom === "number") setZoom(config.zoom);
+    if (typeof config.simulatorEnabled === "boolean") setSimulatorActive(config.simulatorEnabled);
+  }, [
+    config.mapStyle,
+    config.viewMode,
+    config.pitchDeg,
+    config.yawDeg,
+    config.centerLat,
+    config.centerLon,
+    config.zoom,
+    config.simulatorEnabled,
+  ]);
+
+  const syncCameraToParent = useCallback(
+    (updates: Partial<TacticalMapConfig>) => {
+      onConfigChange?.(updates);
+    },
+    [onConfigChange]
+  );
 
   const handleReplay = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     progressRef.current = 0;
+    simRoutesRef.current = simRoutesRef.current.map((sr) => ({ ...sr, simProgress: 0 }));
+    setSimRoutes([...simRoutesRef.current]);
     setIsPlaying(true);
+  };
+
+  // Trigger a 5x Multi-Target Salvo Barrage in Simulator!
+  const handleTriggerSalvoBarrage = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const baseRoute = config.routes?.[0];
+    const origin: TacticalMapPoint = baseRoute?.from || {
+      name: "Command Launch Site",
+      lat: centerLat + 2.5,
+      lon: centerLon + 3.5,
+    };
+    const baseTarget: TacticalMapPoint = baseRoute?.to || {
+      name: "Strategic Target Zone",
+      lat: centerLat - 2.0,
+      lon: centerLon - 3.5,
+    };
+
+    const offsets = [
+      { dLat: 0, dLon: 0, label: "Salvo Alpha" },
+      { dLat: 0.85, dLon: -0.65, label: "Salvo Bravo" },
+      { dLat: -0.75, dLon: 0.8, label: "Salvo Charlie" },
+      { dLat: 1.35, dLon: 0.55, label: "Salvo Delta" },
+      { dLat: -1.15, dLon: -0.9, label: "Salvo Echo" },
+    ];
+
+    const now = performance.now();
+    const barrageRoutes = offsets.map((off, idx) => ({
+      id: `sim-salvo-${Date.now()}-${idx}`,
+      from: origin,
+      to: {
+        name: `${baseTarget.name.split(",")[0]} (${off.label})`,
+        lat: Number((baseTarget.lat + off.dLat).toFixed(3)),
+        lon: Number((baseTarget.lon + off.dLon).toFixed(3)),
+      },
+      assetType: "missile" as TacticalRouteAssetType,
+      targetEffect: "explosion" as TacticalTargetEffect,
+      targetMarkerType: "radar-site" as TacticalTargetMarkerType,
+      curveDirection: "up" as const,
+      color: idx % 2 === 0 ? "#ef4444" : "#f97316",
+      arcHeight: 0.32 + idx * 0.04,
+      speed: 1.15 + idx * 0.08,
+      showImpactShockwave: true,
+      showDistanceKm: idx === 0,
+      spawnedAt: now,
+      simProgress: -idx * 0.09,
+    }));
+
+    const next = [...simRoutesRef.current, ...barrageRoutes];
+    simRoutesRef.current = next;
+    setSimRoutes(next);
+    setIsPlaying(true);
+  };
+
+  // Spawn a dynamic Simulator Route when clicking on the map in Simulator Mode
+  const spawnSimulatorActionAtLatLon = useCallback(
+    (targetLat: number, targetLon: number) => {
+      const baseOrigin: TacticalMapPoint = config.routes?.[0]?.from || {
+        name: "Launch Command",
+        lat: Number((centerLat + 2.2).toFixed(3)),
+        lon: Number((centerLon + 3.2).toFixed(3)),
+      };
+
+      const clickedTarget: TacticalMapPoint = {
+        name: `Target (${targetLat.toFixed(1)}°N, ${targetLon.toFixed(1)}°E)`,
+        lat: targetLat,
+        lon: targetLon,
+      };
+
+      let assetType: TacticalRouteAssetType = "missile";
+      let targetEffect: TacticalTargetEffect = "explosion";
+      let targetMarkerType: TacticalTargetMarkerType = "default";
+      let color = "#ef4444";
+      let arcHeight = 0.35;
+
+      if (simTool === "air-defense-intercept") {
+        assetType = "missile";
+        targetEffect = "intercept";
+        targetMarkerType = "radar-site";
+        color = "#38bdf8";
+        arcHeight = 0.36;
+      } else if (simTool === "fighter-airstrike") {
+        assetType = "fighter-jet";
+        targetEffect = "jet-airstrike";
+        targetMarkerType = "airbase";
+        color = "#f97316";
+        arcHeight = 0.26;
+      } else if (simTool === "naval-strike") {
+        assetType = "warship";
+        targetEffect = "ship-launch-missile";
+        targetMarkerType = "warship";
+        color = "#06b6d4";
+        arcHeight = 0.0;
+      } else if (simTool === "airliner-flight") {
+        assetType = "airliner";
+        targetEffect = "landing";
+        targetMarkerType = "airbase";
+        color = "#10b981";
+        arcHeight = 0.2;
+      }
+
+      const newSimRoute: TacticalMapRoute & { spawnedAt: number; simProgress: number } = {
+        id: `sim-${Date.now()}`,
+        from: baseOrigin,
+        to: clickedTarget,
+        assetType,
+        targetEffect,
+        targetMarkerType,
+        curveDirection: arcHeight === 0 ? "straight" : "up",
+        color,
+        arcHeight,
+        speed: 1.25,
+        showImpactShockwave: true,
+        showDistanceKm: true,
+        spawnedAt: performance.now(),
+        simProgress: 0,
+      };
+
+      const next = [...simRoutesRef.current, newSimRoute];
+      simRoutesRef.current = next;
+      setSimRoutes(next);
+      setIsPlaying(true);
+    },
+    [config.routes, centerLat, centerLon, simTool]
+  );
+
+  // Mouse Handlers for Real-Time Stage Pan, 3D Tilt/Orbit & Simulator Clicks
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.stopPropagation();
+    const isRightOrShift = e.button === 2 || e.shiftKey;
+    dragModeRef.current = isRightOrShift ? "orbit" : "pan";
+    setIsDraggingMap(true);
+    dragStartRef.current = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      startLat: centerLat,
+      startLon: centerLon,
+      startPitch: pitchDeg,
+      startYaw: yawDeg,
+      movedPx: 0,
+    };
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDraggingMap || !canvasRef.current) return;
+    e.stopPropagation();
+    const dx = e.clientX - dragStartRef.current.clientX;
+    const dy = e.clientY - dragStartRef.current.clientY;
+    dragStartRef.current.movedPx = Math.hypot(dx, dy);
+
+    if (dragModeRef.current === "orbit") {
+      const nextPitch = Math.max(0, Math.min(60, Math.round(dragStartRef.current.startPitch - dy * 0.25)));
+      const nextYaw = Math.max(-180, Math.min(180, Math.round(dragStartRef.current.startYaw + dx * 0.35)));
+      setPitchDeg(nextPitch);
+      setYawDeg(nextYaw);
+      if (viewMode === "2d" && nextPitch > 8) {
+        setViewMode("3d-perspective");
+      }
+    } else {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const scaleX = 1280 / Math.max(1, rect.width);
+      const scaleY = 720 / Math.max(1, rect.height);
+      const degPerPx = 360 / (Math.pow(2, zoom) * 256);
+      const nextLon = Math.max(-180, Math.min(180, Number((dragStartRef.current.startLon - dx * scaleX * degPerPx).toFixed(4))));
+      const nextLat = Math.max(-78, Math.min(78, Number((dragStartRef.current.startLat + dy * scaleY * degPerPx * 0.85).toFixed(4))));
+      setCenterLat(nextLat);
+      setCenterLon(nextLon);
+    }
+  };
+
+  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDraggingMap) return;
+    setIsDraggingMap(false);
+    if (dragStartRef.current.movedPx > 6) {
+      syncCameraToParent({
+        centerLat,
+        centerLon,
+        pitchDeg,
+        yawDeg,
+        viewMode,
+      });
+      return;
+    }
+
+    // If it was a clean click (< 6px drag), resolve clicked Lat/Lon!
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = 1280 / Math.max(1, rect.width);
+    const scaleY = 720 / Math.max(1, rect.height);
+    const rawCx = (e.clientX - rect.left) * scaleX;
+    const rawCy = (e.clientY - rect.top) * scaleY;
+
+    const effectivePitch = viewMode === "3d-perspective" ? pitchDeg : 0;
+    const effectiveYaw = viewMode === "3d-perspective" ? yawDeg : 0;
+    const unproj = unprojectScreenToMapXY(rawCx, rawCy, 1280, 720, effectivePitch, effectiveYaw);
+
+    const coords = canvasXYToLatLon(
+      unproj.x,
+      unproj.y,
+      centerLat,
+      centerLon,
+      Math.max(2, Math.min(10, Math.round(zoom || 4))),
+      1280,
+      720
+    );
+
+    if (simulatorActive) {
+      spawnSimulatorActionAtLatLon(coords.lat, coords.lon);
+    } else if (onMapClickLatLon) {
+      onMapClickLatLon(coords.lat, coords.lon);
+    }
+  };
+
+  const handleCanvasWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.stopPropagation();
+    const delta = e.deltaY < 0 ? 1 : -1;
+    const nextZ = Math.max(2, Math.min(10, zoom + delta));
+    if (nextZ !== zoom) {
+      setZoom(nextZ);
+      syncCameraToParent({ zoom: nextZ });
+    }
   };
 
   useEffect(() => {
@@ -635,37 +1016,46 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     const W = 1280;
     const H = 720;
 
+    if (!offscreenMapCanvasRef.current && typeof document !== "undefined") {
+      const off = document.createElement("canvas");
+      off.width = W;
+      off.height = H;
+      offscreenMapCanvasRef.current = off;
+    }
+
     const renderLoop = (now: number) => {
       const dt = Math.min(0.1, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
 
       const canvas = canvasRef.current;
-      if (canvas) {
+      const offCanvas = offscreenMapCanvasRef.current;
+      if (canvas && offCanvas) {
         const ctx = canvas.getContext("2d");
-        if (ctx) {
-          // 1. Base Background Fill
-          ctx.fillStyle = localStyle === "political" ? "#cbd5e1" : "#040a14";
-          ctx.fillRect(0, 0, W, H);
+        const offCtx = offCanvas.getContext("2d");
+        if (ctx && offCtx) {
+          const zInt = Math.max(2, Math.min(10, Math.round(zoom || 4)));
+          const cTileX = lonToTileX(centerLon, zInt);
+          const cTileY = latToTileY(centerLat, zInt);
 
-          const zoom = Math.max(2, Math.min(11, Math.round(config.zoom || 4)));
-          const cTileX = lonToTileX(config.centerLon, zoom);
-          const cTileY = latToTileY(config.centerLat, zoom);
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 1: RENDER SLIPPY MAP TILES & BORDERS TO OFFSCREEN SURFACE
+          // ─────────────────────────────────────────────────────────────────
+          offCtx.fillStyle = localStyle === "political" ? "#cbd5e1" : "#040a14";
+          offCtx.fillRect(0, 0, W, H);
 
-          const startTileX = Math.floor(cTileX - W / 512) - 1;
-          const endTileX = Math.ceil(cTileX + W / 512) + 1;
-          const startTileY = Math.floor(cTileY - H / 512) - 1;
-          const endTileY = Math.ceil(cTileY + H / 512) + 1;
+          const startTileX = Math.floor(cTileX - W / 512) - 2;
+          const endTileX = Math.ceil(cTileX + W / 512) + 2;
+          const startTileY = Math.floor(cTileY - H / 512) - 2;
+          const endTileY = Math.ceil(cTileY + H / 512) + 2;
 
-          // 2. Draw Esri ArcGIS Slippy Map Tiles (100% Free, Zero API Key, Zero Watermarks!)
           if (localStyle !== "vector-grid") {
-            ctx.save();
-            // For "dark-radar", apply tactical dark night-vision filter over Esri World Imagery!
+            offCtx.save();
             if (localStyle === "dark-radar") {
-              ctx.filter = "brightness(0.46) contrast(1.32) saturate(0.35) hue-rotate(175deg)";
+              offCtx.filter = "brightness(0.46) contrast(1.32) saturate(0.35) hue-rotate(175deg)";
             }
             for (let tx = startTileX; tx <= endTileX; tx++) {
               for (let ty = startTileY; ty <= endTileY; ty++) {
-                const url = getTileUrl(localStyle, zoom, tx, ty);
+                const url = getTileUrl(localStyle, zInt, tx, ty);
                 if (!url) continue;
                 let tileImg = globalTileCache.get(url);
                 if (!tileImg) {
@@ -678,17 +1068,16 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   const drawX = Math.round(W / 2 + (tx - cTileX) * 256);
                   const drawY = Math.round(H / 2 + (ty - cTileY) * 256);
                   try {
-                    ctx.drawImage(tileImg, drawX, drawY, 256, 256);
+                    offCtx.drawImage(tileImg, drawX, drawY, 256, 256);
                   } catch {}
                 }
               }
             }
-            ctx.restore();
+            offCtx.restore();
 
-            // 2B. Draw Country Borders & City Names Reference Layer on top of Satellite, Dark-Radar, and Ocean maps!
             for (let tx = startTileX; tx <= endTileX; tx++) {
               for (let ty = startTileY; ty <= endTileY; ty++) {
-                const refUrl = getBoundariesOverlayTileUrl(localStyle, zoom, tx, ty);
+                const refUrl = getBoundariesOverlayTileUrl(localStyle, zInt, tx, ty);
                 if (!refUrl) continue;
                 let refImg = globalTileCache.get(refUrl);
                 if (!refImg) {
@@ -701,74 +1090,250 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   const drawX = Math.round(W / 2 + (tx - cTileX) * 256);
                   const drawY = Math.round(H / 2 + (ty - cTileY) * 256);
                   try {
-                    ctx.save();
-                    ctx.globalAlpha = localStyle === "dark-radar" ? 0.78 : 0.92;
-                    ctx.drawImage(refImg, drawX, drawY, 256, 256);
-                    ctx.restore();
+                    offCtx.save();
+                    offCtx.globalAlpha = localStyle === "dark-radar" ? 0.78 : 0.92;
+                    offCtx.drawImage(refImg, drawX, drawY, 256, 256);
+                    offCtx.restore();
                   } catch {}
                 }
               }
             }
           }
 
-          if (localStyle === "satellite") {
-            ctx.fillStyle = "rgba(4, 10, 22, 0.18)";
-            ctx.fillRect(0, 0, W, H);
-          }
-
-          // 3. Tactical Lat/Lon Grid Overlay
+          // Tactical Grid on surface
           if (config.showGridLines !== false || localStyle === "vector-grid") {
-            ctx.save();
-            ctx.strokeStyle =
+            offCtx.save();
+            offCtx.strokeStyle =
               localStyle === "political"
-                ? "rgba(15, 23, 42, 0.08)"
-                : "rgba(6, 182, 212, 0.15)";
-            ctx.lineWidth = 1;
+                ? "rgba(15, 23, 42, 0.1)"
+                : "rgba(6, 182, 212, 0.18)";
+            offCtx.lineWidth = 1;
             const step = 80;
             for (let gx = 0; gx < W; gx += step) {
-              ctx.beginPath();
-              ctx.moveTo(gx, 0);
-              ctx.lineTo(gx, H);
-              ctx.stroke();
+              offCtx.beginPath();
+              offCtx.moveTo(gx, 0);
+              offCtx.lineTo(gx, H);
+              offCtx.stroke();
             }
             for (let gy = 0; gy < H; gy += step) {
-              ctx.beginPath();
-              ctx.moveTo(0, gy);
-              ctx.lineTo(W, gy);
-              ctx.stroke();
+              offCtx.beginPath();
+              offCtx.moveTo(0, gy);
+              offCtx.lineTo(W, gy);
+              offCtx.stroke();
             }
-            ctx.restore();
+            offCtx.restore();
           }
 
-          // 4. Optional Rotating Tactical Radar Sweep
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 2: COMPOSITE 3D SKY HORIZON / 3D GLOBE / 3D TILTED TERRAIN
+          // ─────────────────────────────────────────────────────────────────
+          ctx.fillStyle = "#030712";
+          ctx.fillRect(0, 0, W, H);
+
+          const is3DPersp = viewMode === "3d-perspective" && pitchDeg > 2;
+          const is3DGlobe = viewMode === "3d-globe";
+          const effPitch = is3DPersp ? pitchDeg : 0;
+          const effYaw = is3DPersp ? yawDeg : 0;
+          const altScale = config.altitudeScale ?? 1.25;
+
+          if (is3DGlobe) {
+            // ── 3D INTERACTIVE SPHERICAL EARTH GLOBE VIEW ──
+            const globeRadius = Math.min(W, H) * 0.42;
+            const gCx = W / 2;
+            const gCy = H * 0.53;
+
+            // Outer atmospheric glow halo
+            const haloGrad = ctx.createRadialGradient(
+              gCx,
+              gCy,
+              globeRadius * 0.88,
+              gCx,
+              gCy,
+              globeRadius * 1.22
+            );
+            haloGrad.addColorStop(0, "rgba(56, 189, 248, 0.32)");
+            haloGrad.addColorStop(0.5, "rgba(14, 165, 233, 0.12)");
+            haloGrad.addColorStop(1, "rgba(3, 7, 18, 0)");
+            ctx.fillStyle = haloGrad;
+            ctx.beginPath();
+            ctx.arc(gCx, gCy, globeRadius * 1.22, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Clip to 3D Sphere and draw surface + spherical shading
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(gCx, gCy, globeRadius, 0, Math.PI * 2);
+            ctx.clip();
+
+            ctx.drawImage(
+              offCanvas,
+              0,
+              0,
+              W,
+              H,
+              gCx - globeRadius * 1.35,
+              gCy - globeRadius * 1.05,
+              globeRadius * 2.7,
+              globeRadius * 2.1
+            );
+
+            // 3D Spherical Latitude/Longitude Graticule
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+            ctx.lineWidth = 1;
+            for (let latLine = -60; latLine <= 60; latLine += 20) {
+              ctx.beginPath();
+              let started = false;
+              for (let lonStep = -180; lonStep <= 180; lonStep += 6) {
+                const gp = latLonToGlobe3D(latLine, lonStep, centerLat, centerLon, globeRadius, gCx, gCy);
+                if (gp.visible) {
+                  if (!started) {
+                    ctx.moveTo(gp.x, gp.y);
+                    started = true;
+                  } else {
+                    ctx.lineTo(gp.x, gp.y);
+                  }
+                } else {
+                  started = false;
+                }
+              }
+              ctx.stroke();
+            }
+            for (let lonLine = -180; lonLine < 180; lonLine += 20) {
+              ctx.beginPath();
+              let started = false;
+              for (let latStep = -80; latStep <= 80; latStep += 5) {
+                const gp = latLonToGlobe3D(latStep, lonLine, centerLat, centerLon, globeRadius, gCx, gCy);
+                if (gp.visible) {
+                  if (!started) {
+                    ctx.moveTo(gp.x, gp.y);
+                    started = true;
+                  } else {
+                    ctx.lineTo(gp.x, gp.y);
+                  }
+                } else {
+                  started = false;
+                }
+              }
+              ctx.stroke();
+            }
+
+            // 3D Sphere Day/Night Terminator & Specular Highlight
+            const sphereShade = ctx.createRadialGradient(
+              gCx - globeRadius * 0.3,
+              gCy - globeRadius * 0.3,
+              globeRadius * 0.1,
+              gCx,
+              gCy,
+              globeRadius
+            );
+            sphereShade.addColorStop(0, "rgba(255, 255, 255, 0.08)");
+            sphereShade.addColorStop(0.65, "rgba(4, 12, 28, 0.15)");
+            sphereShade.addColorStop(1, "rgba(2, 6, 18, 0.78)");
+            ctx.fillStyle = sphereShade;
+            ctx.fillRect(gCx - globeRadius, gCy - globeRadius, globeRadius * 2, globeRadius * 2);
+            ctx.restore();
+
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.65)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(gCx, gCy, globeRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (is3DPersp) {
+            // ── 3D PERSPECTIVE TILTED TERRAIN VIEW ──
+            const horizonY = Math.round(H * (0.24 * (effPitch / 60)));
+
+            // 1. 3D Atmospheric Sky Horizon Gradient
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY + 80);
+            skyGrad.addColorStop(0, "#020617");
+            skyGrad.addColorStop(0.65, "#082f49");
+            skyGrad.addColorStop(1, "#0ea5e933");
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, W, horizonY + 80);
+
+            // 2. Render Tilted 3D Map Plane using horizontal perspective scanline strips for true 3D trapezoid depth!
+            const strips = 48;
+            const stripSrcH = H / strips;
+            const pitchRad = (effPitch * Math.PI) / 180;
+            const cosP = Math.cos(pitchRad);
+            const sinP = Math.sin(pitchRad);
+
+            ctx.save();
+            for (let s = 0; s < strips; s++) {
+              const sy = s * stripSrcH;
+              const normY = (sy + stripSrcH / 2 - H * 0.54) / H; // -0.5 to +0.5
+              // Near bottom of screen -> wider (closer to camera); near top -> narrower (further toward horizon)
+              const depthScale = Math.max(0.58, 1 + normY * sinP * 0.72);
+              const destY = H * 0.54 + (sy - H * 0.54) * cosP;
+              const nextDestY = H * 0.54 + (sy + stripSrcH - H * 0.54) * cosP;
+              const destH = Math.max(1.5, nextDestY - destY + 1.2);
+              const destW = W * depthScale;
+              const destX = (W - destW) / 2 - (effYaw / 90) * normY * 140;
+
+              ctx.drawImage(
+                offCanvas,
+                0,
+                sy,
+                W,
+                stripSrcH,
+                destX,
+                destY,
+                destW,
+                destH
+              );
+            }
+            ctx.restore();
+
+            // 3. Horizon Glow Line & Compass Ticks
+            const hGlow = ctx.createLinearGradient(0, horizonY - 12, 0, horizonY + 28);
+            hGlow.addColorStop(0, "rgba(14, 165, 233, 0)");
+            hGlow.addColorStop(0.5, "rgba(56, 189, 248, 0.45)");
+            hGlow.addColorStop(1, "rgba(4, 10, 20, 0)");
+            ctx.fillStyle = hGlow;
+            ctx.fillRect(0, Math.max(0, horizonY - 12), W, 40);
+          } else {
+            // ── 2D FLAT MAP VIEW ──
+            ctx.drawImage(offCanvas, 0, 0);
+          }
+
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 3: ROTATING TACTICAL RADAR SWEEP (3D Projected)
+          // ─────────────────────────────────────────────────────────────────
           if (config.showRadarSweep) {
             ctx.save();
             const sweepAngle = (now / 1600) % (Math.PI * 2);
             const rCx = W / 2;
-            const rCy = H / 2;
-            const rRadius = Math.min(W, H) * 0.42;
-            ctx.strokeStyle = "rgba(16, 185, 129, 0.22)";
+            const rCy = is3DPersp ? H * 0.56 : H / 2;
+            const rRadiusX = Math.min(W, H) * 0.42;
+            const rRadiusY = is3DPersp
+              ? rRadiusX * Math.max(0.45, Math.cos((effPitch * Math.PI) / 180))
+              : rRadiusX;
+
+            ctx.translate(rCx, rCy);
+            ctx.scale(1, rRadiusY / rRadiusX);
+            ctx.strokeStyle = "rgba(16, 185, 129, 0.24)";
             ctx.lineWidth = 1.5;
             ctx.beginPath();
-            ctx.arc(rCx, rCy, rRadius, 0, Math.PI * 2);
+            ctx.arc(0, 0, rRadiusX, 0, Math.PI * 2);
             ctx.stroke();
             ctx.beginPath();
-            ctx.arc(rCx, rCy, rRadius * 0.6, 0, Math.PI * 2);
+            ctx.arc(0, 0, rRadiusX * 0.6, 0, Math.PI * 2);
             ctx.stroke();
 
-            const coneGrad = ctx.createRadialGradient(rCx, rCy, 10, rCx, rCy, rRadius);
-            coneGrad.addColorStop(0, "rgba(16, 185, 129, 0.18)");
+            const coneGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, rRadiusX);
+            coneGrad.addColorStop(0, "rgba(16, 185, 129, 0.2)");
             coneGrad.addColorStop(1, "rgba(16, 185, 129, 0.0)");
             ctx.fillStyle = coneGrad;
             ctx.beginPath();
-            ctx.moveTo(rCx, rCy);
-            ctx.arc(rCx, rCy, rRadius, sweepAngle - 0.45, sweepAngle);
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, rRadiusX, sweepAngle - 0.45, sweepAngle);
             ctx.closePath();
             ctx.fill();
             ctx.restore();
           }
 
-          // 5. Advance Animation Progress
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 4: ADVANCE ANIMATION TIMELINE (Primary Routes + Simulator)
+          // ─────────────────────────────────────────────────────────────────
           const baseRouteSpeed = config.routes?.[0]?.speed || 1;
           if (isPlaying) {
             progressRef.current += dt * 0.26 * baseRouteSpeed * speedMultiplier;
@@ -777,35 +1342,42 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 progressRef.current = 0;
               } else {
                 progressRef.current = 1.35;
-                setIsPlaying(false);
               }
             }
+
+            if (simRoutesRef.current.length > 0) {
+              simRoutesRef.current = simRoutesRef.current
+                .map((sr) => ({
+                  ...sr,
+                  simProgress: sr.simProgress + dt * 0.32 * (sr.speed || 1.2) * speedMultiplier,
+                }))
+                .filter((sr) => sr.simProgress <= 1.45);
+            }
           }
-          const rawP = progressRef.current;
-          const flightT = Math.max(0, Math.min(1, rawP));
 
-          // 6. Render All Tactical Flight / Naval / Missile Routes & Target Scenarios
-          (config.routes || []).forEach((route) => {
-            const p1 = latLonToCanvasXY(
-              route.from.lat,
-              route.from.lon,
-              config.centerLat,
-              config.centerLon,
-              zoom,
-              W,
-              H
-            );
-            const p2 = latLonToCanvasXY(
-              route.to.lat,
-              route.to.lon,
-              config.centerLat,
-              config.centerLon,
-              zoom,
-              W,
-              H
-            );
+          const allRoutesToRender: Array<{ route: TacticalMapRoute; rawP: number }> = [
+            ...(config.routes || []).map((r) => ({ route: r, rawP: progressRef.current })),
+            ...simRoutesRef.current
+              .filter((sr) => sr.simProgress >= 0)
+              .map((sr) => ({ route: sr, rawP: sr.simProgress })),
+          ];
 
-            // Resolve effective Target Effect (with smart fallback if legacy route)
+          // Helper to project any (lat, lon, altitudePx) to current 2D / 3D / Globe screen coordinates
+          const projectGeoPoint = (lat: number, lon: number, altitudePx: number = 0) => {
+            if (is3DGlobe) {
+              const globeRadius = Math.min(W, H) * 0.42;
+              const gp = latLonToGlobe3D(lat, lon, centerLat, centerLon, globeRadius, W / 2, H * 0.53, altitudePx * 0.55);
+              return { x: gp.x, y: gp.y, scale: 1 };
+            }
+            const raw2D = latLonToCanvasXY(lat, lon, centerLat, centerLon, zInt, W, H);
+            return projectPoint3D(raw2D.x, raw2D.y, altitudePx, W, H, effPitch, effYaw);
+          };
+
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 5: RENDER ALL ROUTES IN 3D / 2D SPACE WITH ALTITUDE PILLARS
+          // ─────────────────────────────────────────────────────────────────
+          allRoutesToRender.forEach(({ route, rawP }) => {
+            const flightT = Math.max(0, Math.min(1, rawP));
             const effect: TacticalTargetEffect =
               route.targetEffect ||
               (route.assetType === "airliner"
@@ -821,57 +1393,104 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               route.assetType === "warship" ||
               route.assetType === "cargo-ship";
 
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
-            const distPx = Math.hypot(dx, dy);
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
+            const p1Ground = projectGeoPoint(route.from.lat, route.from.lon, 0);
+            const p2Ground = projectGeoPoint(route.to.lat, route.to.lon, 0);
+            const rawDistPx = Math.hypot(p2Ground.x - p1Ground.x, p2Ground.y - p1Ground.y);
+            const totalKm = computeGreatCircleDistanceKm(route.from, route.to);
 
-            // Curve Direction: "straight" (0 arc), "down" (+arc), or default "up" (-arc)
-            const curveDir = route.curveDirection || (isSeaRoute && (route.arcHeight ?? 0) === 0 ? "straight" : "up");
-            const rawArc = curveDir === "straight" ? 0 : (route.arcHeight ?? (isSeaRoute ? 0 : 0.32));
-            const signedArcOffset = distPx * rawArc * (curveDir === "down" ? 1 : -1);
-            const ctrlX = midX;
-            const ctrlY = midY + signedArcOffset;
+            const curveDir =
+              route.curveDirection ||
+              (isSeaRoute && (route.arcHeight ?? 0) === 0 ? "straight" : "up");
+            const rawArc =
+              curveDir === "straight" ? 0 : route.arcHeight ?? (isSeaRoute ? 0 : 0.34);
 
-            const getQuadraticPoint = (t: number, customCtrlX = ctrlX, customCtrlY = ctrlY, startPt = p1, endPt = p2) => {
-              const u = 1 - t;
-              return {
-                x: u * u * startPt.x + 2 * u * t * customCtrlX + t * t * endPt.x,
-                y: u * u * startPt.y + 2 * u * t * customCtrlY + t * t * endPt.y,
-              };
+            // Compute 3D Point along trajectory at parameter t (0..1)
+            const getRoutePoint3D = (t: number, customStart?: TacticalMapPoint, customEnd?: TacticalMapPoint, customArc?: number) => {
+              const sPt = customStart || route.from;
+              const ePt = customEnd || route.to;
+              const lat = sPt.lat + (ePt.lat - sPt.lat) * t;
+              const lon = sPt.lon + (ePt.lon - sPt.lon) * t;
+              const arcVal = customArc !== undefined ? customArc : rawArc;
+
+              // Parabolic ballistic/flight altitude in pixels: peaks at t = 0.5
+              const maxAltPx = isSeaRoute ? 0 : Math.min(260, Math.max(45, rawDistPx * arcVal * altScale));
+              const altPx = Math.sin(t * Math.PI) * maxAltPx;
+
+              const groundPt = projectGeoPoint(lat, lon, 0);
+              if (is3DPersp || is3DGlobe) {
+                const airPt = projectGeoPoint(lat, lon, altPx);
+                return { x: airPt.x, y: airPt.y, groundX: groundPt.x, groundY: groundPt.y, altPx };
+              } else {
+                // In 2D mode, apply classic 2D curve offset
+                const signedArc = rawDistPx * arcVal * (curveDir === "down" ? 1 : -1) * Math.sin(t * Math.PI);
+                return {
+                  x: groundPt.x,
+                  y: groundPt.y + signedArc,
+                  groundX: groundPt.x,
+                  groundY: groundPt.y,
+                  altPx: Math.abs(signedArc),
+                };
+              }
             };
 
-            const getQuadraticAngle = (t: number, customCtrlX = ctrlX, customCtrlY = ctrlY, startPt = p1, endPt = p2) => {
-              const tx = 2 * (1 - t) * (customCtrlX - startPt.x) + 2 * t * (endPt.x - customCtrlX);
-              const ty = 2 * (1 - t) * (customCtrlY - startPt.y) + 2 * t * (endPt.y - customCtrlY);
-              return Math.atan2(ty, tx);
+            const getRouteAngle3D = (t: number, customStart?: TacticalMapPoint, customEnd?: TacticalMapPoint, customArc?: number) => {
+              const dtStep = 0.02;
+              const tA = Math.max(0, t - dtStep);
+              const tB = Math.min(1, t + dtStep);
+              const ptA = getRoutePoint3D(tA, customStart, customEnd, customArc);
+              const ptB = getRoutePoint3D(tB, customStart, customEnd, customArc);
+              return Math.atan2(ptB.y - ptA.y, ptB.x - ptA.x);
             };
 
-            // 6A. Dashed Forecast Path
+            // 5A. Draw Ground Shadow Path (in 3D Perspective Mode) & Dashed Forecast Arc
+            if ((is3DPersp || is3DGlobe) && !isSeaRoute) {
+              ctx.save();
+              ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+              ctx.lineWidth = 3;
+              ctx.setLineDash([6, 6]);
+              ctx.beginPath();
+              ctx.moveTo(p1Ground.x, p1Ground.y);
+              for (let s = 1; s <= 24; s++) {
+                const gpt = getRoutePoint3D(s / 24);
+                ctx.lineTo(gpt.groundX, gpt.groundY);
+              }
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Dashed 3D Forecast Trajectory Arc
             ctx.save();
             ctx.strokeStyle = `${route.color || "#ef4444"}55`;
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 2.2;
             ctx.setLineDash([8, 8]);
             ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.quadraticCurveTo(ctrlX, ctrlY, p2.x, p2.y);
+            const start3D = getRoutePoint3D(0);
+            ctx.moveTo(start3D.x, start3D.y);
+            for (let s = 1; s <= 32; s++) {
+              const pt = getRoutePoint3D(s / 32);
+              ctx.lineTo(pt.x, pt.y);
+            }
             ctx.stroke();
             ctx.restore();
 
-            // 6B. Draw Static Target Object at Point B if configured (e.g. Target Ship in sea for Ship-to-Ship strike!)
+            // 5B. Static Destination Object at Point B
             const effectiveTargetMarker: TacticalTargetMarkerType =
               route.targetMarkerType ||
               (effect === "ship-launch-missile" ? "warship" : "default");
-            drawDestinationTargetObject(ctx, effectiveTargetMarker, p2.x, p2.y, now);
+            drawDestinationTargetObject(ctx, effectiveTargetMarker, p2Ground.x, p2Ground.y, now);
 
-            // 6C. Origin & Target Markers + Location Labels
+            // 5C. Origin & Target Markers + City/Port Labels
             [
-              { pt: p1, info: route.from, isTarget: false },
-              { pt: p2, info: route.to, isTarget: true },
+              { pt: p1Ground, info: route.from, isTarget: false },
+              { pt: p2Ground, info: route.to, isTarget: true },
             ].forEach(({ pt, info, isTarget }) => {
               const isPeacefulTarget =
-                isTarget && (effect === "landing" || effect === "naval-cruise" || effect === "hover-patrol" || effect === "airdrop" || effect === "none");
+                isTarget &&
+                (effect === "landing" ||
+                  effect === "naval-cruise" ||
+                  effect === "hover-patrol" ||
+                  effect === "airdrop" ||
+                  effect === "none");
               const markerColor = !isTarget
                 ? "#38bdf8"
                 : isPeacefulTarget
@@ -897,13 +1516,13 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.stroke();
 
               const labelTxt = info.name.split(",")[0].toUpperCase();
-              ctx.font = "bold 14px Inter, system-ui, sans-serif";
-              const lw = ctx.measureText(labelTxt).width + 20;
+              ctx.font = "bold 13px Inter, system-ui, sans-serif";
+              const lw = ctx.measureText(labelTxt).width + 18;
               const lx = pt.x - lw / 2;
-              const ly = pt.y + 14;
+              const ly = pt.y + 13;
               ctx.fillStyle = "rgba(9, 10, 20, 0.9)";
               ctx.beginPath();
-              ctx.roundRect(lx, ly, lw, 26, 6);
+              ctx.roundRect(lx, ly, lw, 24, 6);
               ctx.fill();
               ctx.strokeStyle = markerColor;
               ctx.lineWidth = 1.5;
@@ -912,62 +1531,84 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.fillStyle = "#ffffff";
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              ctx.fillText(labelTxt, pt.x, ly + 13);
+              ctx.fillText(labelTxt, pt.x, ly + 12);
               ctx.restore();
             });
 
-            // 6D. Distance Badge in KM
+            // 5D. Distance & Live 3D Altitude Telemetry Badge at Apex
             if (route.showDistanceKm !== false) {
-              const apexPt = getQuadraticPoint(0.5);
-              const totalKm = computeGreatCircleDistanceKm(route.from, route.to);
+              const apexPt = getRoutePoint3D(0.5);
               const coveredKm = Math.round(totalKm * flightT);
-              const distLabel = `${coveredKm} / ${totalKm} KM`;
+              const currentAltKm = isSeaRoute
+                ? 0
+                : Math.round(Math.sin(flightT * Math.PI) * Math.min(480, Math.max(12, totalKm * 0.14)));
+              const distLabel =
+                currentAltKm > 0 && (is3DPersp || is3DGlobe)
+                  ? `${coveredKm}/${totalKm} KM • ALT ${currentAltKm} KM`
+                  : `${coveredKm} / ${totalKm} KM`;
+
               ctx.save();
               ctx.font = "bold 12px monospace";
               const dw = ctx.measureText(distLabel).width + 18;
-              ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+              ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
               ctx.beginPath();
-              ctx.roundRect(apexPt.x - dw / 2, apexPt.y - 30, dw, 22, 6);
+              ctx.roundRect(apexPt.x - dw / 2, apexPt.y - 32, dw, 22, 6);
               ctx.fill();
-              ctx.strokeStyle = `${route.color || "#ef4444"}88`;
-              ctx.lineWidth = 1;
+              ctx.strokeStyle = `${route.color || "#ef4444"}99`;
+              ctx.lineWidth = 1.2;
               ctx.stroke();
               ctx.fillStyle = "#facc15";
               ctx.textAlign = "center";
               ctx.textBaseline = "middle";
-              ctx.fillText(distLabel, apexPt.x, apexPt.y - 19);
+              ctx.fillText(distLabel, apexPt.x, apexPt.y - 21);
               ctx.restore();
             }
 
-            // ─────────────────────────────────────────────────────────────────
-            // 6E. SCENARIO-SPECIFIC TRAJECTORY & VEHICLE / PROJECTILE ANIMATION
-            // ─────────────────────────────────────────────────────────────────
+            // Helper to draw 3D Vertical Altitude Drop-Line + Ground Shadow under airborne asset
+            const draw3DAltitudeDropLine = (pt: { x: number; y: number; groundX: number; groundY: number; altPx: number }, color: string) => {
+              if ((!is3DPersp && !is3DGlobe) || pt.altPx < 6) return;
+              ctx.save();
+              // Ground shadow ellipse
+              ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+              ctx.beginPath();
+              ctx.ellipse(pt.groundX, pt.groundY, 10, 4.5, 0, 0, Math.PI * 2);
+              ctx.fill();
 
+              // Glowing vertical drop-pillar from 3D vehicle down to surface
+              ctx.strokeStyle = `${color}88`;
+              ctx.lineWidth = 1.5;
+              ctx.setLineDash([3, 3]);
+              ctx.beginPath();
+              ctx.moveTo(pt.x, pt.y);
+              ctx.lineTo(pt.groundX, pt.groundY);
+              ctx.stroke();
+              ctx.restore();
+            };
+
+            // 5E. Scenario-Specific Animation
             if (effect === "ship-launch-missile" || effect === "jet-airstrike") {
-              // TWO-STAGE STAND-OFF ATTACK:
-              // Stage 1 (rawP 0.0 -> 0.42): Carrier Vehicle (Ship on sea or Fighter Jet/Heli in air) moves from Point A to Launch Point (t = 0.38).
-              // Stage 2 (rawP 0.42 -> 1.00): Carrier holds station at Launch Point & fires a high-speed Missile that arcs into Point B!
-              const launchSplitP = 0.40;
+              const launchSplitP = 0.4;
               const carrierStopT = 0.36;
-              const carrierT = rawP < launchSplitP ? (rawP / launchSplitP) * carrierStopT : carrierStopT;
-              const carrierPos = getQuadraticPoint(carrierT);
-              const carrierAng = getQuadraticAngle(carrierT);
+              const carrierT =
+                rawP < launchSplitP ? (rawP / launchSplitP) * carrierStopT : carrierStopT;
+              const carrierArc = effect === "ship-launch-missile" ? 0 : 0.16;
+              const carrierPos = getRoutePoint3D(carrierT, route.from, route.to, carrierArc);
+              const carrierAng = getRouteAngle3D(carrierT, route.from, route.to, carrierArc);
 
-              // Draw carrier's trail from p1 to carrierPos
               ctx.save();
               ctx.strokeStyle = "#38bdf8";
               ctx.lineWidth = 3.5;
               ctx.beginPath();
-              ctx.moveTo(p1.x, p1.y);
-              const cSteps = 20;
-              for (let s = 1; s <= cSteps; s++) {
-                const pt = getQuadraticPoint((s / cSteps) * carrierT);
+              const cStart = getRoutePoint3D(0, route.from, route.to, carrierArc);
+              ctx.moveTo(cStart.x, cStart.y);
+              for (let s = 1; s <= 18; s++) {
+                const pt = getRoutePoint3D((s / 18) * carrierT, route.from, route.to, carrierArc);
                 ctx.lineTo(pt.x, pt.y);
               }
               ctx.stroke();
               ctx.restore();
 
-              // Draw the launching Ship / Jet / Helicopter
+              draw3DAltitudeDropLine(carrierPos, "#38bdf8");
               const carrierAsset: TacticalRouteAssetType =
                 effect === "ship-launch-missile"
                   ? route.assetType === "cargo-ship"
@@ -988,13 +1629,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 route.customIconUrl
               );
 
-              // Stage 2: Launch Missile from carrierPos to p2!
               if (rawP >= launchSplitP) {
                 const missileT = Math.min(1, (rawP - launchSplitP) / (1 - launchSplitP));
-                const mMidX = (carrierPos.x + p2.x) / 2;
-                const mMidY = (carrierPos.y + p2.y) / 2 - Math.hypot(p2.x - carrierPos.x, p2.y - carrierPos.y) * 0.34;
+                const launchGeo: TacticalMapPoint = {
+                  name: "Launch Point",
+                  lat: route.from.lat + (route.to.lat - route.from.lat) * carrierStopT,
+                  lon: route.from.lon + (route.to.lon - route.from.lon) * carrierStopT,
+                };
 
-                // Launch flash ring around ship/jet when missile fires
                 if (missileT < 0.35) {
                   ctx.save();
                   ctx.strokeStyle = "rgba(251, 191, 36, 0.85)";
@@ -1005,7 +1647,6 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   ctx.restore();
                 }
 
-                // Glowing red missile trail from ship/jet to target
                 ctx.save();
                 ctx.strokeStyle = "#ef4444";
                 ctx.shadowColor = "#ef4444";
@@ -1013,62 +1654,62 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.lineWidth = 4;
                 ctx.beginPath();
                 ctx.moveTo(carrierPos.x, carrierPos.y);
-                const mSteps = 30;
+                const mSteps = 28;
                 const maxMStep = Math.max(1, Math.floor(missileT * mSteps));
                 for (let s = 1; s <= maxMStep; s++) {
-                  const pt = getQuadraticPoint(s / mSteps, mMidX, mMidY, carrierPos, p2);
+                  const pt = getRoutePoint3D(s / mSteps, launchGeo, route.to, 0.36);
                   ctx.lineTo(pt.x, pt.y);
                 }
                 ctx.stroke();
                 ctx.restore();
 
                 if (missileT < 1) {
-                  const mPos = getQuadraticPoint(missileT, mMidX, mMidY, carrierPos, p2);
-                  const mAng = getQuadraticAngle(missileT, mMidX, mMidY, carrierPos, p2);
+                  const mPos = getRoutePoint3D(missileT, launchGeo, route.to, 0.36);
+                  const mAng = getRouteAngle3D(missileT, launchGeo, route.to, 0.36);
+                  draw3DAltitudeDropLine(mPos, "#ef4444");
                   drawTacticalAssetIcon(ctx, "missile", mPos.x, mPos.y, mAng, "#ef4444", now);
                 }
 
                 if (rawP >= 0.96) {
                   const impactPhase = Math.min(1, (rawP - 0.96) / 0.35);
-                  drawExplosionShockwave(ctx, p2.x, p2.y, impactPhase, false);
+                  drawExplosionShockwave(ctx, p2Ground.x, p2Ground.y, impactPhase, false);
                   drawStatusPill(
                     ctx,
-                    p2.x,
-                    p2.y - 42,
-                    effect === "ship-launch-missile" ? "💥 TARGET SHIP / SITE HIT" : "💥 AIRSTRIKE IMPACT",
+                    p2Ground.x,
+                    p2Ground.y - 42,
+                    effect === "ship-launch-missile"
+                      ? "💥 TARGET SHIP / SITE HIT"
+                      : "💥 AIRSTRIKE IMPACT",
                     "#ef4444",
                     "#fecaca"
                   );
                 }
               }
             } else if (effect === "intercept") {
-              // AIR DEFENSE MID-AIR INTERCEPT (Iron Dome / S-400):
-              // Incoming threat flies from p1 up to t = 0.65; Interceptor launches from p2 and destroys it at t = 0.65!
               const interceptT = 0.64;
               const threatT = Math.min(interceptT, flightT);
-              const interceptPoint = getQuadraticPoint(interceptT);
+              const interceptPoint = getRoutePoint3D(interceptT);
 
-              // Threat trail from p1 to threatT
               ctx.save();
               ctx.strokeStyle = "#ef4444";
               ctx.shadowColor = "#ef4444";
               ctx.shadowBlur = 12;
               ctx.lineWidth = 3.5;
               ctx.beginPath();
-              ctx.moveTo(p1.x, p1.y);
-              for (let s = 1; s <= 25; s++) {
-                const pt = getQuadraticPoint((s / 25) * threatT);
+              const pStart = getRoutePoint3D(0);
+              ctx.moveTo(pStart.x, pStart.y);
+              for (let s = 1; s <= 24; s++) {
+                const pt = getRoutePoint3D((s / 24) * threatT);
                 ctx.lineTo(pt.x, pt.y);
               }
               ctx.stroke();
               ctx.restore();
 
-              // Interceptor missile from p2 to interceptPoint (starts at flightT = 0.15, reaches at 0.64)
               if (flightT > 0.15) {
                 const defT = Math.min(1, (flightT - 0.15) / (interceptT - 0.15));
-                const defX = p2.x + (interceptPoint.x - p2.x) * defT;
-                const defY = p2.y + (interceptPoint.y - p2.y) * defT;
-                const defAng = Math.atan2(interceptPoint.y - p2.y, interceptPoint.x - p2.x);
+                const defX = p2Ground.x + (interceptPoint.x - p2Ground.x) * defT;
+                const defY = p2Ground.y + (interceptPoint.y - p2Ground.y) * defT;
+                const defAng = Math.atan2(interceptPoint.y - p2Ground.y, interceptPoint.x - p2Ground.x);
 
                 ctx.save();
                 ctx.strokeStyle = "#38bdf8";
@@ -1077,7 +1718,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.lineWidth = 3;
                 ctx.setLineDash([4, 4]);
                 ctx.beginPath();
-                ctx.moveTo(p2.x, p2.y);
+                ctx.moveTo(p2Ground.x, p2Ground.y);
                 ctx.lineTo(defX, defY);
                 ctx.stroke();
                 ctx.restore();
@@ -1088,8 +1729,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               }
 
               if (flightT < interceptT) {
-                const tPos = getQuadraticPoint(threatT);
-                const tAng = getQuadraticAngle(threatT);
+                const tPos = getRoutePoint3D(threatT);
+                const tAng = getRouteAngle3D(threatT);
+                draw3DAltitudeDropLine(tPos, "#ef4444");
                 drawTacticalAssetIcon(ctx, route.assetType, tPos.x, tPos.y, tAng, "#ef4444", now, route.customIconUrl);
               } else {
                 const blastP = Math.min(1, (rawP - interceptT) / 0.45);
@@ -1098,20 +1740,17 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   ctx,
                   interceptPoint.x,
                   interceptPoint.y - 38,
-                  "🛡️ INTERCEPTED IN MID-AIR",
+                  "🛡️ INTERCEPTED IN 3D AIRSPACE",
                   "#38bdf8",
                   "#bae6fd"
                 );
               }
             } else {
-              // STANDARD PATH (Explosion, Safe Landing, Naval Cruise, Hover Patrol, Airdrop, None)
-              // Smooth ease-out when landing or docking at port
               const effectiveT =
                 effect === "landing" || effect === "naval-cruise"
                   ? 1 - Math.pow(1 - flightT, 1.65)
                   : flightT;
 
-              // Active Trajectory Trail
               if (effectiveT > 0.01) {
                 ctx.save();
                 ctx.strokeStyle = route.color || "#ef4444";
@@ -1119,26 +1758,27 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.shadowBlur = 14;
                 ctx.lineWidth = 4;
                 ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                const steps = 40;
+                const s0 = getRoutePoint3D(0);
+                ctx.moveTo(s0.x, s0.y);
+                const steps = 36;
                 const maxStep = Math.max(1, Math.floor(effectiveT * steps));
                 for (let s = 1; s <= maxStep; s++) {
-                  const pt = getQuadraticPoint(s / steps);
+                  const pt = getRoutePoint3D(s / steps);
                   ctx.lineTo(pt.x, pt.y);
                 }
-                const tipPt = getQuadraticPoint(effectiveT);
+                const tipPt = getRoutePoint3D(effectiveT);
                 ctx.lineTo(tipPt.x, tipPt.y);
                 ctx.stroke();
                 ctx.restore();
               }
 
-              // Draw Vehicle(s)
               if (route.assetType === "salvo") {
                 [0, -0.08, -0.16].forEach((offset, sIdx) => {
                   const st = Math.max(0, Math.min(1, rawP + offset));
                   if (st > 0 && st < 1) {
-                    const pos = getQuadraticPoint(st);
-                    const ang = getQuadraticAngle(st);
+                    const pos = getRoutePoint3D(st);
+                    const ang = getRouteAngle3D(st);
+                    draw3DAltitudeDropLine(pos, route.color || "#ef4444");
                     drawTacticalAssetIcon(
                       ctx,
                       "missile",
@@ -1151,11 +1791,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   }
                 });
               } else if (effect === "hover-patrol" && rawP >= 0.85) {
-                // Orbit in a circle around Point B with scanning radar cone!
                 const orbitAngle = ((rawP - 0.85) * 9) % (Math.PI * 2);
-                const orbitRadius = 26;
-                const ox = p2.x + Math.cos(orbitAngle) * orbitRadius;
-                const oy = p2.y + Math.sin(orbitAngle) * orbitRadius;
+                const orbitRadius = 28;
+                const ox = p2Ground.x + Math.cos(orbitAngle) * orbitRadius;
+                const oy = p2Ground.y - (is3DPersp ? 28 : 0) + Math.sin(orbitAngle) * orbitRadius * 0.7;
                 const tangentAngle = orbitAngle + Math.PI / 2;
 
                 ctx.save();
@@ -1163,7 +1802,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.setLineDash([4, 4]);
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.arc(p2.x, p2.y, orbitRadius, 0, Math.PI * 2);
+                ctx.ellipse(p2Ground.x, p2Ground.y - (is3DPersp ? 28 : 0), orbitRadius, orbitRadius * 0.7, 0, 0, Math.PI * 2);
                 ctx.stroke();
                 ctx.restore();
 
@@ -1177,15 +1816,15 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   now,
                   route.customIconUrl
                 );
-                drawStatusPill(ctx, p2.x, p2.y - 42, "🔄 ON PATROL / LOITERING", "#10b981", "#a7f3d0");
+                drawStatusPill(ctx, p2Ground.x, p2Ground.y - 46, "🔄 ON PATROL / LOITERING", "#10b981", "#a7f3d0");
               } else if (flightT < 1 || effect === "landing" || effect === "naval-cruise") {
-                const curPos = getQuadraticPoint(effectiveT);
-                const curAngle = getQuadraticAngle( Math.min(0.99, effectiveT) );
-                // Scale down slightly on final touchdown for realistic landing perspective
+                const curPos = getRoutePoint3D(effectiveT);
+                const curAngle = getRouteAngle3D(Math.min(0.99, effectiveT));
                 const landingScale =
                   effect === "landing" && effectiveT > 0.85
                     ? Math.max(0.78, 1 - (effectiveT - 0.85) * 1.2)
                     : 1;
+                draw3DAltitudeDropLine(curPos, route.color || "#ef4444");
                 drawTacticalAssetIcon(
                   ctx,
                   route.assetType,
@@ -1199,43 +1838,37 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 );
               }
 
-              // Target Arrival Effects at Point B (rawP >= 0.94)
               if (rawP >= 0.94) {
                 const phase = Math.min(1, (rawP - 0.94) / 0.38);
                 if (effect === "explosion") {
-                  drawExplosionShockwave(ctx, p2.x, p2.y, phase, false);
+                  drawExplosionShockwave(ctx, p2Ground.x, p2Ground.y, phase, false);
                 } else if (effect === "landing") {
-                  // Green Safe Touchdown Beacon Ring + Badge
                   ctx.save();
                   ctx.strokeStyle = `rgba(16, 185, 129, ${1 - phase * 0.6})`;
                   ctx.lineWidth = 3;
                   ctx.beginPath();
-                  ctx.arc(p2.x, p2.y, 14 + phase * 28, 0, Math.PI * 2);
+                  ctx.arc(p2Ground.x, p2Ground.y, 14 + phase * 28, 0, Math.PI * 2);
                   ctx.stroke();
                   ctx.restore();
-                  drawStatusPill(ctx, p2.x, p2.y - 42, "🛬 SAFE LANDING • ARRIVED", "#10b981", "#a7f3d0");
+                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 42, "🛬 SAFE LANDING • ARRIVED", "#10b981", "#a7f3d0");
                 } else if (effect === "naval-cruise") {
-                  // Cyan Naval Port / Patrol Sonar Ring + Badge
                   ctx.save();
                   ctx.strokeStyle = `rgba(6, 182, 212, ${1 - phase * 0.5})`;
                   ctx.lineWidth = 2.5;
                   ctx.beginPath();
-                  ctx.arc(p2.x, p2.y, 16 + phase * 32, 0, Math.PI * 2);
+                  ctx.arc(p2Ground.x, p2Ground.y, 16 + phase * 32, 0, Math.PI * 2);
                   ctx.stroke();
                   ctx.restore();
-                  drawStatusPill(ctx, p2.x, p2.y - 42, "⚓ NAVAL PATROL / DOCKED", "#06b6d4", "#a5f3fc");
+                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 42, "⚓ NAVAL PATROL / DOCKED", "#06b6d4", "#a5f3fc");
                 } else if (effect === "airdrop") {
-                  // 3 Animated Parachutes Floating Down onto Point B!
                   [-18, 0, 18].forEach((offsetX, pIdx) => {
-                    const dropY = p2.y - 38 + phase * 36 + pIdx * 4;
-                    const dropX = p2.x + offsetX + Math.sin(now / 180 + pIdx) * 4;
+                    const dropY = p2Ground.y - 38 + phase * 36 + pIdx * 4;
+                    const dropX = p2Ground.x + offsetX + Math.sin(now / 180 + pIdx) * 4;
                     ctx.save();
-                    // Parachute Canopy
                     ctx.fillStyle = "#38bdf8";
                     ctx.beginPath();
                     ctx.arc(dropX, dropY, 9, Math.PI, 0, false);
                     ctx.fill();
-                    // Suspension lines & payload box
                     ctx.strokeStyle = "#e2e8f0";
                     ctx.lineWidth = 1;
                     ctx.beginPath();
@@ -1248,45 +1881,97 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                     ctx.fillRect(dropX - 3.5, dropY + 10, 7, 6);
                     ctx.restore();
                   });
-                  drawStatusPill(ctx, p2.x, p2.y - 54, "🪂 AIRDROP DELIVERED", "#38bdf8", "#bae6fd");
+                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 54, "🪂 AIRDROP DELIVERED", "#38bdf8", "#bae6fd");
                 }
               }
             }
           });
 
-          // 7. Broadcast News Top-Left Breaking Map Header Banner
+          // ─────────────────────────────────────────────────────────────────
+          // STEP 6: TOP-LEFT BREAKING NEWS BANNER & TOP-RIGHT TELEMETRY HUD
+          // ─────────────────────────────────────────────────────────────────
           if (config.title) {
             ctx.save();
             ctx.font = "bold 20px Inter, system-ui, sans-serif";
             const tw = ctx.measureText(config.title.toUpperCase()).width;
-            const boxW = Math.max(260, tw + 115);
-            const boxH = config.subtitle ? 62 : 42;
-            ctx.fillStyle = "rgba(9, 10, 20, 0.9)";
+            const boxW = Math.max(260, tw + 125);
+            const boxH = config.subtitle ? 64 : 44;
+            ctx.fillStyle = "rgba(9, 10, 20, 0.92)";
             ctx.beginPath();
-            ctx.roundRect(24, 22, boxW, boxH, 10);
+            ctx.roundRect(22, 20, boxW, boxH, 10);
             ctx.fill();
-            ctx.strokeStyle = "rgba(239, 68, 68, 0.65)";
+            ctx.strokeStyle = "rgba(239, 68, 68, 0.7)";
             ctx.lineWidth = 2;
             ctx.stroke();
 
             ctx.fillStyle = "#e11d48";
             ctx.beginPath();
-            ctx.roundRect(34, 30, 74, 24, 5);
+            ctx.roundRect(32, 28, 82, 24, 5);
             ctx.fill();
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 11px Inter, sans-serif";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText("LIVE MAP", 71, 42);
+            ctx.fillText(viewMode === "2d" ? "LIVE MAP" : "3D RADAR", 73, 40);
 
             ctx.textAlign = "left";
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 18px Inter, system-ui, sans-serif";
-            ctx.fillText(config.title.toUpperCase(), 118, 43);
+            ctx.fillText(config.title.toUpperCase(), 124, 41);
             if (config.subtitle) {
               ctx.fillStyle = "#38bdf8";
               ctx.font = "600 13px Inter, system-ui, sans-serif";
-              ctx.fillText(config.subtitle, 36, 70);
+              ctx.fillText(config.subtitle, 34, 68);
+            }
+            ctx.restore();
+          }
+
+          // Top-Right Live 3D & Simulator Telemetry HUD (Visible to Viewers on Stream!)
+          if (config.showTelemetryHud !== false) {
+            ctx.save();
+            const hudW = 248;
+            const hudH = simulatorActive ? 88 : 68;
+            const hudX = W - hudW - 22;
+            const hudY = 20;
+            ctx.fillStyle = "rgba(6, 10, 22, 0.88)";
+            ctx.beginPath();
+            ctx.roundRect(hudX, hudY, hudW, hudH, 10);
+            ctx.fill();
+            ctx.strokeStyle = simulatorActive ? "rgba(16, 185, 129, 0.65)" : "rgba(56, 189, 248, 0.45)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.font = "bold 11px monospace";
+            ctx.fillStyle = simulatorActive ? "#34d399" : "#38bdf8";
+            ctx.textAlign = "left";
+            ctx.fillText(
+              simulatorActive
+                ? `🎮 LIVE SIMULATOR • ${allRoutesToRender.length} TRACKS`
+                : `🛰️ ${viewMode.toUpperCase()} • PITCH ${effPitch}°`,
+              hudX + 12,
+              hudY + 20
+            );
+
+            ctx.font = "11px monospace";
+            ctx.fillStyle = "#e2e8f0";
+            ctx.fillText(
+              `LAT ${centerLat.toFixed(2)}°N  LON ${centerLon.toFixed(2)}°E  Z:${zInt}x`,
+              hudX + 12,
+              hudY + 40
+            );
+            ctx.fillStyle = "#facc15";
+            ctx.fillText(
+              `SPEED: ${(speedMultiplier * 3.2).toFixed(1)} MACH • YAW: ${effYaw}°`,
+              hudX + 12,
+              hudY + 58
+            );
+            if (simulatorActive) {
+              ctx.fillStyle = "#fda4af";
+              ctx.fillText(
+                `CLICK MAP TO FIRE: ${simTool.toUpperCase()}`,
+                hudX + 12,
+                hudY + 76
+              );
             }
             ctx.restore();
           }
@@ -1298,70 +1983,243 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
 
     animId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [config, isPlaying, speedMultiplier, localStyle]);
+  }, [
+    config,
+    isPlaying,
+    speedMultiplier,
+    localStyle,
+    viewMode,
+    pitchDeg,
+    yawDeg,
+    centerLat,
+    centerLon,
+    zoom,
+    simulatorActive,
+    simTool,
+  ]);
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center bg-[#050b14] group/map select-none">
+    <div
+      onContextMenu={(e) => e.preventDefault()}
+      className="relative w-full h-full flex items-center justify-center bg-[#030712] group/map select-none overflow-hidden"
+    >
       <canvas
         ref={canvasRef}
         id="livestudio-tactical-map-canvas"
         width={1280}
         height={720}
-        onClick={(e) => {
-          if (!onMapClickLatLon || !canvasRef.current) return;
-          const rect = canvasRef.current.getBoundingClientRect();
-          const scaleX = 1280 / Math.max(1, rect.width);
-          const scaleY = 720 / Math.max(1, rect.height);
-          const cx = (e.clientX - rect.left) * scaleX;
-          const cy = (e.clientY - rect.top) * scaleY;
-          const coords = canvasXYToLatLon(
-            cx,
-            cy,
-            config.centerLat,
-            config.centerLon,
-            Math.max(2, Math.min(11, Math.round(config.zoom || 4))),
-            1280,
-            720
-          );
-          onMapClickLatLon(coords.lat, coords.lon);
-        }}
+        onMouseDown={handleCanvasMouseDown}
+        onMouseMove={handleCanvasMouseMove}
+        onMouseUp={handleCanvasMouseUp}
+        onMouseLeave={() => setIsDraggingMap(false)}
+        onWheel={handleCanvasWheel}
         className={cn(
           "w-full h-full object-contain",
-          onMapClickLatLon ? "cursor-crosshair" : "cursor-default"
+          simulatorActive
+            ? "cursor-crosshair"
+            : isDraggingMap
+            ? "cursor-grabbing"
+            : "cursor-grab"
         )}
       />
 
-      {/* On-Stage Broadcast Tactical Map Transport Bar */}
+      {/* Interactive Live Simulator Floating Command Bar (Top-Center when Simulator is ON) */}
+      {isInteractive && simulatorActive && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="absolute top-14 left-1/2 -translate-x-1/2 z-30 bg-[#070b18]/95 backdrop-blur-md border border-emerald-500/60 rounded-xl px-3 py-1.5 flex flex-wrap items-center gap-1.5 shadow-2xl pointer-events-auto"
+        >
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 flex items-center gap-1 pr-1 border-r border-white/15">
+            <Gamepad2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Click Map to Spawn:</span>
+          </span>
+
+          {[
+            { id: "launch-missile", label: "🚀 Missile Strike" },
+            { id: "air-defense-intercept", label: "🛡️ Air Defense" },
+            { id: "fighter-airstrike", label: "✈️ Fighter Jet" },
+            { id: "naval-strike", label: "🚢 Warship Strike" },
+            { id: "airliner-flight", label: "🛫 Safe Flight" },
+          ].map((tool) => (
+            <button
+              key={tool.id}
+              type="button"
+              onClick={() => setSimTool(tool.id as SimulatorCommandTool)}
+              className={cn(
+                "px-2 py-1 rounded-lg text-[10.5px] font-bold border transition-all",
+                simTool === tool.id
+                  ? "bg-emerald-600 text-white border-emerald-300 shadow"
+                  : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+              )}
+            >
+              {tool.label}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            onClick={handleTriggerSalvoBarrage}
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-extrabold flex items-center gap-1 shadow-lg animate-pulse"
+            title="Launch 5x Simultaneous Multi-Target Missile Barrage!"
+          >
+            <Flame className="w-3.5 h-3.5" />
+            <span>5x Salvo Barrage!</span>
+          </button>
+
+          {simRoutes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                simRoutesRef.current = [];
+                setSimRoutes([]);
+              }}
+              className="px-2 py-1 rounded-lg bg-white/10 hover:bg-rose-500/30 text-slate-200 hover:text-rose-200 text-[10px] font-semibold"
+              title="Clear Simulator Units"
+            >
+              Clear ({simRoutes.length})
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* On-Stage Broadcast 3D / 2D / Simulator Control Dock (Bottom) */}
       {isInteractive && (
         <div
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
-          className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-30 bg-[#090a14]/95 backdrop-blur-md border border-cyan-500/40 rounded-xl px-3 py-1.5 flex items-center gap-2 shadow-2xl opacity-0 group-hover/map:opacity-100 transition-opacity pointer-events-auto"
+          className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-30 bg-[#080a16]/95 backdrop-blur-md border border-cyan-500/45 rounded-xl px-3 py-1.5 flex flex-wrap items-center gap-2 shadow-2xl opacity-95 group-hover/map:opacity-100 transition-opacity pointer-events-auto max-w-[96%]"
         >
+          {/* Play / Pause */}
           <button
             type="button"
             onClick={() => setIsPlaying(!isPlaying)}
-            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold flex items-center gap-1 shadow"
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold flex items-center gap-1 shadow"
           >
-            {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+            {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
             <span>{isPlaying ? "Pause" : "Animate"}</span>
           </button>
 
+          {/* Replay */}
           <button
             type="button"
             onClick={handleReplay}
-            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1 shadow"
+            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 shadow"
             title="Restart Animation from Origin"
           >
-            <RotateCcw className="w-3 h-3" />
+            <RotateCcw className="w-3.5 h-3.5" />
             <span>Replay</span>
+          </button>
+
+          {/* 2D / 3D Terrain / 3D Globe Mode Switcher */}
+          <div className="flex items-center bg-black/60 rounded-lg p-0.5 border border-white/15">
+            {(
+              [
+                { id: "2d", label: "2D Map" },
+                { id: "3d-perspective", label: "🏔️ 3D Tilt" },
+                { id: "3d-globe", label: "🌍 3D Globe" },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  setViewMode(m.id);
+                  if (m.id === "3d-perspective" && pitchDeg < 15) {
+                    setPitchDeg(45);
+                    syncCameraToParent({ viewMode: m.id, pitchDeg: 45 });
+                  } else {
+                    syncCameraToParent({ viewMode: m.id });
+                  }
+                }}
+                className={cn(
+                  "px-2 py-0.5 rounded-md text-[10.5px] font-bold transition-all",
+                  viewMode === m.id
+                    ? "bg-cyan-600 text-white shadow"
+                    : "text-slate-300 hover:text-white"
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 3D Pitch Slider (Visible when in 3D Tilt mode) */}
+          {viewMode === "3d-perspective" && (
+            <div className="flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-lg border border-white/10">
+              <span className="text-[10px] text-cyan-300 font-semibold">3D Tilt:</span>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={2}
+                value={pitchDeg}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setPitchDeg(val);
+                  syncCameraToParent({ pitchDeg: val });
+                }}
+                className="w-16 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                title="Adjust 3D Camera Tilt Angle (or Right-Click + Drag on Map)"
+              />
+              <span className="text-[10px] font-mono text-white min-w-[26px]">{pitchDeg}°</span>
+            </div>
+          )}
+
+          {/* Zoom In / Out Buttons */}
+          <div className="flex items-center gap-1 bg-white/5 px-1.5 py-0.5 rounded-lg border border-white/10">
+            <button
+              type="button"
+              onClick={() => {
+                const nz = Math.max(2, zoom - 1);
+                setZoom(nz);
+                syncCameraToParent({ zoom: nz });
+              }}
+              className="p-0.5 text-slate-300 hover:text-white"
+              title="Zoom Out Map"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-[10px] font-mono text-amber-300 px-1">{zoom}x</span>
+            <button
+              type="button"
+              onClick={() => {
+                const nz = Math.min(10, zoom + 1);
+                setZoom(nz);
+                syncCameraToParent({ zoom: nz });
+              }}
+              className="p-0.5 text-slate-300 hover:text-white"
+              title="Zoom In Map"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Live Simulator Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const nextSim = !simulatorActive;
+              setSimulatorActive(nextSim);
+              syncCameraToParent({ simulatorEnabled: nextSim });
+            }}
+            className={cn(
+              "px-2.5 py-1 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all",
+              simulatorActive
+                ? "bg-emerald-600 text-white border-emerald-300 shadow-lg shadow-emerald-600/30"
+                : "bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25"
+            )}
+            title="Toggle Live Interactive Tactical Simulator (Click on map to fire missiles, interceptors & jets live on stage!)"
+          >
+            <Gamepad2 className="w-3.5 h-3.5" />
+            <span>Simulator {simulatorActive ? "ON" : "OFF"}</span>
           </button>
 
           {/* Speed Selector */}
           <select
             value={String(speedMultiplier)}
             onChange={(e) => setSpeedMultiplier(Number(e.target.value))}
-            className="bg-slate-900 border border-white/15 rounded px-1.5 py-0.5 text-[10px] font-mono text-cyan-300 focus:outline-none"
+            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10.5px] font-mono text-cyan-300 focus:outline-none"
             title="Animation Speed"
           >
             <option value="0.5">0.5x Slow</option>
@@ -1373,14 +2231,18 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           {/* Map Theme Switcher */}
           <select
             value={localStyle}
-            onChange={(e) => setLocalStyle(e.target.value as TacticalMapConfig["mapStyle"])}
-            className="bg-slate-900 border border-white/15 rounded px-1.5 py-0.5 text-[10px] text-slate-200 focus:outline-none"
-            title="Switch Broadcast Map Theme (All 100% Free, Zero API Key)"
+            onChange={(e) => {
+              const st = e.target.value as TacticalMapConfig["mapStyle"];
+              setLocalStyle(st);
+              syncCameraToParent({ mapStyle: st });
+            }}
+            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10.5px] text-slate-200 focus:outline-none"
+            title="Switch Broadcast Map Theme (100% Free Esri ArcGIS)"
           >
+            <option value="satellite">🛰️ Satellite</option>
             <option value="dark-radar">🌑 Dark Radar</option>
-            <option value="satellite">🛰️ Satellite + Borders</option>
-            <option value="political">🗺️ Political Street</option>
-            <option value="ocean">🌊 Maritime / Sea</option>
+            <option value="political">🗺️ Political</option>
+            <option value="ocean">🌊 Maritime</option>
             <option value="vector-grid">🎯 Grid Only</option>
           </select>
 
@@ -1388,10 +2250,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             <button
               type="button"
               onClick={onOpenEditorModal}
-              className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-[10px] font-semibold flex items-center gap-1"
+              className="px-2.5 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-400/50 text-[10.5px] font-bold flex items-center gap-1"
             >
-              <Edit2 className="w-3 h-3" />
-              <span>Edit Map / Scenario</span>
+              <Edit2 className="w-3.5 h-3.5" />
+              <span>Edit Map</span>
             </button>
           )}
         </div>
@@ -1435,8 +2297,14 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
   const defaultConfig: TacticalMapConfig = {
     title: "BREAKING: MISSILE & AIRSTRIKE TRAJECTORY",
-    subtitle: "Live Tactical Radar & Distance Analysis",
+    subtitle: "Live 3D Tactical Radar, Altitude & Distance Analysis",
     mapStyle: "satellite",
+    viewMode: "3d-perspective",
+    pitchDeg: 45,
+    yawDeg: 0,
+    simulatorEnabled: false,
+    showTelemetryHud: true,
+    altitudeScale: 1.25,
     centerLat: 32.8,
     centerLon: 44.0,
     zoom: 5,
@@ -1453,7 +2321,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
         targetMarkerType: "default",
         curveDirection: "up",
         color: "#ef4444",
-        arcHeight: 0.32,
+        arcHeight: 0.34,
         speed: 1.0,
         showImpactShockwave: true,
         showDistanceKm: true,
@@ -1464,6 +2332,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
   const [mapConfig, setMapConfig] = useState<TacticalMapConfig>(
     initialItem?.mapConfig || defaultConfig
   );
+  const [activeModalTab, setActiveModalTab] = useState<"builder" | "simulator" | "library">("builder");
   const [activeRouteIdx, setActiveRouteIdx] = useState(0);
   const [clickPlacementMode, setClickPlacementMode] = useState<"from" | "to" | null>(null);
   const [fromSearchQuery, setFromSearchQuery] = useState("");
@@ -1472,6 +2341,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
   const [toResults, setToResults] = useState<TacticalMapPoint[]>([]);
   const [editingMapId, setEditingMapId] = useState<string | null>(initialItem?.id || null);
   const customIconInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (initialItem?.mapConfig) {
+      setMapConfig({
+        ...defaultConfig,
+        ...initialItem.mapConfig,
+      });
+      setEditingMapId(initialItem.id);
+    }
+  }, [initialItem]);
 
   const effectiveSceneId = targetSceneId || activeSceneId;
   const targetScene = scenes.find((s) => s.id === effectiveSceneId);
@@ -1531,34 +2410,30 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     });
   };
 
-  // Smart Auto-Configuration when user selects a Vehicle Type
   const handleSelectAssetType = (assetType: TacticalRouteAssetType) => {
     if (assetType === "custom-image" && !activeRoute.customIconUrl) {
       customIconInputRef.current?.click();
       return;
     }
     if (assetType === "airliner") {
-      // Passenger Airliner -> Safe Landing by default, gentle flight curve, cyan color
       updateActiveRoute({
         assetType,
         targetEffect: "landing",
         showImpactShockwave: false,
-        arcHeight: 0.18,
+        arcHeight: 0.2,
         curveDirection: "up",
         color: "#38bdf8",
       });
     } else if (assetType === "helicopter") {
-      // Helicopter -> Safe Landing by default (can also choose Hover Patrol / Airdrop / Strike)
       updateActiveRoute({
         assetType,
         targetEffect: "landing",
         showImpactShockwave: false,
-        arcHeight: 0.15,
+        arcHeight: 0.16,
         curveDirection: "up",
         color: "#10b981",
       });
     } else if (assetType === "warship" || assetType === "cargo-ship") {
-      // Ship -> Flat Sea Route (arcHeight = 0) + Naval Cruise (no explosion unless Ship Fires Missile is chosen!)
       updateActiveRoute({
         assetType,
         targetEffect: "naval-cruise",
@@ -1581,17 +2456,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
         assetType,
         targetEffect: "jet-airstrike",
         showImpactShockwave: true,
-        arcHeight: 0.24,
+        arcHeight: 0.26,
         curveDirection: "up",
         color: "#ef4444",
       });
     } else {
-      // Missile / Salvo / Drone
       updateActiveRoute({
         assetType,
         targetEffect: "explosion",
         showImpactShockwave: true,
-        arcHeight: 0.34,
+        arcHeight: 0.35,
         curveDirection: "up",
         color: "#ef4444",
       });
@@ -1676,18 +2550,28 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
     const cleanName = mapConfig.title.trim() || `Map: ${routeSummary}`;
 
-    if (editingMapId) {
+    // Check if an identical map already exists so we update it rather than creating duplicates
+    const existingIdToUpdate =
+      editingMapId ||
+      savedMaps.find(
+        (m) =>
+          m.name.trim().toLowerCase() === cleanName.toLowerCase() &&
+          m.duration === routeSummary
+      )?.id ||
+      null;
+
+    if (existingIdToUpdate) {
       const updates: Partial<MediaFileItem> = {
         name: cleanName,
         type: "map",
-        url: `map://${editingMapId}`,
+        url: `map://${existingIdToUpdate}`,
         duration: routeSummary,
         mapConfig,
         loop: mapConfig.loopAnimation,
         isUploaded: true,
       };
-      updateMediaLibraryItem(editingMapId, updates);
-      const existing = mediaLibrary.find((m) => m.id === editingMapId);
+      updateMediaLibraryItem(existingIdToUpdate, updates);
+      const existing = mediaLibrary.find((m) => m.id === existingIdToUpdate);
       if (attachAndPresentNow && existing) {
         const merged = { ...existing, ...updates };
         if (effectiveSceneId) {
@@ -1698,7 +2582,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
         onSaveMapItem?.(merged);
         onClose();
       } else {
-        setEditingMapId(null);
+        setEditingMapId(existingIdToUpdate);
       }
       return;
     }
@@ -1738,596 +2622,806 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-6xl bg-[#0b0d18] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white max-h-[94vh]"
+        className="w-[96vw] max-w-[1440px] h-[92vh] bg-[#0b0d18] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="px-5 py-3 border-b border-white/10 bg-[#111426] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300">
-              <Globe className="w-5 h-5" />
+        {/* Top Header with Large Readable Title & Navigation Tabs */}
+        <div className="px-6 py-3.5 border-b border-white/10 bg-[#111426] flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-cyan-500/20 border border-cyan-400/50 flex items-center justify-center text-cyan-300 shadow-lg">
+              <Globe className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>Broadcast News Tactical Map — Air, Land & Naval Animator</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                  100% Free Esri ArcGIS • Zero API Key • Air, Sea & Missile Scenarios
+              <h3 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2.5 flex-wrap">
+                <span>Broadcast News Tactical Map — 3D/2D Air, Land & Naval Simulator</span>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
+                  3D Tilt & Globe • Live Mouse Control • Interactive Simulator
                 </span>
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Animate Passenger Flights (Safe Landing), Naval Ships (Sea Cruise or Ship-to-Ship Missile Strike), Fighter Jets & Air Defense Intercepts
+              <p className="text-xs text-slate-300 mt-0.5">
+                Drag map with mouse to pan, scroll to zoom, right-click drag to tilt 3D angle, or enable Simulator Mode to launch live missiles on stage
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {/* Navigation Tabs inside Tactical Map Studio */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-black/50 p-1 rounded-xl border border-white/15">
+              {[
+                { id: "builder" as const, label: "🛠️ Route & 3D Builder" },
+                { id: "simulator" as const, label: "🎮 Live War/Flight Simulator" },
+                { id: "library" as const, label: `📁 Saved Maps (${savedMaps.length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveModalTab(tab.id);
+                    if (tab.id === "simulator") {
+                      setMapConfig((prev) => ({ ...prev, simulatorEnabled: true }));
+                    }
+                  }}
+                  className={cn(
+                    "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all",
+                    activeModalTab === tab.id
+                      ? "bg-cyan-600 text-white shadow-md"
+                      : "text-slate-300 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 transition-colors"
+              title="Close Window"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
-          {/* Left Column: Map Search, Points, Vehicle & Target Scenario Controls (5 cols) */}
-          <div className="lg:col-span-5 p-4 space-y-3 overflow-y-auto custom-scrollbar">
-            {/* Map Headline & Subtitle */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                  News Map Headline Banner
-                </label>
-                <input
-                  type="text"
-                  value={mapConfig.title}
-                  onChange={(e) => setMapConfig({ ...mapConfig, title: e.target.value })}
-                  placeholder="e.g. BREAKING: NAVAL & FLIGHT TRACKER"
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-white font-semibold focus:outline-none focus:border-cyan-400"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                  Subtitle / Telemetry Note
-                </label>
-                <input
-                  type="text"
-                  value={mapConfig.subtitle || ""}
-                  onChange={(e) => setMapConfig({ ...mapConfig, subtitle: e.target.value })}
-                  placeholder="e.g. Live Radar & Distance Analysis"
-                  className="w-full px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-cyan-200 focus:outline-none focus:border-cyan-400"
-                />
-              </div>
-            </div>
+        {/* Main Body (12-Column Responsive Split) */}
+        <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
+          {/* Left Column (5 Cols): Builder / Simulator / Library Controls */}
+          <div className="lg:col-span-5 p-5 space-y-4 overflow-y-auto custom-scrollbar">
+            {activeModalTab === "library" ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-cyan-300">
+                    Saved Tactical Maps ({savedMaps.length})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingMapId(null);
+                      setMapConfig(defaultConfig);
+                      setActiveModalTab("builder");
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Create New Map</span>
+                  </button>
+                </div>
 
-            {/* Multi-Route Tabs */}
-            <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
-              <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none">
-                {mapConfig.routes.map((rt, idx) => (
-                  <button
-                    key={rt.id}
-                    type="button"
-                    onClick={() => setActiveRouteIdx(idx)}
-                    className={cn(
-                      "px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all shrink-0",
-                      idx === activeRouteIdx
-                        ? "bg-cyan-600 text-white border-cyan-400"
-                        : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
-                    )}
-                  >
-                    Path {idx + 1}: {rt.from.name.split(",")[0]} ➔ {rt.to.name.split(",")[0]}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleAddRoute}
-                  className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1"
-                  title="Add another simultaneous flight/ship/missile path"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>+ Path</span>
-                </button>
-                {mapConfig.routes.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteRoute(activeRouteIdx)}
-                    className="p-1 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-600 hover:text-white"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                {savedMaps.length === 0 ? (
+                  <div className="p-8 rounded-2xl border border-dashed border-white/15 text-center space-y-2 text-slate-400">
+                    <Globe className="w-10 h-10 text-cyan-400/50 mx-auto" />
+                    <p className="text-sm font-bold text-white">No Saved Tactical Maps Yet</p>
+                    <p className="text-xs text-slate-400">
+                      Configure a route in the Builder tab and click &ldquo;Save to Map Library&rdquo;.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {savedMaps.map((m) => {
+                      const isAttached = targetScene?.activeMedia?.id === m.id;
+                      const isLive = activeMedia?.id === m.id;
+                      return (
+                        <div
+                          key={m.id}
+                          className={cn(
+                            "p-3.5 rounded-xl border flex items-center justify-between gap-3 transition-all",
+                            isAttached || isLive
+                              ? "bg-cyan-950/40 border-cyan-400 ring-1 ring-cyan-400/30"
+                              : "bg-white/[0.04] border-white/10 hover:border-cyan-500/40"
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-bold text-white truncate flex items-center gap-2">
+                              <span>🗺️ {m.name}</span>
+                              {isAttached && (
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
+                                  In Scene ✓
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-cyan-300 font-mono mt-1">
+                              {m.duration} • {m.mapConfig?.viewMode || "3d-perspective"}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (effectiveSceneId) {
+                                  updateScene(effectiveSceneId, { activeMedia: m });
+                                  if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
+                                }
+                                setActiveMedia(m);
+                                onSaveMapItem?.(m);
+                                onClose();
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow"
+                            >
+                              Present
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (m.mapConfig) {
+                                  setMapConfig(m.mapConfig);
+                                  setEditingMapId(m.id);
+                                  setActiveModalTab("builder");
+                                }
+                              }}
+                              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200"
+                              title="Edit Map"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeMediaLibraryItem(m.id)}
+                              className="p-2 rounded-lg bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white"
+                              title="Delete Map from Library"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
-
-            {/* Origin (Point A) & Target (Point B) Location Search */}
-            {activeRoute && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-2.5 rounded-xl bg-indigo-950/25 border border-indigo-500/30">
-                {/* Point A: Origin */}
-                <div className="space-y-1.5 relative">
+            ) : (
+              <>
+                {/* 3D / 2D Camera & Perspective Control Card */}
+                <div className="p-3.5 rounded-xl bg-cyan-950/25 border border-cyan-500/35 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase text-cyan-300 flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-cyan-400" />
-                      <span>1. Origin / Launch</span>
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                      <Box className="w-4 h-4 text-cyan-400" />
+                      <span>3D View Mode, Camera Tilt & Live Simulator</span>
                     </span>
                     <button
                       type="button"
                       onClick={() =>
-                        setClickPlacementMode(clickPlacementMode === "from" ? null : "from")
+                        setMapConfig((prev) => ({
+                          ...prev,
+                          pitchDeg: 45,
+                          yawDeg: 0,
+                          viewMode: "3d-perspective",
+                        }))
                       }
-                      className={cn(
-                        "px-1.5 py-0.5 rounded text-[9px] font-bold border",
-                        clickPlacementMode === "from"
-                          ? "bg-cyan-500 text-slate-950 border-cyan-300 animate-pulse"
-                          : "bg-white/5 text-slate-300 border-white/15"
-                      )}
+                      className="text-[11px] text-cyan-300 hover:underline font-semibold"
                     >
-                      {clickPlacementMode === "from" ? "Click Map..." : "🎯 Pick on Map"}
+                      Reset 3D Angle
                     </button>
                   </div>
 
-                  <div className="text-xs font-bold text-white bg-black/50 px-2.5 py-1 rounded-lg border border-cyan-500/30 truncate">
-                    {activeRoute.from.name}
-                  </div>
-
-                  <div className="relative">
-                    <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2" />
-                    <input
-                      type="text"
-                      value={fromSearchQuery}
-                      onChange={(e) => {
-                        setFromSearchQuery(e.target.value);
-                        searchLocations(e.target.value, "from");
-                      }}
-                      placeholder="Search City / Sea / Port..."
-                      className="w-full pl-7 pr-2 py-1 rounded-lg bg-black/70 border border-white/15 text-[11px] text-white focus:outline-none focus:border-cyan-400"
-                    />
-                  </div>
-
-                  {fromResults.length > 0 && (
-                    <div className="absolute z-50 left-0 right-0 mt-1 bg-[#0e1020] border border-cyan-500/50 rounded-xl shadow-2xl max-h-40 overflow-y-auto divide-y divide-white/5">
-                      {fromResults.map((loc, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => handleSelectPoint("from", loc)}
-                          className="w-full px-2.5 py-1.5 text-left text-[11px] text-slate-200 hover:bg-cyan-600/30 hover:text-white flex items-center justify-between"
-                        >
-                          <span className="truncate">{loc.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Point B: Target */}
-                <div className="space-y-1.5 relative">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase text-rose-300 flex items-center gap-1">
-                      <Crosshair className="w-3 h-3 text-rose-400" />
-                      <span>2. Destination / Target</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setClickPlacementMode(clickPlacementMode === "to" ? null : "to")
-                      }
-                      className={cn(
-                        "px-1.5 py-0.5 rounded text-[9px] font-bold border",
-                        clickPlacementMode === "to"
-                          ? "bg-rose-500 text-white border-rose-300 animate-pulse"
-                          : "bg-white/5 text-slate-300 border-white/15"
-                      )}
-                    >
-                      {clickPlacementMode === "to" ? "Click Map..." : "🎯 Pick on Map"}
-                    </button>
-                  </div>
-
-                  <div className="text-xs font-bold text-white bg-black/50 px-2.5 py-1 rounded-lg border border-rose-500/30 truncate">
-                    {activeRoute.to.name}
-                  </div>
-
-                  <div className="relative">
-                    <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2" />
-                    <input
-                      type="text"
-                      value={toSearchQuery}
-                      onChange={(e) => {
-                        setToSearchQuery(e.target.value);
-                        searchLocations(e.target.value, "to");
-                      }}
-                      placeholder="Search Destination / Sea..."
-                      className="w-full pl-7 pr-2 py-1 rounded-lg bg-black/70 border border-white/15 text-[11px] text-white focus:outline-none focus:border-rose-400"
-                    />
-                  </div>
-
-                  {toResults.length > 0 && (
-                    <div className="absolute z-50 left-0 right-0 mt-1 bg-[#0e1020] border border-rose-500/50 rounded-xl shadow-2xl max-h-40 overflow-y-auto divide-y divide-white/5">
-                      {toResults.map((loc, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => handleSelectPoint("to", loc)}
-                          className="w-full px-2.5 py-1.5 text-left text-[11px] text-slate-200 hover:bg-rose-600/30 hover:text-white flex items-center justify-between"
-                        >
-                          <span className="truncate">{loc.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Animated Vehicle / Projectile Selector */}
-            {activeRoute && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold uppercase text-slate-400">
-                    3. Select Vehicle / Vessel / Projectile
-                  </label>
-                  <input
-                    ref={customIconInputRef}
-                    type="file"
-                    accept="image/png,image/gif,image/svg+xml,image/webp,image/jpeg"
-                    className="hidden"
-                    onChange={handleCustomIconUpload}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => customIconInputRef.current?.click()}
-                    className="text-[10px] text-cyan-400 hover:underline flex items-center gap-1 font-semibold"
-                  >
-                    <Upload className="w-3 h-3" />
-                    <span>Upload Custom PNG/GIF</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-5 gap-1">
-                  {[
-                    { id: "missile", label: "🚀 Missile" },
-                    { id: "salvo", label: "🚀🚀 3x Salvo" },
-                    { id: "fighter-jet", label: "✈️ Fighter Jet" },
-                    { id: "airliner", label: "🛫 Airliner" },
-                    { id: "helicopter", label: "🚁 Helicopter" },
-                    { id: "warship", label: "🚢 Warship" },
-                    { id: "cargo-ship", label: "⛴️ Cargo Ship" },
-                    { id: "drone", label: "🛸 Drone UAV" },
-                    { id: "tank", label: "🛡️ Tank/Convoy" },
-                    { id: "custom-image", label: "🖼️ Custom" },
-                  ].map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleSelectAssetType(item.id as TacticalRouteAssetType)}
-                      className={cn(
-                        "py-1.5 px-1 rounded-lg text-[9.5px] font-semibold border text-center transition-all truncate",
-                        activeRoute.assetType === item.id
-                          ? "bg-rose-600/35 border-rose-400 text-white font-bold shadow"
-                          : "bg-white/5 border-white/10 text-slate-300 hover:text-white"
-                      )}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* NEW: Target Arrival / Mission Scenario Selector (Landing, Sea Cruise, Ship Fires Missile, Jet Airstrike, Intercept, etc.) */}
-            {activeRoute && (
-              <div className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-500/35 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase text-emerald-300 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>4. Target Arrival & Mission Action (What happens at destination?)</span>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                  {[
-                    { id: "landing", label: "🛬 Safe Landing", desc: "Plane/Heli lands safely" },
-                    { id: "naval-cruise", label: "⚓ Sea Cruise/Dock", desc: "Ship sails & docks (no hit)" },
-                    { id: "ship-launch-missile", label: "🚢🚀 Ship Fires Missile", desc: "Ship launches missile at target!" },
-                    { id: "jet-airstrike", label: "✈️🚀 Jet Fires Missile", desc: "Jet/Heli fires stand-off missile!" },
-                    { id: "explosion", label: "💥 Direct Hit Blast", desc: "Missile/Bomb explosion at target" },
-                    { id: "intercept", label: "🛡️ Mid-Air Intercept", desc: "Air defense destroys threat in sky" },
-                    { id: "hover-patrol", label: "🔄 Orbit / Patrol", desc: "Circles over target with radar" },
-                    { id: "airdrop", label: "🪂 Relief Airdrop", desc: "Drops parachutes over target" },
-                  ].map((sc) => (
-                    <button
-                      key={sc.id}
-                      type="button"
-                      onClick={() => {
-                        const eff = sc.id as TacticalTargetEffect;
-                        updateActiveRoute({
-                          targetEffect: eff,
-                          showImpactShockwave: eff === "explosion" || eff === "ship-launch-missile" || eff === "jet-airstrike",
-                          ...(eff === "naval-cruise" || eff === "ship-launch-missile"
-                            ? { arcHeight: 0, curveDirection: "straight" }
-                            : {}),
-                          ...(eff === "ship-launch-missile" && (!activeRoute.targetMarkerType || activeRoute.targetMarkerType === "default")
-                            ? { targetMarkerType: "warship" }
-                            : {}),
-                        });
-                      }}
-                      title={sc.desc}
-                      className={cn(
-                        "p-1.5 rounded-lg border text-left transition-all",
-                        currentTargetEffect === sc.id
-                          ? "bg-emerald-600/35 border-emerald-400 text-white font-bold shadow"
-                          : "bg-black/40 border-white/10 text-slate-300 hover:text-white"
-                      )}
-                    >
-                      <div className="text-[9.5px] font-bold truncate">{sc.label}</div>
-                      <div className="text-[8px] text-slate-400 truncate">{sc.desc}</div>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Target Marker Object at Point B + Curve Direction */}
-                <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-white/10">
-                  <div>
-                    <label className="text-[9.5px] text-slate-300 block mb-0.5">
-                      Target Object Shown at Point B:
-                    </label>
-                    <select
-                      value={activeRoute.targetMarkerType || "default"}
-                      onChange={(e) =>
-                        updateActiveRoute({
-                          targetMarkerType: e.target.value as TacticalTargetMarkerType,
-                        })
-                      }
-                      className="w-full bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10px] text-white"
-                    >
-                      <option value="default">📍 Standard Target Pin</option>
-                      <option value="warship">🚢 Enemy Warship in Sea</option>
-                      <option value="cargo-ship">⛴️ Cargo / Oil Tanker Ship</option>
-                      <option value="airbase">🛫 Military Airbase / Runway</option>
-                      <option value="radar-site">📡 Radar / SAM Battery</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-[9.5px] text-slate-300 block mb-0.5">
-                      Path Curve Direction:
-                    </label>
-                    <select
-                      value={activeRoute.curveDirection || (activeRoute.arcHeight === 0 ? "straight" : "up")}
-                      onChange={(e) => {
-                        const dir = e.target.value as "up" | "straight" | "down";
-                        updateActiveRoute({
-                          curveDirection: dir,
-                          arcHeight: dir === "straight" ? 0 : Math.max(0.18, activeRoute.arcHeight || 0.28),
-                        });
-                      }}
-                      className="w-full bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10px] text-white"
-                    >
-                      <option value="up">⤴️ Curve Up (Ballistic / Air)</option>
-                      <option value="straight">➡️ Straight Line (Sea / Direct)</option>
-                      <option value="down">⤵️ Curve Down (Coastal Route)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Map Camera Zoom, Arc Height, Theme & Color */}
-            {activeRoute && (
-              <div className="grid grid-cols-2 gap-2.5 p-2.5 rounded-xl bg-black/40 border border-white/10">
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-slate-400">Map Zoom Level</span>
-                    <span className="font-mono text-cyan-300">{mapConfig.zoom}x</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={2}
-                    max={9}
-                    step={1}
-                    value={mapConfig.zoom}
-                    onChange={(e) => setMapConfig({ ...mapConfig, zoom: Number(e.target.value) })}
-                    className="w-full h-1.5 accent-cyan-400 bg-white/15 rounded-lg cursor-pointer"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-slate-400">Arc Curvature</span>
-                    <span className="font-mono text-amber-300">
-                      {Math.round((activeRoute.arcHeight ?? 0.32) * 100)}%
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={0.6}
-                    step={0.04}
-                    value={activeRoute.arcHeight ?? 0.32}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      updateActiveRoute({
-                        arcHeight: val,
-                        curveDirection: val === 0 ? "straight" : activeRoute.curveDirection === "straight" ? "up" : activeRoute.curveDirection,
-                      });
-                    }}
-                    className="w-full h-1.5 accent-amber-400 bg-white/15 rounded-lg cursor-pointer"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-slate-400">Map Theme (Zero API Key)</span>
-                  </div>
-                  <select
-                    value={mapConfig.mapStyle}
-                    onChange={(e) =>
-                      setMapConfig({
-                        ...mapConfig,
-                        mapStyle: e.target.value as TacticalMapConfig["mapStyle"],
-                      })
-                    }
-                    className="w-full bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10.5px] text-white"
-                  >
-                    <option value="satellite">🛰️ Satellite + Country Borders</option>
-                    <option value="dark-radar">🌑 Dark Tactical Night-Vision</option>
-                    <option value="political">🗺️ Clean Political / Street Map</option>
-                    <option value="ocean">🌊 Maritime / Naval Ocean Map</option>
-                    <option value="vector-grid">🎯 Tactical Radar Grid Only</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[10px] mb-1">
-                    <span className="text-slate-400">Trajectory Color</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {["#ef4444", "#38bdf8", "#facc15", "#10b981", "#a855f7"].map((c) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "3d-perspective" as const, label: "🏔️ 3D Terrain Tilt", sub: "Elevated 3D Arcs" },
+                      { id: "3d-globe" as const, label: "🌍 3D Earth Globe", sub: "Spherical Orbit" },
+                      { id: "2d" as const, label: "🗺️ 2D Flat Map", sub: "Classic Top-Down" },
+                    ].map((vm) => (
                       <button
-                        key={c}
+                        key={vm.id}
                         type="button"
-                        onClick={() => updateActiveRoute({ color: c })}
-                        style={{ backgroundColor: c }}
+                        onClick={() =>
+                          setMapConfig((prev) => ({
+                            ...prev,
+                            viewMode: vm.id,
+                            pitchDeg: vm.id === "3d-perspective" ? Math.max(35, prev.pitchDeg || 45) : prev.pitchDeg,
+                          }))
+                        }
                         className={cn(
-                          "w-5 h-5 rounded-full border",
-                          activeRoute.color === c ? "ring-2 ring-white scale-110" : "border-white/20"
+                          "p-2 rounded-xl border text-left transition-all",
+                          (mapConfig.viewMode || "3d-perspective") === vm.id
+                            ? "bg-cyan-600/35 border-cyan-400 text-white shadow"
+                            : "bg-black/40 border-white/10 text-slate-300 hover:text-white"
                         )}
-                      />
+                      >
+                        <div className="text-xs font-bold">{vm.label}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{vm.sub}</div>
+                      </button>
                     ))}
                   </div>
-                </div>
-              </div>
-            )}
 
-            {/* Saved Tactical Maps Library */}
-            {savedMaps.length > 0 && (
-              <div className="space-y-1.5 pt-1 border-t border-white/10">
-                <span className="text-[10px] font-bold uppercase text-slate-400 block">
-                  Saved Tactical Maps Library (Click to Attach to Scene)
-                </span>
-                <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1 custom-scrollbar">
-                  {savedMaps.map((m) => (
-                    <div
-                      key={m.id}
-                      onClick={() => {
-                        if (effectiveSceneId) {
-                          updateScene(effectiveSceneId, { activeMedia: m });
-                          if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
-                        }
-                        setActiveMedia(m);
-                        onSaveMapItem?.(m);
-                        onClose();
-                      }}
-                      className="p-2 rounded-xl bg-white/5 hover:bg-cyan-950/30 border border-white/10 hover:border-cyan-500/40 flex items-center justify-between cursor-pointer text-xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-bold text-white truncate">🗺️ {m.name}</div>
-                        <div className="text-[10px] text-cyan-300 font-mono">{m.duration}</div>
+                  <div className="grid grid-cols-3 gap-3 pt-1">
+                    <div>
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">3D Tilt Pitch</span>
+                        <span className="font-mono text-cyan-300 font-bold">{mapConfig.pitchDeg ?? 45}°</span>
                       </div>
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="range"
+                        min={0}
+                        max={60}
+                        step={2}
+                        value={mapConfig.pitchDeg ?? 45}
+                        onChange={(e) =>
+                          setMapConfig({ ...mapConfig, pitchDeg: Number(e.target.value), viewMode: "3d-perspective" })
+                        }
+                        className="w-full h-1.5 accent-cyan-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">3D Compass Yaw</span>
+                        <span className="font-mono text-amber-300 font-bold">{mapConfig.yawDeg ?? 0}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={-90}
+                        max={90}
+                        step={5}
+                        value={mapConfig.yawDeg ?? 0}
+                        onChange={(e) => setMapConfig({ ...mapConfig, yawDeg: Number(e.target.value) })}
+                        className="w-full h-1.5 accent-amber-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">3D Altitude Height</span>
+                        <span className="font-mono text-emerald-300 font-bold">
+                          {Math.round((mapConfig.altitudeScale ?? 1.25) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.5}
+                        max={2.2}
+                        step={0.1}
+                        value={mapConfig.altitudeScale ?? 1.25}
+                        onChange={(e) => setMapConfig({ ...mapConfig, altitudeScale: Number(e.target.value) })}
+                        className="w-full h-1.5 accent-emerald-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Interactive Simulator Mode Toggle */}
+                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                    <div>
+                      <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                        <Gamepad2 className="w-4 h-4 text-emerald-400" />
+                        <span>Interactive Stage Simulator Mode</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Click anywhere on stage map live during broadcast to launch missiles, jets & interceptors
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMapConfig((prev) => ({
+                          ...prev,
+                          simulatorEnabled: !prev.simulatorEnabled,
+                        }))
+                      }
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0",
+                        mapConfig.simulatorEnabled
+                          ? "bg-emerald-600 text-white border-emerald-300 shadow-lg"
+                          : "bg-white/10 text-slate-300 border-white/15 hover:text-white"
+                      )}
+                    >
+                      {mapConfig.simulatorEnabled ? "🎮 Simulator ON" : "Enable Simulator"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Map Headline & Subtitle */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-300 block mb-1">
+                      News Map Headline Banner
+                    </label>
+                    <input
+                      type="text"
+                      value={mapConfig.title}
+                      onChange={(e) => setMapConfig({ ...mapConfig, title: e.target.value })}
+                      placeholder="e.g. BREAKING: MISSILE & AIRSTRIKE TRAJECTORY"
+                      className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white font-semibold focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-300 block mb-1">
+                      Subtitle / Telemetry Note
+                    </label>
+                    <input
+                      type="text"
+                      value={mapConfig.subtitle || ""}
+                      onChange={(e) => setMapConfig({ ...mapConfig, subtitle: e.target.value })}
+                      placeholder="e.g. Live 3D Radar & Distance Analysis"
+                      className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-cyan-200 focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                {/* Multi-Route Tabs */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/10">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    {mapConfig.routes.map((rt, idx) => (
+                      <button
+                        key={rt.id}
+                        type="button"
+                        onClick={() => setActiveRouteIdx(idx)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0",
+                          idx === activeRouteIdx
+                            ? "bg-cyan-600 text-white border-cyan-400 shadow"
+                            : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
+                        )}
+                      >
+                        Path {idx + 1}: {rt.from.name.split(",")[0]} ➔ {rt.to.name.split(",")[0]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleAddRoute}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Add Path</span>
+                    </button>
+                    {mapConfig.routes.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRoute(activeRouteIdx)}
+                        className="p-1.5 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-600 hover:text-white"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Origin (Point A) & Target (Point B) Search */}
+                {activeRoute && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-indigo-950/25 border border-indigo-500/30">
+                    {/* Point A */}
+                    <div className="space-y-1.5 relative">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase text-cyan-300 flex items-center gap-1">
+                          <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>1. Origin / Launch</span>
+                        </span>
                         <button
                           type="button"
                           onClick={() => {
-                            if (m.mapConfig) {
-                              setMapConfig(m.mapConfig);
-                              setEditingMapId(m.id);
-                            }
+                            setMapConfig((prev) => ({ ...prev, simulatorEnabled: false }));
+                            setClickPlacementMode(clickPlacementMode === "from" ? null : "from");
                           }}
-                          className="p-1 rounded bg-white/10 hover:bg-white/20 text-slate-200"
-                          title="Load into Editor"
+                          className={cn(
+                            "px-2 py-0.5 rounded-lg text-[10.5px] font-bold border",
+                            clickPlacementMode === "from"
+                              ? "bg-cyan-500 text-slate-950 border-cyan-300 animate-pulse"
+                              : "bg-white/10 text-slate-200 border-white/15"
+                          )}
                         >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeMediaLibraryItem(m.id)}
-                          className="p-1 rounded bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          {clickPlacementMode === "from" ? "Click Map..." : "🎯 Pick on Map"}
                         </button>
                       </div>
+
+                      <div className="text-xs font-bold text-white bg-black/50 px-3 py-1.5 rounded-lg border border-cyan-500/30 truncate">
+                        {activeRoute.from.name}
+                      </div>
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                        <input
+                          type="text"
+                          value={fromSearchQuery}
+                          onChange={(e) => {
+                            setFromSearchQuery(e.target.value);
+                            searchLocations(e.target.value, "from");
+                          }}
+                          placeholder="Search City / Sea / Airbase..."
+                          className="w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-black/70 border border-white/15 text-xs text-white focus:outline-none focus:border-cyan-400"
+                        />
+                      </div>
+
+                      {fromResults.length > 0 && (
+                        <div className="absolute z-50 left-0 right-0 mt-1 bg-[#0e1020] border border-cyan-500/50 rounded-xl shadow-2xl max-h-44 overflow-y-auto divide-y divide-white/5">
+                          {fromResults.map((loc, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => handleSelectPoint("from", loc)}
+                              className="w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-cyan-600/30 hover:text-white flex items-center justify-between"
+                            >
+                              <span className="truncate">{loc.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    {/* Point B */}
+                    <div className="space-y-1.5 relative">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase text-rose-300 flex items-center gap-1">
+                          <Crosshair className="w-3.5 h-3.5 text-rose-400" />
+                          <span>2. Destination / Target</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMapConfig((prev) => ({ ...prev, simulatorEnabled: false }));
+                            setClickPlacementMode(clickPlacementMode === "to" ? null : "to");
+                          }}
+                          className={cn(
+                            "px-2 py-0.5 rounded-lg text-[10.5px] font-bold border",
+                            clickPlacementMode === "to"
+                              ? "bg-rose-500 text-white border-rose-300 animate-pulse"
+                              : "bg-white/10 text-slate-200 border-white/15"
+                          )}
+                        >
+                          {clickPlacementMode === "to" ? "Click Map..." : "🎯 Pick on Map"}
+                        </button>
+                      </div>
+
+                      <div className="text-xs font-bold text-white bg-black/50 px-3 py-1.5 rounded-lg border border-rose-500/30 truncate">
+                        {activeRoute.to.name}
+                      </div>
+
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                        <input
+                          type="text"
+                          value={toSearchQuery}
+                          onChange={(e) => {
+                            setToSearchQuery(e.target.value);
+                            searchLocations(e.target.value, "to");
+                          }}
+                          placeholder="Search Target City / Sea..."
+                          className="w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-black/70 border border-white/15 text-xs text-white focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+
+                      {toResults.length > 0 && (
+                        <div className="absolute z-50 left-0 right-0 mt-1 bg-[#0e1020] border border-rose-500/50 rounded-xl shadow-2xl max-h-44 overflow-y-auto divide-y divide-white/5">
+                          {toResults.map((loc, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => handleSelectPoint("to", loc)}
+                              className="w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-rose-600/30 hover:text-white flex items-center justify-between"
+                            >
+                              <span className="truncate">{loc.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vehicle / Projectile Selector */}
+                {activeRoute && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase text-slate-300">
+                        3. Select Vehicle / Vessel / Projectile
+                      </label>
+                      <input
+                        ref={customIconInputRef}
+                        type="file"
+                        accept="image/png,image/gif,image/svg+xml,image/webp,image/jpeg"
+                        className="hidden"
+                        onChange={handleCustomIconUpload}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => customIconInputRef.current?.click()}
+                        className="text-xs text-cyan-400 hover:underline flex items-center gap-1 font-semibold"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload Custom PNG/GIF</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {[
+                        { id: "missile", label: "🚀 Missile" },
+                        { id: "salvo", label: "🚀🚀 3x Salvo" },
+                        { id: "fighter-jet", label: "✈️ Fighter Jet" },
+                        { id: "airliner", label: "🛫 Airliner" },
+                        { id: "helicopter", label: "🚁 Helicopter" },
+                        { id: "warship", label: "🚢 Warship" },
+                        { id: "cargo-ship", label: "⛴️ Cargo Ship" },
+                        { id: "drone", label: "🛸 Drone UAV" },
+                        { id: "tank", label: "🛡️ Tank/Convoy" },
+                        { id: "custom-image", label: "🖼️ Custom" },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleSelectAssetType(item.id as TacticalRouteAssetType)}
+                          className={cn(
+                            "py-2 px-1.5 rounded-xl text-[11px] font-bold border text-center transition-all truncate",
+                            activeRoute.assetType === item.id
+                              ? "bg-rose-600/35 border-rose-400 text-white shadow"
+                              : "bg-white/5 border-white/10 text-slate-300 hover:text-white"
+                          )}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Target Arrival & Mission Scenario Selector */}
+                {activeRoute && (
+                  <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/35 space-y-2.5">
+                    <span className="text-xs font-bold uppercase text-emerald-300 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-emerald-400" />
+                      <span>4. Target Arrival & Mission Scenario</span>
+                    </span>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      {[
+                        { id: "landing", label: "🛬 Safe Landing", desc: "Plane/Heli lands safely" },
+                        { id: "naval-cruise", label: "⚓ Sea Cruise", desc: "Ship sails & docks" },
+                        { id: "ship-launch-missile", label: "🚢🚀 Ship Strike", desc: "Ship fires missile!" },
+                        { id: "jet-airstrike", label: "✈️🚀 Jet Strike", desc: "Jet fires missile!" },
+                        { id: "explosion", label: "💥 Direct Hit", desc: "Blast shockwave" },
+                        { id: "intercept", label: "🛡️ Intercept", desc: "Mid-air defense hit" },
+                        { id: "hover-patrol", label: "🔄 Orbit Patrol", desc: "Circles over target" },
+                        { id: "airdrop", label: "🪂 Airdrop", desc: "Drops parachutes" },
+                      ].map((sc) => (
+                        <button
+                          key={sc.id}
+                          type="button"
+                          onClick={() => {
+                            const eff = sc.id as TacticalTargetEffect;
+                            updateActiveRoute({
+                              targetEffect: eff,
+                              showImpactShockwave:
+                                eff === "explosion" ||
+                                eff === "ship-launch-missile" ||
+                                eff === "jet-airstrike",
+                              ...(eff === "naval-cruise" || eff === "ship-launch-missile"
+                                ? { arcHeight: 0, curveDirection: "straight" }
+                                : {}),
+                              ...(eff === "ship-launch-missile" &&
+                              (!activeRoute.targetMarkerType || activeRoute.targetMarkerType === "default")
+                                ? { targetMarkerType: "warship" }
+                                : {}),
+                            });
+                          }}
+                          className={cn(
+                            "p-2 rounded-xl border text-left transition-all",
+                            currentTargetEffect === sc.id
+                              ? "bg-emerald-600/35 border-emerald-400 text-white shadow"
+                              : "bg-black/40 border-white/10 text-slate-300 hover:text-white"
+                          )}
+                        >
+                          <div className="text-[11px] font-bold truncate">{sc.label}</div>
+                          <div className="text-[9.5px] text-slate-400 truncate">{sc.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Target Marker Object at Point B + Curve Direction */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                      <div>
+                        <label className="text-[11px] font-bold uppercase text-slate-300 block mb-1">
+                          Target Object at Point B:
+                        </label>
+                        <select
+                          value={activeRoute.targetMarkerType || "default"}
+                          onChange={(e) =>
+                            updateActiveRoute({
+                              targetMarkerType: e.target.value as TacticalTargetMarkerType,
+                            })
+                          }
+                          className="w-full bg-slate-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                        >
+                          <option value="default">📍 Standard Target Pin</option>
+                          <option value="warship">🚢 Enemy Warship in Sea</option>
+                          <option value="cargo-ship">⛴️ Cargo / Oil Tanker Ship</option>
+                          <option value="airbase">🛫 Military Airbase / Runway</option>
+                          <option value="radar-site">📡 Radar / SAM Battery</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold uppercase text-slate-300 block mb-1">
+                          Path Curve Direction:
+                        </label>
+                        <select
+                          value={activeRoute.curveDirection || (activeRoute.arcHeight === 0 ? "straight" : "up")}
+                          onChange={(e) => {
+                            const dir = e.target.value as "up" | "straight" | "down";
+                            updateActiveRoute({
+                              curveDirection: dir,
+                              arcHeight: dir === "straight" ? 0 : Math.max(0.18, activeRoute.arcHeight || 0.28),
+                            });
+                          }}
+                          className="w-full bg-slate-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                        >
+                          <option value="up">⤴️ Curve Up (Ballistic / Air)</option>
+                          <option value="straight">➡️ Straight Line (Sea / Direct)</option>
+                          <option value="down">⤵️ Curve Down (Coastal Route)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Map Camera Zoom, Arc Height, Theme & Color */}
+                {activeRoute && (
+                  <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-black/40 border border-white/10">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-semibold">
+                        <span className="text-slate-300">Map Zoom Level</span>
+                        <span className="font-mono text-cyan-300">{mapConfig.zoom}x</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={2}
+                        max={10}
+                        step={1}
+                        value={mapConfig.zoom}
+                        onChange={(e) => setMapConfig({ ...mapConfig, zoom: Number(e.target.value) })}
+                        className="w-full h-1.5 accent-cyan-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-semibold">
+                        <span className="text-slate-300">Arc Curvature</span>
+                        <span className="font-mono text-amber-300">
+                          {Math.round((activeRoute.arcHeight ?? 0.32) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={0.6}
+                        step={0.04}
+                        value={activeRoute.arcHeight ?? 0.32}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          updateActiveRoute({
+                            arcHeight: val,
+                            curveDirection: val === 0 ? "straight" : activeRoute.curveDirection === "straight" ? "up" : activeRoute.curveDirection,
+                          });
+                        }}
+                        className="w-full h-1.5 accent-amber-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-semibold">
+                        <span className="text-slate-300">Map Theme (100% Free)</span>
+                      </div>
+                      <select
+                        value={mapConfig.mapStyle}
+                        onChange={(e) =>
+                          setMapConfig({
+                            ...mapConfig,
+                            mapStyle: e.target.value as TacticalMapConfig["mapStyle"],
+                          })
+                        }
+                        className="w-full bg-slate-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                      >
+                        <option value="satellite">🛰️ Satellite + Borders</option>
+                        <option value="dark-radar">🌑 Dark Night-Vision</option>
+                        <option value="political">🗺️ Political / Street</option>
+                        <option value="ocean">🌊 Maritime / Ocean</option>
+                        <option value="vector-grid">🎯 Radar Grid Only</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-semibold">
+                        <span className="text-slate-300">Trajectory Color</span>
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
+                        {["#ef4444", "#38bdf8", "#facc15", "#10b981", "#a855f7"].map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => updateActiveRoute({ color: c })}
+                            style={{ backgroundColor: c }}
+                            className={cn(
+                              "w-6 h-6 rounded-full border transition-transform",
+                              activeRoute.color === c ? "ring-2 ring-white scale-110" : "border-white/20 hover:scale-105"
+                            )}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
-          {/* Right Column: Live Interactive 1280x720 Tactical Map Canvas Preview (7 cols) */}
-          <div className="lg:col-span-7 p-4 bg-[#070912] flex flex-col justify-between gap-3">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Live 60FPS Broadcast Map Preview (Click Map to Pan or Place Points)</span>
-                </span>
-                {clickPlacementMode && (
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500 text-white font-bold animate-pulse">
-                    Click anywhere on map to set {clickPlacementMode === "from" ? "Origin (Point A)" : "Target (Point B)"}
-                  </span>
-                )}
-              </div>
-
-              <div className="w-full aspect-video rounded-2xl overflow-hidden border border-cyan-500/40 shadow-2xl relative bg-black">
-                <TacticalMapStageCanvas
-                  config={mapConfig}
-                  isInteractive={true}
-                  onMapClickLatLon={(lat, lon) => {
-                    if (clickPlacementMode === "from") {
-                      handleSelectPoint("from", {
-                        name: `Point (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
-                        lat,
-                        lon,
-                      });
-                      setClickPlacementMode(null);
-                    } else if (clickPlacementMode === "to") {
-                      handleSelectPoint("to", {
-                        name: `Target (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
-                        lat,
-                        lon,
-                      });
-                      setClickPlacementMode(null);
-                    } else {
-                      setMapConfig((prev) => ({ ...prev, centerLat: lat, centerLon: lon }));
-                    }
-                  }}
-                />
-              </div>
+          {/* Right Column (7 Cols): Live Interactive 3D Canvas Preview */}
+          <div className="lg:col-span-7 flex flex-col p-4 bg-black/40 min-h-[420px] relative">
+            <div className="flex-1 rounded-2xl overflow-hidden border border-white/15 relative shadow-2xl bg-[#030712]">
+              <TacticalMapStageCanvas
+                config={mapConfig}
+                isInteractive={true}
+                onConfigChange={(updates) => setMapConfig((prev) => ({ ...prev, ...updates }))}
+                onMapClickLatLon={(lat, lon) => {
+                  if (clickPlacementMode === "from") {
+                    handleSelectPoint("from", {
+                      name: `Point (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
+                      lat,
+                      lon,
+                    });
+                    setClickPlacementMode(null);
+                  } else if (clickPlacementMode === "to") {
+                    handleSelectPoint("to", {
+                      name: `Target (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
+                      lat,
+                      lon,
+                    });
+                    setClickPlacementMode(null);
+                  } else {
+                    setMapConfig((prev) => ({ ...prev, centerLat: lat, centerLon: lon }));
+                  }
+                }}
+              />
             </div>
+          </div>
+        </div>
 
-            {/* Footer Save & Attach Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10">
-              <span className="text-[10.5px] text-slate-400">
-                💡 All 5 Map Themes use 100% Free Esri ArcGIS tiles (zero API key watermarks) & record at 60FPS!
+        {/* Footer Save and Attach Buttons */}
+        <div className="px-6 py-3.5 border-t border-white/10 bg-[#111426] flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <span className="text-xs text-slate-300">
+            💡 All 5 Map Themes use 100% Free Esri ArcGIS tiles (zero API key watermarks) & record at 60FPS!
+          </span>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleSaveTacticalMap(false)}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              <Check className="w-4 h-4 text-cyan-400" />
+              <span>Save to Map Library</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSaveTacticalMap(true)}
+              className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-cyan-600/25 transition-all"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              <span>
+                {targetScene ? `Save & Attach to "${targetScene.name}"` : "Save & Present Map on Stage"}
               </span>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleSaveTacticalMap(false)}
-                  className="px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Save to Map Library</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveTacticalMap(true)}
-                  className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-cyan-600/25"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>
-                    {targetScene ? `Save & Attach to "${targetScene.name}"` : "Save & Present Map on Stage"}
-                  </span>
-                </button>
-              </div>
-            </div>
+            </button>
           </div>
         </div>
       </div>

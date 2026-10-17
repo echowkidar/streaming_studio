@@ -69,6 +69,7 @@ class StageBroadcaster {
     string,
     { source: MediaStreamAudioSourceNode; gain: GainNode }
   >();
+  private mediaStreamSources = new Map<string, MediaStreamAudioSourceNode>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
   private mediaGainNode: GainNode | null = null;
   private hpFilter: BiquadFilterNode | null = null;
@@ -449,6 +450,12 @@ class StageBroadcaster {
       } catch {}
     });
     this.participantAudioNodes.clear();
+    this.mediaStreamSources.forEach((src) => {
+      try {
+        src.disconnect();
+      } catch {}
+    });
+    this.mediaStreamSources.clear();
     this.connectedMediaElements.clear();
     this.cachedLayouts = [];
     this.canvas = null;
@@ -854,13 +861,10 @@ class StageBroadcaster {
 
           if (stream) {
             const audioTrack = stream.getAudioTracks()[0];
-            if (audioTrack && !this.participantAudioNodes.has(audioTrack.id)) {
+            if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
               const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
               srcNode.connect(targetInputNode);
-              this.participantAudioNodes.set(audioTrack.id, {
-                source: srcNode,
-                gain: this.mediaGainNode || this.audioCtx.createGain(),
-              });
+              this.mediaStreamSources.set(audioTrack.id, srcNode);
               console.log("[StageBroadcaster] Connected media video audio stream to broadcast mix");
             }
           } else if (!this.connectedMediaElements.has(mediaVideo)) {

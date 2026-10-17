@@ -1,29 +1,36 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import {
   PlaySquare,
   Video,
   FileText,
   Music,
   Play,
-  Pause,
   Plus,
   Upload,
   Square,
   Sparkles,
   Trash2,
-  ExternalLink,
   Layers,
   Repeat,
   GripVertical,
   Youtube,
   Globe,
+  Edit2,
   Clipboard,
+  Search,
+  Image as ImageIcon,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { useStudioStore, MediaFileItem, persistStudioLayout } from "@/stores/studio.store";
+import {
+  useStudioStore,
+  MediaFileItem,
+  persistStudioLayout,
+  isDummyOrBrokenMediaItem,
+  sanitizeAndDeduplicateMediaList,
+} from "@/stores/studio.store";
 import { StageOverlayAsset } from "@/types";
 import { cn } from "@/lib/utils";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
@@ -35,8 +42,23 @@ interface MediaPanelProps {
   studioId?: string;
 }
 
+export type MediaCategoryTab =
+  | "all"
+  | "video"
+  | "youtube"
+  | "map"
+  | "pdf"
+  | "website"
+  | "audio"
+  | "image";
+
 export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
-  const effectiveStudioId = studioId || (typeof window !== "undefined" ? window.location.pathname.split("/studio/")[1] || "default" : "default");
+  const effectiveStudioId =
+    studioId ||
+    (typeof window !== "undefined"
+      ? window.location.pathname.split("/studio/")[1] || "default"
+      : "default");
+
   const {
     activeMedia,
     setActiveMedia,
@@ -46,99 +68,86 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     mediaLibrary,
     addMediaLibraryItem,
     removeMediaLibraryItem,
+    cleanupMediaLibrary,
   } = useStudioStore();
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [autoRepeat, setAutoRepeat] = useState(true);
-  const [isSlideCreatorOpen, setIsSlideCreatorOpen] = useState(false);
-  const [isYouTubeLibraryOpen, setIsYouTubeLibraryOpen] = useState(false);
-  const [isTacticalMapOpen, setIsTacticalMapOpen] = useState(false);
-  const [isWebsiteLibraryOpen, setIsWebsiteLibraryOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<MediaCategoryTab>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [draggingMediaId, setDraggingMediaId] = useState<string | null>(null);
+  const [cleanupNotice, setCleanupNotice] = useState<string | null>(null);
 
-  const handlePasteScreenshot = async () => {
-    try {
-      if (!navigator.clipboard?.read) {
-        alert("Clipboard read not supported or permission denied. Please press Ctrl+V on the stage directly.");
-        return;
-      }
-      const clipboardItems = await navigator.clipboard.read();
-      for (const item of clipboardItems) {
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            const newItem: MediaFileItem = {
-              id: `media-screenshot-${Date.now()}`,
-              name: `Screenshot_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
-              type: "image",
-              url: dataUrl,
-              thumbnail: dataUrl,
-              duration: "Image",
-              isUploaded: true,
-            };
-            addMediaLibraryItem(newItem);
-            setMediaList((prev) => [newItem, ...prev]);
-            setActiveMedia(newItem);
-          };
-          reader.readAsDataURL(blob);
-          return;
-        }
-      }
-      alert("No image found in clipboard! Press Win+Shift+S (or Cmd+Shift+4) to copy a screenshot first.");
-    } catch (err) {
-      console.warn("Clipboard read error:", err);
-      alert("Clipboard access error. Please use Ctrl+V directly to paste screenshot.");
-    }
-  };
+  // Modals State
+  const [isSlideCreatorOpen, setIsSlideCreatorOpen] = useState(false);
+  const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
+  const [isMapModalOpen, setIsMapModalOpen] = useState(false);
+  const [editingMapItem, setEditingMapItem] = useState<MediaFileItem | null>(null);
+  const [isWebsiteModalOpen, setIsWebsiteModalOpen] = useState(false);
 
   const [mediaList, setMediaList] = useState<MediaFileItem[]>(() => {
-    return mediaLibrary && mediaLibrary.length > 0 ? mediaLibrary : [
-      {
-        id: "media-countdown",
-        name: "Intro_Countdown_30s.mp4",
-        type: "video",
-        duration: "00:30",
-        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      },
-      {
-        id: "media-keynote-clip",
-        name: "Product_Demo_Highlights.mp4",
-        type: "video",
-        duration: "01:15",
-        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-      },
-      {
-        id: "media-slides",
-        name: "Product_Architecture_2026.pdf",
-        type: "pdf",
-        duration: "18 slides",
-        url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-      },
-      {
-        id: "media-lofi",
-        name: "Background_Lofi_Stream.mp3",
-        type: "audio",
-        duration: "03:45",
-        url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
-      },
-    ];
+    return sanitizeAndDeduplicateMediaList(mediaLibrary || [], true);
   });
 
+  // Sync with Zustand mediaLibrary store (ensuring zero dummy or duplicate items)
   React.useEffect(() => {
-    if (mediaLibrary) {
-      setMediaList((prev) => {
-        const libIds = new Set(mediaLibrary.map((m) => m.id));
-        const prevIds = new Set(prev.map((p) => p.id));
-        const newOnes = mediaLibrary.filter((m) => !prevIds.has(m.id));
-        const retainedPrev = prev.filter((p) => libIds.has(p.id) || p.url?.startsWith("blob:"));
-        return [...newOnes, ...retainedPrev];
-      });
-    }
+    setMediaList((prev) => {
+      const validBlobItems = prev.filter(
+        (p) => p.url?.startsWith("blob:") && !isDummyOrBrokenMediaItem(p)
+      );
+      return sanitizeAndDeduplicateMediaList(
+        [...(mediaLibrary || []), ...validBlobItems],
+        true
+      );
+    });
   }, [mediaLibrary]);
 
+  // Load existing valid media assets from backend library on mount
+  React.useEffect(() => {
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+    fetch(`/api/media?studioId=${encodeURIComponent(effectiveStudioId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (json?.success && Array.isArray(json.data)) {
+          const serverItems: MediaFileItem[] = json.data
+            .map((item: any) => {
+              const metaSec = Number(item.metadata?.duration || 0);
+              return {
+                id: item.id,
+                name: item.name,
+                type: item.assetType.toLowerCase() as any,
+                durationSeconds: metaSec,
+                duration:
+                  metaSec > 0
+                    ? `${Math.floor(metaSec / 60)}:${(metaSec % 60)
+                        .toString()
+                        .padStart(2, "0")}`
+                    : item.fileSize
+                    ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB`
+                    : "Ready",
+                url: item.url,
+                isUploaded: true,
+              };
+            })
+            .filter((item: MediaFileItem) => !isDummyOrBrokenMediaItem(item));
+
+          if (serverItems.length > 0) {
+            setMediaList((prev) => {
+              const combined = sanitizeAndDeduplicateMediaList(
+                [...prev, ...serverItems],
+                true
+              );
+              return combined;
+            });
+          }
+        }
+      })
+      .catch(() => {});
+  }, [effectiveStudioId]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -147,14 +156,18 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     let type: "video" | "audio" | "image" | "pdf" = "video";
     if (file.type.startsWith("audio/")) type = "audio";
     else if (file.type.startsWith("image/")) type = "image";
-    else if (file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf")) type = "pdf";
+    else if (file.type.includes("pdf") || file.name.toLowerCase().endsWith(".pdf"))
+      type = "pdf";
 
     const uploadedVideos = mediaList.filter((m) => m.type === "video" && m.isUploaded);
     const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
-    const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
+    const uploadedDocs = mediaList.filter(
+      (m) => (m.type === "image" || m.type === "pdf") && !m.slides && m.isUploaded
+    );
 
     const currentTotalVideoSec = uploadedVideos.reduce((acc, item) => {
-      if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
+      if (item.durationSeconds && item.durationSeconds > 0)
+        return acc + item.durationSeconds;
       const parts = (item.duration || "").split(":");
       if (parts.length === 2) {
         const m = parseInt(parts[0], 10);
@@ -174,7 +187,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     let videoHeight = 0;
     let audioDuration = 0;
 
-    // 1. Video validation: Unlimited files, Max 60m (3600s) Total Duration, Max 1080p
+    // 1. Video validation
     if (type === "video") {
       const tempUrl = URL.createObjectURL(file);
       try {
@@ -192,7 +205,9 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         URL.revokeObjectURL(tempUrl);
 
         if (videoHeight > 1080 || videoWidth > 1920) {
-          alert(`Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 1080p (1920x1080) allowed to preserve VPS resources.`);
+          alert(
+            `Video resolution (${videoWidth}x${videoHeight}) exceeds limit! Maximum 1080p (1920x1080) allowed to preserve VPS resources.`
+          );
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
@@ -211,9 +226,12 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       }
     }
 
-    // 2. Audio validation: Max 2 audios, MP3 only, max 15 minutes
+    // 2. Audio validation
     if (type === "audio") {
-      const isMp3 = file.type === "audio/mpeg" || file.type === "audio/mp3" || file.name.toLowerCase().endsWith(".mp3");
+      const isMp3 =
+        file.type === "audio/mpeg" ||
+        file.type === "audio/mp3" ||
+        file.name.toLowerCase().endsWith(".mp3");
       if (!isMp3) {
         alert("Format not allowed! Sirf MP3 audio files permitted hain.");
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -221,7 +239,9 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       }
 
       if (uploadedAudios.length >= 2) {
-        alert("Audio quota full! Maximum 2 audio files allowed in VPS media library. Pehle purani audio delete karein.");
+        alert(
+          "Audio quota full! Maximum 2 audio files allowed in VPS media library. Pehle purani audio delete karein."
+        );
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -240,7 +260,9 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         URL.revokeObjectURL(tempUrl);
 
         if (audioDuration > 900) {
-          alert(`Audio duration (${Math.floor(audioDuration / 60)}m) exceeds limit! Maximum 15 minutes allowed.`);
+          alert(
+            `Audio duration (${Math.floor(audioDuration / 60)}m) exceeds limit! Maximum 15 minutes allowed.`
+          );
           if (fileInputRef.current) fileInputRef.current.value = "";
           return;
         }
@@ -249,16 +271,20 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       }
     }
 
-    // 3. Image / PDF validation: Max 2 files, max 2MB each
+    // 3. Image / PDF validation
     if (type === "image" || type === "pdf") {
       if (uploadedDocs.length >= 2) {
-        alert("Image/PDF quota full! Maximum 2 files (PDF/Image) allowed in VPS media library. Pehle purani file delete karein.");
+        alert(
+          "Image/PDF quota full! Maximum 2 files (PDF/Image) allowed in VPS media library. Pehle purani file delete karein."
+        );
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
 
       if (file.size > 2 * 1024 * 1024) {
-        alert(`File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds limit! Maximum 2MB allowed for images and PDFs.`);
+        alert(
+          `File size (${(file.size / (1024 * 1024)).toFixed(2)}MB) exceeds limit! Maximum 2MB allowed for images and PDFs.`
+        );
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -267,9 +293,13 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     const fileUrl = URL.createObjectURL(file);
     const durationLabel =
       type === "video" && videoDuration > 0
-        ? `${Math.floor(videoDuration / 60)}:${(videoDuration % 60).toString().padStart(2, "0")}`
+        ? `${Math.floor(videoDuration / 60)}:${(videoDuration % 60)
+            .toString()
+            .padStart(2, "0")}`
         : type === "audio" && audioDuration > 0
-        ? `${Math.floor(audioDuration / 60)}:${(audioDuration % 60).toString().padStart(2, "0")}`
+        ? `${Math.floor(audioDuration / 60)}:${(audioDuration % 60)
+            .toString()
+            .padStart(2, "0")}`
         : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
 
     const newItem: MediaFileItem = {
@@ -282,10 +312,9 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       isUploaded: true,
     };
 
-    setMediaList((prev) => [newItem, ...prev]);
+    setMediaList((prev) => sanitizeAndDeduplicateMediaList([newItem, ...prev], true));
     addMediaLibraryItem(newItem);
 
-    // Background upload to backend MinIO/Local API
     setIsUploading(true);
     try {
       const formData = new FormData();
@@ -299,7 +328,8 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
       if (videoHeight > 10) formData.append("height", videoHeight.toString());
       if (audioDuration > 0) formData.append("duration", audioDuration.toString());
 
-      const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
       const res = await fetch("/api/media/upload", {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -317,15 +347,15 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
             url: serverUrl,
           };
 
-          // 1. Update MediaPanel local list
           setMediaList((prev) =>
-            prev.map((m) => (m.id === newItem.id ? permanentItem : m))
+            sanitizeAndDeduplicateMediaList(
+              prev.map((m) => (m.id === newItem.id ? permanentItem : m)),
+              true
+            )
           );
 
-          // 2. Update media library in Zustand & localStorage
           addMediaLibraryItem(permanentItem);
 
-          // 3. Update all scenes that have this media attached
           const currentStore = useStudioStore.getState();
           const nextScenes = currentStore.scenes.map((s) =>
             s.activeMedia?.id === newItem.id || s.activeMedia?.name === newItem.name
@@ -333,12 +363,10 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
               : s
           );
 
-          // 4. Update activeMedia if it matches
           const currentActive = currentStore.activeMedia;
           const shouldUpdateActive =
             currentActive?.id === newItem.id || currentActive?.name === newItem.name;
 
-          // 5. Persist layout immediately to localStorage and cloud database!
           persistStudioLayout({
             scenes: nextScenes,
             ...(shouldUpdateActive ? { activeMedia: permanentItem } : {}),
@@ -353,59 +381,79 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         const errJson = await res.json().catch(() => ({}));
         alert(errJson.error || "Upload failed due to quota restrictions.");
         setMediaList((prev) => prev.filter((m) => m.id !== newItem.id));
+        removeMediaLibraryItem(newItem.id);
       }
     } catch (err) {
-      console.warn("Backend MinIO upload skipped or errored, local preview active:", err);
+      console.warn("Backend upload warning, local preview active:", err);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  // Load existing media assets from backend library on mount
-  React.useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
-    fetch(`/api/media?studioId=${encodeURIComponent(effectiveStudioId)}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (json?.success && Array.isArray(json.data) && json.data.length > 0) {
-          const serverItems: MediaFileItem[] = json.data.map((item: any) => {
-            const metaSec = Number(item.metadata?.duration || 0);
-            return {
-              id: item.id,
-              name: item.name,
-              type: item.assetType.toLowerCase() as any,
-              durationSeconds: metaSec,
-              duration: metaSec > 0
-                ? `${Math.floor(metaSec / 60)}:${(metaSec % 60).toString().padStart(2, "0")}`
-                : item.fileSize ? `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB` : "Ready",
-              url: item.url,
-              isUploaded: true,
+  const handlePasteScreenshot = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        const clipItems = await navigator.clipboard.read();
+        for (const clipItem of clipItems) {
+          const imgType = clipItem.types.find((t) => t.startsWith("image/"));
+          if (imgType) {
+            const blob = await clipItem.getType(imgType);
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const dataUrl = ev.target?.result as string;
+              if (!dataUrl) return;
+              const timeStr = new Date().toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              });
+              const pastedItem: MediaFileItem = {
+                id: `screenshot-${Date.now()}`,
+                name: `Screenshot ${timeStr}`,
+                type: "image",
+                url: dataUrl,
+                thumbnail: dataUrl,
+                duration: "Pasted Image",
+                isUploaded: true,
+              };
+              addMediaLibraryItem(pastedItem);
+              setMediaList((prev) => [pastedItem, ...prev]);
+              setActiveMedia(pastedItem);
             };
-          });
-          setMediaList((prev) => {
-            const existingUrls = new Set(prev.map((m) => m.url));
-            const existingNames = new Set(prev.map((m) => m.name));
-            const newOnes = serverItems.filter((s) => !existingUrls.has(s.url) && !existingNames.has(s.name));
-            return [...newOnes, ...prev];
-          });
+            reader.readAsDataURL(blob);
+            return;
+          }
         }
-      })
-      .catch(() => {});
-  }, [effectiveStudioId]);
+      }
+      alert(
+        "Press Ctrl+V (or Cmd+V) anywhere in the studio after taking a screenshot to paste it directly!"
+      );
+    } catch {
+      alert(
+        "Press Ctrl+V (or Cmd+V) anywhere in the studio after taking a screenshot to paste it directly!"
+      );
+    }
+  };
+
+  const handleCleanupLibrary = () => {
+    const removedCount = cleanupMediaLibrary();
+    setMediaList((prev) => sanitizeAndDeduplicateMediaList(prev, true));
+    setCleanupNotice(
+      removedCount > 0
+        ? `Cleaned ${removedCount} dummy/duplicate item(s)!`
+        : "Media Library is clean!"
+    );
+    setTimeout(() => setCleanupNotice(null), 2800);
+  };
 
   const handleTogglePlay = (item: MediaFileItem) => {
     if (activeMedia?.id === item.id) {
       setActiveMedia(null);
     } else {
       setActiveMedia({
-        id: item.id,
-        name: item.name,
-        type: item.type,
-        url: item.url,
-        loop: autoRepeat,
+        ...item,
+        loop: item.loop ?? autoRepeat,
       });
     }
   };
@@ -434,30 +482,79 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     }
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handleEditItem = (item: MediaFileItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (activeMedia?.id === id) setActiveMedia(null);
-    if (activeStageOverlay?.id === id) setStageOverlay(null);
-    setMediaList((prev) => prev.filter((m) => m.id !== id));
-    removeMediaLibraryItem(id);
-
-    const token = typeof window !== "undefined" ? localStorage.getItem("livestudio_token") : null;
-    try {
-      await fetch(`/api/media/${id}`, {
-        method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-    } catch (err) {
-      console.warn("Failed to delete media asset from backend:", err);
+    if (item.type === "map" || item.mapConfig) {
+      setEditingMapItem(item);
+      setIsMapModalOpen(true);
+    } else if (item.type === "youtube" || item.youtubeId) {
+      setIsYouTubeModalOpen(true);
+    } else if (item.type === "website" || item.websiteConfig) {
+      setIsWebsiteModalOpen(true);
+    } else if (item.type === "pdf" && item.slides) {
+      setIsSlideCreatorOpen(true);
     }
   };
 
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMediaList((prev) => prev.filter((m) => m.id !== id));
+    removeMediaLibraryItem(id);
+  };
+
+  // Category Counts & Filtered List
+  const counts = useMemo(() => {
+    return {
+      all: mediaList.length,
+      video: mediaList.filter((m) => m.type === "video").length,
+      youtube: mediaList.filter((m) => m.type === "youtube" || Boolean(m.youtubeId)).length,
+      map: mediaList.filter((m) => m.type === "map" || Boolean(m.mapConfig)).length,
+      pdf: mediaList.filter((m) => m.type === "pdf").length,
+      website: mediaList.filter((m) => m.type === "website" || Boolean(m.websiteConfig)).length,
+      audio: mediaList.filter((m) => m.type === "audio").length,
+      image: mediaList.filter((m) => m.type === "image").length,
+    };
+  }, [mediaList]);
+
+  const filteredMediaList = useMemo(() => {
+    return mediaList.filter((item) => {
+      if (activeCategory !== "all") {
+        if (activeCategory === "youtube" && !(item.type === "youtube" || item.youtubeId))
+          return false;
+        else if (activeCategory === "map" && !(item.type === "map" || item.mapConfig))
+          return false;
+        else if (
+          activeCategory === "website" &&
+          !(item.type === "website" || item.websiteConfig)
+        )
+          return false;
+        else if (
+          ["video", "pdf", "audio", "image"].includes(activeCategory) &&
+          item.type !== activeCategory
+        )
+          return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          item.name.toLowerCase().includes(q) ||
+          (item.duration || "").toLowerCase().includes(q) ||
+          item.type.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [mediaList, activeCategory, searchQuery]);
+
   const uploadedVideos = mediaList.filter((m) => m.type === "video" && m.isUploaded);
   const uploadedAudios = mediaList.filter((m) => m.type === "audio" && m.isUploaded);
-  const uploadedDocs = mediaList.filter((m) => (m.type === "image" || m.type === "pdf") && m.isUploaded);
+  const uploadedDocs = mediaList.filter(
+    (m) => (m.type === "image" || m.type === "pdf") && !m.slides && m.isUploaded
+  );
 
   const totalVideoDurationSec = uploadedVideos.reduce((acc, item) => {
-    if (item.durationSeconds && item.durationSeconds > 0) return acc + item.durationSeconds;
+    if (item.durationSeconds && item.durationSeconds > 0)
+      return acc + item.durationSeconds;
     const parts = (item.duration || "").split(":");
     if (parts.length === 2) {
       const m = parseInt(parts[0], 10);
@@ -467,107 +564,132 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     return acc;
   }, 0);
 
-  const MAX_VIDEO_LIMIT_SEC = 3600; // 60 minutes total
+  const MAX_VIDEO_LIMIT_SEC = 3600;
   const remainingVideoSec = Math.max(0, MAX_VIDEO_LIMIT_SEC - totalVideoDurationSec);
   const remainingMinutes = Math.floor(remainingVideoSec / 60);
   const remainingSeconds = remainingVideoSec % 60;
   const usedMinutes = Math.floor(totalVideoDurationSec / 60);
   const usedSeconds = totalVideoDurationSec % 60;
 
+  const CATEGORY_TABS: Array<{ id: MediaCategoryTab; label: string; count: number }> = [
+    { id: "all", label: "All", count: counts.all },
+    { id: "youtube", label: "▶️ YouTube", count: counts.youtube },
+    { id: "map", label: "🗺️ 3D Map", count: counts.map },
+    { id: "pdf", label: "📊 Slides", count: counts.pdf },
+    { id: "website", label: "🌐 Website", count: counts.website },
+    { id: "video", label: "🎬 Video", count: counts.video },
+    { id: "audio", label: "🎵 Audio", count: counts.audio },
+    { id: "image", label: "🖼️ Image", count: counts.image },
+  ];
+
   return (
-    <div className="h-full flex flex-col justify-between bg-[#0b0b12]">
-      {/* Header */}
-      <div className="p-3 border-b border-white/5 flex items-center justify-between">
-        <div>
-          <h3 className="text-xs font-semibold text-white uppercase tracking-wider flex items-center gap-1.5">
-            <PlaySquare className="w-4 h-4 text-indigo-400" />
-            Production Media
-          </h3>
-          <p className="text-[10px] text-slate-400">Play videos, slides & music directly on stage</p>
+    <div className="h-full flex flex-col justify-between bg-[#0b0b12] select-none">
+      {/* 1. Clean Top Header (Never Overflows!) */}
+      <div className="p-3 border-b border-white/10 space-y-2.5 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+              <PlaySquare className="w-4 h-4 text-indigo-400 shrink-0" />
+              <span className="truncate">Media & Stage Studio</span>
+            </h3>
+            <p className="text-[10.5px] text-slate-400 truncate">
+              Navigate any media tab & drag directly to Scene or Stage
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !autoRepeat;
+                setAutoRepeat(next);
+                if (activeMedia) {
+                  setActiveMedia({ ...activeMedia, loop: next });
+                }
+              }}
+              className={cn(
+                "h-7 px-2 text-[10.5px] font-bold rounded-lg border flex items-center gap-1 transition-all",
+                autoRepeat
+                  ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
+                  : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
+              )}
+              title="Toggle Auto-Repeat for Stage Media"
+            >
+              <Repeat className="w-3 h-3" />
+              <span>Repeat</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCleanupLibrary}
+              className="h-7 px-2 text-[10.5px] font-bold rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 flex items-center gap-1 transition-all"
+              title="Clean dummy or duplicate media items"
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>Clean</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        {/* 2. 6-Button Studio Creation Grid (No Horizontal Overflow!) */}
+        <div className="grid grid-cols-3 gap-1.5">
+          <button
+            type="button"
+            onClick={() => setIsYouTubeModalOpen(true)}
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 flex items-center justify-center gap-1.5 transition-all shadow-sm"
+          >
+            <Youtube className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+            <span className="truncate">YouTube</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
-              const next = !autoRepeat;
-              setAutoRepeat(next);
-              if (activeMedia) {
-                setActiveMedia({ ...activeMedia, loop: next });
-              }
+              setEditingMapItem(null);
+              setIsMapModalOpen(true);
             }}
-            className={cn(
-              "h-7 px-2 text-[10px] font-semibold rounded-lg border flex items-center gap-1 transition-all",
-              autoRepeat
-                ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
-                : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
-            )}
-            title={autoRepeat ? "Auto-Repeat: ON (Video/audio replays automatically)" : "Auto-Repeat: OFF (Plays once)"}
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 flex items-center justify-center gap-1.5 transition-all shadow-sm"
           >
-            <Repeat className="w-3 h-3" />
-            <span>Repeat</span>
+            <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="truncate">3D Map</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsSlideCreatorOpen(true)}
-            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white flex items-center gap-1 shadow-sm transition-all"
-            title="Create 1080p Slide Deck in App with Speaker Notes"
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-cyan-500/40 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 flex items-center justify-center gap-1.5 transition-all shadow-sm"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Slides</span>
+            <Plus className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="truncate">Slides</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setIsYouTubeLibraryOpen(true)}
-            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-500 text-white flex items-center gap-1 shadow-sm transition-all"
-            title="Direct YouTube Video Player & Clip Library"
+            onClick={() => setIsWebsiteModalOpen(true)}
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-indigo-500/40 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 flex items-center justify-center gap-1.5 transition-all shadow-sm"
           >
-            <Youtube className="w-3.5 h-3.5" />
-            <span>YouTube</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsTacticalMapOpen(true)}
-            className="h-7 px-2.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 shadow-sm transition-all"
-            title="Broadcast News Tactical Map & Trajectory Animator"
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>Map</span>
+            <Globe className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span className="truncate">Website</span>
           </button>
 
           <button
             type="button"
             onClick={handlePasteScreenshot}
-            className="h-7 px-2 text-xs font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 flex items-center gap-1 border border-white/15 shadow-sm transition-all"
-            title="Paste Screenshot from Clipboard (Ctrl+V)"
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 flex items-center justify-center gap-1.5 transition-all shadow-sm"
           >
-            <Clipboard className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Paste</span>
+            <Clipboard className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">Paste</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setIsWebsiteLibraryOpen(true)}
-            className="h-7 px-2 text-xs font-semibold rounded-lg bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1 shadow-sm transition-all"
-            title="Interactive Website URL & Live Pointer"
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>Web URL</span>
-          </button>
-
-          <Button
-            variant="primary"
-            size="sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="h-7 text-xs px-2.5"
+            className="h-8 px-2 text-[11px] font-bold rounded-lg border border-indigo-400 bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-1.5 transition-all shadow-md"
           >
-            <Upload className="w-3.5 h-3.5 mr-1" />
-            {isUploading ? "Uploading..." : "Upload"}
-          </Button>
+            <Upload className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{isUploading ? "Wait..." : "Upload"}</span>
+          </button>
         </div>
 
         <input
@@ -577,16 +699,73 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
           className="hidden"
           onChange={handleFileUpload}
         />
+
+        {cleanupNotice && (
+          <div className="px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-[11px] font-bold text-emerald-300 text-center animate-in fade-in">
+            ✨ {cleanupNotice}
+          </div>
+        )}
       </div>
 
-      {/* VPS Storage Quota Status Bar */}
-      <div className="px-3 py-2 border-b border-white/5 bg-slate-950/60 flex items-center justify-between gap-1.5 text-[10px]">
-        {/* Videos: Unlimited files, Max 60m Total Duration */}
-        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
-          <span className="text-slate-400 font-medium">Videos (1080p, ≤60m)</span>
+      {/* 3. Dedicated 8-Category Navigation Tabs */}
+      <div className="px-2.5 py-2 border-b border-white/10 bg-[#0e101d] space-y-2 shrink-0">
+        <div className="grid grid-cols-4 gap-1">
+          {CATEGORY_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveCategory(tab.id)}
+              className={cn(
+                "py-1.5 px-1.5 rounded-lg text-[10.5px] font-bold flex items-center justify-between gap-1 border transition-all truncate",
+                activeCategory === tab.id
+                  ? "bg-indigo-600 text-white border-indigo-400 shadow"
+                  : "bg-white/[0.04] text-slate-300 border-white/5 hover:bg-white/10 hover:text-white"
+              )}
+            >
+              <span className="truncate">{tab.label}</span>
+              <span
+                className={cn(
+                  "text-[9.5px] font-mono px-1 rounded",
+                  activeCategory === tab.id
+                    ? "bg-black/30 text-cyan-200"
+                    : "bg-white/5 text-slate-400"
+                )}
+              >
+                {tab.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Search Filter */}
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={`Search in ${activeCategory === "all" ? "all media" : activeCategory}...`}
+            className="w-full pl-8 pr-6 py-1 rounded-lg bg-black/50 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-400"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-white"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 4. VPS Storage Quota Status Bar */}
+      <div className="px-3 py-1.5 border-b border-white/5 bg-slate-950/60 flex items-center justify-between gap-1.5 text-[10px] shrink-0">
+        <div className="flex-1 p-1 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Videos (≤60m)</span>
           <span
             className={cn(
-              "font-mono font-bold mt-0.5 text-[10.5px]",
+              "font-mono font-bold text-[10.5px]",
               remainingVideoSec <= 0
                 ? "text-rose-400"
                 : remainingVideoSec < 300
@@ -596,252 +775,337 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
           >
             {usedMinutes}m {usedSeconds}s / 60m
           </span>
-          <span
-            className={cn(
-              "text-[9px] font-mono mt-0.5",
-              remainingVideoSec <= 0 ? "text-rose-400 font-semibold" : "text-slate-400"
-            )}
-          >
-            {remainingVideoSec <= 0
-              ? "0m left (Full)"
-              : `${remainingMinutes}m ${remainingSeconds}s left`}
-          </span>
         </div>
 
-        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
-          <span className="text-slate-400 font-medium">Audio (MP3, ≤15m)</span>
-          <span className={cn("font-mono font-bold mt-0.5", uploadedAudios.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
+        <div className="flex-1 p-1 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Audio (MP3)</span>
+          <span
+            className={cn(
+              "font-mono font-bold text-[10.5px]",
+              uploadedAudios.length >= 2 ? "text-amber-400" : "text-emerald-400"
+            )}
+          >
             {uploadedAudios.length} / 2
           </span>
         </div>
 
-        <div className="flex-1 p-1.5 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
-          <span className="text-slate-400 font-medium">Image/PDF (≤2MB)</span>
-          <span className={cn("font-mono font-bold mt-0.5", uploadedDocs.length >= 2 ? "text-amber-400" : "text-emerald-400")}>
+        <div className="flex-1 p-1 rounded-lg bg-white/[0.03] border border-white/5 flex flex-col items-center text-center">
+          <span className="text-slate-400 font-medium">Image/PDF</span>
+          <span
+            className={cn(
+              "font-mono font-bold text-[10.5px]",
+              uploadedDocs.length >= 2 ? "text-amber-400" : "text-emerald-400"
+            )}
+          >
             {uploadedDocs.length} / 2
           </span>
         </div>
       </div>
 
-      {/* Active Stage Media Banner */}
+      {/* 5. Active Stage Media Banner */}
       {activeMedia && (
-        <div className="px-3 py-2 bg-indigo-950/70 border-b border-indigo-500/30 flex items-center justify-between">
+        <div className="px-3 py-2 bg-indigo-950/75 border-b border-indigo-500/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <div className="min-w-0">
               <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-                <span>Playing On Stage</span>
+                <span>Live On Stage</span>
                 {activeMedia.loop !== false && (
-                  <span className="text-[9px] text-emerald-400 font-mono font-normal">
-                    (Auto-Repeat)
+                  <span className="text-[9.5px] text-emerald-400 font-mono font-normal">
+                    (Loop)
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-white truncate max-w-[150px]">{activeMedia.name}</p>
+              <p className="text-xs font-semibold text-white truncate max-w-[155px]">
+                {activeMedia.name}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                const next = !(activeMedia.loop ?? true);
-                setAutoRepeat(next);
-                setActiveMedia({ ...activeMedia, loop: next });
-              }}
-              className={cn(
-                "h-6 px-1.5 text-[9px] font-medium rounded border flex items-center gap-1 transition-all",
-                (activeMedia.loop ?? true)
-                  ? "bg-indigo-600 text-white border-indigo-400 font-bold"
-                  : "bg-white/10 text-slate-400 border-white/10 hover:text-white"
-              )}
-              title={(activeMedia.loop ?? true) ? "Auto-Repeat ON (Click for 1-Shot)" : "Auto-Repeat OFF (Click to Loop)"}
-            >
-              <Repeat className="w-2.5 h-2.5" />
-              <span>{(activeMedia.loop ?? true) ? "Loop" : "1-Shot"}</span>
-            </button>
             <Button
               variant="danger"
               size="sm"
               onClick={() => setActiveMedia(null)}
-              className="h-6 px-2 text-[10px]"
+              className="h-7 px-2.5 text-[11px] font-bold"
             >
-              <Square className="w-2.5 h-2.5 mr-1 fill-current" />
+              <Square className="w-3 h-3 mr-1 fill-current" />
               Stop
             </Button>
           </div>
         </div>
       )}
 
-      {/* Drag-to-Scene Helper Banner */}
-      <div className="px-3 py-1.5 bg-indigo-950/30 border-b border-white/5 flex items-center justify-between text-[10px] text-indigo-200/90 shrink-0">
+      {/* 6. Drag-to-Scene Helper Banner */}
+      <div className="px-3 py-1.5 bg-indigo-950/30 border-b border-white/5 flex items-center justify-between text-[10.5px] text-indigo-200 shrink-0">
         <span className="flex items-center gap-1.5 truncate">
-          <GripVertical className="w-3 h-3 text-cyan-400 shrink-0" />
-          <span>Drag any media onto a <strong>Scene</strong> or <strong>Stage</strong></span>
+          <GripVertical className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <span>
+            Drag any item onto a <strong>Scene</strong> or <strong>Stage</strong>
+          </span>
         </span>
-        <span className="text-[9px] font-mono text-cyan-400 shrink-0 ml-1">Drag & Drop</span>
+        <span className="text-[9.5px] font-mono text-cyan-400 shrink-0 ml-1">
+          Drag & Drop
+        </span>
       </div>
 
-      {/* Media Items List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-        {mediaList.map((item) => {
-          const isPlaying = activeMedia?.id === item.id;
-          const isOverlaying = activeStageOverlay?.id === item.id;
-          const isCompatibleWithOverlay = item.type === "video" || item.type === "image";
-          const isDragging = draggingMediaId === item.id;
+      {/* 7. Media Items List */}
+      <div className="flex-1 overflow-y-auto p-2.5 space-y-2 custom-scrollbar">
+        {/* Category-Specific Quick Add CTA when viewing a filtered tab */}
+        {activeCategory !== "all" && (
+          <button
+            type="button"
+            onClick={() => {
+              if (activeCategory === "youtube") setIsYouTubeModalOpen(true);
+              else if (activeCategory === "map") {
+                setEditingMapItem(null);
+                setIsMapModalOpen(true);
+              } else if (activeCategory === "pdf") setIsSlideCreatorOpen(true);
+              else if (activeCategory === "website") setIsWebsiteModalOpen(true);
+              else fileInputRef.current?.click();
+            }}
+            className="w-full py-2 px-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-200 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+          >
+            <Plus className="w-4 h-4 text-cyan-400" />
+            <span>
+              {activeCategory === "youtube" && "Add New YouTube Video / Clip"}
+              {activeCategory === "map" && "Create New 3D/2D Tactical Map"}
+              {activeCategory === "pdf" && "Create Slide Deck or Upload PDF"}
+              {activeCategory === "website" && "Add New Interactive Website URL"}
+              {activeCategory === "video" && "Upload Video File from PC"}
+              {activeCategory === "audio" && "Upload MP3 Audio File"}
+              {activeCategory === "image" && "Upload Image or Paste Screenshot"}
+            </span>
+          </button>
+        )}
 
-          return (
-            <div
-              key={item.id}
-              draggable
-              onDragStart={(e) => {
-                setDraggingMediaId(item.id);
-                const payloadItem: MediaFileItem = {
-                  ...item,
-                  loop: item.loop ?? autoRepeat,
-                };
-                const jsonStr = JSON.stringify({ type: "livestudio-media", media: payloadItem });
-                e.dataTransfer.setData("application/x-livestudio-media", jsonStr);
-                e.dataTransfer.setData("text/plain", jsonStr);
-                e.dataTransfer.effectAllowed = "copyMove";
-              }}
-              onDragEnd={() => setDraggingMediaId(null)}
-              title="Drag to any Scene card on the left or onto the Live Stage"
-              className={cn(
-                "p-2.5 rounded-xl border text-xs transition-all flex items-center justify-between group cursor-grab active:cursor-grabbing",
-                isDragging && "opacity-60 border-cyan-400 ring-1 ring-cyan-400/50 scale-[0.98]",
-                isPlaying
-                  ? "bg-indigo-500/15 border-indigo-500 shadow-md shadow-indigo-500/10"
-                  : isOverlaying
-                  ? "bg-purple-500/15 border-purple-500 shadow-md shadow-purple-500/10"
-                  : "bg-surface border-white/5 hover:border-indigo-500/40"
-              )}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <GripVertical className="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 shrink-0 transition-colors" />
-                <div
-                  className={cn(
-                    "p-2 rounded-lg border",
-                    isPlaying
-                      ? "bg-indigo-600 text-white border-indigo-400"
-                      : isOverlaying
-                      ? "bg-purple-600 text-white border-purple-400"
-                      : "bg-surface-raised border-white/5 text-indigo-400"
-                  )}
-                >
-                  {item.type === "video" && <Video className="w-4 h-4" />}
-                  {item.type === "pdf" && <FileText className="w-4 h-4" />}
-                  {item.type === "audio" && <Music className="w-4 h-4" />}
-                  {item.type === "image" && <PlaySquare className="w-4 h-4" />}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-white truncate max-w-[110px]" title={item.name}>
-                    {item.name}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
-                    <span>{item.duration}</span>
-                    {isPlaying && (
-                      <span className="text-emerald-400 font-bold uppercase tracking-wider text-[9px]">
-                        • STAGE
-                      </span>
-                    )}
-                    {isOverlaying && (
-                      <span className="text-indigo-400 font-bold uppercase tracking-wider text-[9px]">
-                        • OVERLAY
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
+        {filteredMediaList.length === 0 ? (
+          <div className="p-6 rounded-2xl border border-dashed border-white/10 text-center space-y-2 text-slate-400 my-2">
+            <FolderOpen className="w-8 h-8 text-indigo-400/50 mx-auto" />
+            <p className="text-xs font-bold text-slate-200">
+              No {activeCategory === "all" ? "media" : activeCategory} items found
+            </p>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Use the buttons above to add YouTube clips, 3D Tactical Maps, Slide Decks, Website URLs, or upload files from your PC.
+            </p>
+          </div>
+        ) : (
+          filteredMediaList.map((item) => {
+            const isPlaying = activeMedia?.id === item.id;
+            const isOverlaying = activeStageOverlay?.id === item.id;
+            const isCompatibleWithOverlay =
+              item.type === "video" || item.type === "image";
+            const isEditableModalItem =
+              item.type === "youtube" ||
+              item.type === "map" ||
+              item.type === "website" ||
+              Boolean(item.youtubeId || item.mapConfig || item.websiteConfig || item.slides);
+            const isDragging = draggingMediaId === item.id;
 
-              <div className="flex items-center gap-1 shrink-0">
-                {/* Full Stage Presentation Button */}
-                <Button
-                  variant={isPlaying ? "danger" : "secondary"}
-                  size="sm"
-                  onClick={() => handleTogglePlay(item)}
-                  className="h-7 px-2 text-[10px] font-medium"
-                  title={isPlaying ? "Stop full-stage presentation" : "Present full-stage"}
-                >
-                  {isPlaying ? (
-                    <>
-                      <Square className="w-2.5 h-2.5 mr-1 fill-current" />
-                      Stop
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-2.5 h-2.5 mr-1 fill-current" />
-                      Stage
-                    </>
-                  )}
-                </Button>
-
-                {/* Floating Overlay Button */}
-                {isCompatibleWithOverlay && (
-                  <Button
-                    variant={isOverlaying ? "primary" : "secondary"}
-                    size="sm"
-                    onClick={() => handleToggleOverlay(item)}
-                    className={cn(
-                      "h-7 px-2 text-[10px] font-medium transition-colors",
-                      isOverlaying
-                        ? "bg-indigo-600 text-white font-bold shadow-sm"
-                        : "text-slate-300 hover:text-white"
-                    )}
-                    title={isOverlaying ? "Remove overlay from stage" : "Overlay on live stage with custom resize/crop"}
-                  >
-                    <Layers className="w-3 h-3 mr-1" />
-                    {isOverlaying ? "Active" : "Overlay"}
-                  </Button>
+            return (
+              <div
+                key={item.id}
+                draggable
+                onDragStart={(e) => {
+                  setDraggingMediaId(item.id);
+                  const payloadItem: MediaFileItem = {
+                    ...item,
+                    loop: item.loop ?? autoRepeat,
+                  };
+                  const jsonStr = JSON.stringify({
+                    type: "livestudio-media",
+                    media: payloadItem,
+                  });
+                  e.dataTransfer.setData("application/x-livestudio-media", jsonStr);
+                  e.dataTransfer.setData("text/plain", jsonStr);
+                  e.dataTransfer.effectAllowed = "copyMove";
+                }}
+                onDragEnd={() => setDraggingMediaId(null)}
+                title="Drag onto any Scene card on the left or onto the Live Stage"
+                className={cn(
+                  "p-2.5 rounded-xl border text-xs transition-all flex flex-col gap-2 group cursor-grab active:cursor-grabbing",
+                  isDragging &&
+                    "opacity-60 border-cyan-400 ring-1 ring-cyan-400/50 scale-[0.98]",
+                  isPlaying
+                    ? "bg-indigo-500/20 border-indigo-400 shadow-md shadow-indigo-500/10"
+                    : isOverlaying
+                    ? "bg-purple-500/20 border-purple-400 shadow-md shadow-purple-500/10"
+                    : "bg-[#121422] border-white/10 hover:border-indigo-400/50"
                 )}
+              >
+                {/* Top Row: Grip + Icon + Name + Duration */}
+                <div className="flex items-center gap-2 min-w-0">
+                  <GripVertical className="w-4 h-4 text-slate-400 group-hover:text-cyan-400 shrink-0 transition-colors" />
+                  <div
+                    className={cn(
+                      "p-2 rounded-lg border shrink-0",
+                      isPlaying
+                        ? "bg-indigo-600 text-white border-indigo-400"
+                        : isOverlaying
+                        ? "bg-purple-600 text-white border-purple-400"
+                        : "bg-black/40 border-white/10 text-indigo-400"
+                    )}
+                  >
+                    {item.type === "video" && <Video className="w-4 h-4" />}
+                    {item.type === "youtube" && (
+                      <Youtube className="w-4 h-4 text-rose-400" />
+                    )}
+                    {item.type === "map" && (
+                      <Globe className="w-4 h-4 text-emerald-400" />
+                    )}
+                    {item.type === "website" && (
+                      <Globe className="w-4 h-4 text-cyan-400" />
+                    )}
+                    {item.type === "pdf" && (
+                      <FileText className="w-4 h-4 text-amber-400" />
+                    )}
+                    {item.type === "audio" && (
+                      <Music className="w-4 h-4 text-emerald-400" />
+                    )}
+                    {item.type === "image" && (
+                      <ImageIcon className="w-4 h-4 text-cyan-300" />
+                    )}
+                  </div>
 
-                <button
-                  onClick={(e) => handleDelete(item.id, e)}
-                  className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-opacity"
-                  title="Remove file"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className="text-xs font-bold text-white truncate"
+                      title={item.name}
+                    >
+                      {item.name}
+                    </div>
+                    <div className="text-[10.5px] text-slate-400 font-mono flex items-center gap-1.5 flex-wrap mt-0.5">
+                      <span className="uppercase text-[9.5px] px-1.5 py-0.2 rounded bg-white/5 text-slate-300 border border-white/10">
+                        {item.type}
+                      </span>
+                      <span className="truncate">{item.duration || "Ready"}</span>
+                      {isPlaying && (
+                        <span className="text-emerald-400 font-bold uppercase tracking-wider text-[9.5px]">
+                          • ON STAGE
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Row: Always-Visible Stage, Overlay, Edit & Delete Buttons */}
+                <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-white/5">
+                  <Button
+                    variant={isPlaying ? "danger" : "secondary"}
+                    size="sm"
+                    onClick={() => handleTogglePlay(item)}
+                    className="h-7 px-2.5 text-[10.5px] font-bold flex-1"
+                    title={
+                      isPlaying
+                        ? "Stop Stage Presentation"
+                        : "Show / Play on Live Stage"
+                    }
+                  >
+                    {isPlaying ? (
+                      <>
+                        <Square className="w-3 h-3 mr-1 fill-current" />
+                        Stop
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3 h-3 mr-1 fill-current" />
+                        Stage
+                      </>
+                    )}
+                  </Button>
+
+                  {isCompatibleWithOverlay && (
+                    <Button
+                      variant={isOverlaying ? "primary" : "secondary"}
+                      size="sm"
+                      onClick={() => handleToggleOverlay(item)}
+                      className={cn(
+                        "h-7 px-2.5 text-[10.5px] font-bold transition-colors",
+                        isOverlaying
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "text-slate-200 hover:text-white"
+                      )}
+                      title="Toggle Floating Stage Overlay"
+                    >
+                      <Layers className="w-3 h-3 mr-1" />
+                      {isOverlaying ? "Active" : "Overlay"}
+                    </Button>
+                  )}
+
+                  {isEditableModalItem && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleEditItem(item, e)}
+                      className="h-7 px-2 rounded-lg bg-white/5 hover:bg-white/15 text-slate-200 hover:text-white border border-white/10 flex items-center gap-1 text-[10.5px] font-semibold transition-colors"
+                      title="Edit item settings"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={(e) => handleDelete(item.id, e)}
+                    className="h-7 px-2 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 flex items-center gap-1 text-[10.5px] font-semibold transition-colors"
+                    title="Delete item from Media Library & Scenes"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       {/* Footer Info */}
-      <div className="p-2.5 border-t border-white/5 bg-[#09090f] text-[10px] text-slate-500 flex items-center justify-between">
+      <div className="p-2.5 border-t border-white/5 bg-[#09090f] text-[10.5px] text-slate-400 flex items-center justify-between shrink-0">
         <span>VPS Disk Protection Active</span>
-        <span className="text-emerald-400 font-mono">Quota Enforced</span>
+        <span className="text-emerald-400 font-mono font-semibold">Quota Enforced</span>
       </div>
 
+      {/* In-App Multi-Slide Deck Creator Modal */}
       <SlideDeckCreatorModal
         isOpen={isSlideCreatorOpen}
         onClose={() => setIsSlideCreatorOpen(false)}
-        onDeckCreated={(deck) => {
-          setMediaList((prev) => [deck, ...prev]);
+        onDeckCreated={(newDeck) => {
+          setMediaList((prev) =>
+            sanitizeAndDeduplicateMediaList([newDeck, ...prev], true)
+          );
         }}
       />
 
+      {/* Direct YouTube Scene Player & Library Modal */}
       <YouTubeLibraryModal
-        isOpen={isYouTubeLibraryOpen}
-        onClose={() => setIsYouTubeLibraryOpen(false)}
-        onSelectYouTubeItem={(item) => {
-          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
+        isOpen={isYouTubeModalOpen}
+        onClose={() => setIsYouTubeModalOpen(false)}
+        onSelectYouTubeItem={(ytItem) => {
+          setMediaList((prev) =>
+            sanitizeAndDeduplicateMediaList([ytItem, ...prev], true)
+          );
         }}
       />
 
+      {/* Broadcast News Tactical Map — 3D/2D Air, Land & Naval Simulator Modal */}
       <TacticalMapModal
-        isOpen={isTacticalMapOpen}
-        onClose={() => setIsTacticalMapOpen(false)}
-        onSaveMapItem={(item) => {
-          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
+        isOpen={isMapModalOpen}
+        onClose={() => setIsMapModalOpen(false)}
+        initialItem={editingMapItem}
+        onSaveMapItem={(mapItem) => {
+          setMediaList((prev) =>
+            sanitizeAndDeduplicateMediaList([mapItem, ...prev], true)
+          );
         }}
       />
 
+      {/* Interactive Website URL Scene & Library Modal */}
       <WebsiteLibraryModal
-        isOpen={isWebsiteLibraryOpen}
-        onClose={() => setIsWebsiteLibraryOpen(false)}
-        onSelectWebsiteItem={(item) => {
-          setMediaList((prev) => [item, ...prev.filter((m) => m.id !== item.id)]);
+        isOpen={isWebsiteModalOpen}
+        onClose={() => setIsWebsiteModalOpen(false)}
+        onSelectWebsiteItem={(webItem) => {
+          setMediaList((prev) =>
+            sanitizeAndDeduplicateMediaList([webItem, ...prev], true)
+          );
         }}
       />
     </div>

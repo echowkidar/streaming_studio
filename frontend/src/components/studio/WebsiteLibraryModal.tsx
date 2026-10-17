@@ -600,6 +600,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
   const [urlInput, setUrlInput] = useState("");
   const [titleInput, setTitleInput] = useState("");
   const [useProxy, setUseProxy] = useState(true);
+  const [proxyEngine, setProxyEngine] = useState<"web-proxy" | "reader" | "api-proxy" | "direct">("web-proxy");
   const [interactiveMode, setInteractiveMode] = useState(true);
   const [showPointer, setShowPointer] = useState(true);
   const [pointerStyle, setPointerStyle] = useState<WebsitePointerStyle>("laser");
@@ -620,6 +621,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     setUrlInput("");
     setTitleInput("");
     setUseProxy(true);
+    setProxyEngine("web-proxy");
     setInteractiveMode(true);
     setShowPointer(true);
     setPointerStyle("laser");
@@ -632,6 +634,10 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     setUrlInput(normalizeWebsiteUrl(item.websiteConfig?.url || item.url));
     setTitleInput(item.name);
     setUseProxy(item.websiteConfig?.useProxy ?? true);
+    setProxyEngine(
+      item.websiteConfig?.proxyMode ||
+        (item.websiteConfig?.useProxy === false ? "direct" : "web-proxy")
+    );
     setInteractiveMode(item.websiteConfig?.interactiveMode ?? true);
     setShowPointer(item.websiteConfig?.showBroadcastPointer ?? true);
     setPointerStyle(item.websiteConfig?.pointerStyle || "laser");
@@ -672,7 +678,8 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     const websiteConfig: WebsiteSceneConfig = {
       url: cleanUrl,
       title: cleanTitle,
-      useProxy,
+      useProxy: proxyEngine !== "direct",
+      proxyMode: proxyEngine,
       interactiveMode,
       showBroadcastPointer: showPointer,
       pointerStyle,
@@ -753,7 +760,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl bg-[#0d0e1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white max-h-[92vh]"
+        className="w-[95vw] max-w-[1380px] h-[88vh] bg-[#0d0e1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -943,20 +950,37 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
                 </select>
               </div>
 
-              <div className="flex items-center justify-between pt-1 border-t border-white/10">
-                <span className="text-[10px] text-slate-300">Bypass IFrame Block (`X-Frame-Options`):</span>
-                <button
-                  type="button"
-                  onClick={() => setUseProxy(!useProxy)}
-                  className={cn(
-                    "px-2.5 py-0.5 rounded-lg text-[10px] font-bold border",
-                    useProxy
-                      ? "bg-cyan-600 text-white border-cyan-400"
-                      : "bg-white/5 text-slate-400 border-white/10"
-                  )}
-                >
-                  {useProxy ? "🛡️ Smart Proxy ON (Recommended)" : "Direct IFrame"}
-                </button>
+              <div className="space-y-1.5 pt-1 border-t border-white/10">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10.5px] font-bold text-slate-300">Proxy Engine Mode:</span>
+                  <span className="text-[9.5px] font-mono text-cyan-300">Bypasses X-Frame-Options & CORS</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                  {[
+                    { id: "web-proxy" as const, label: "🛡️ Smart Proxy", desc: "Next.js Zero-Frame Block" },
+                    { id: "reader" as const, label: "📖 Reader View", desc: "Clean Text & Dark Mode" },
+                    { id: "api-proxy" as const, label: "⚡ API Proxy", desc: "Backend Streaming Proxy" },
+                    { id: "direct" as const, label: "🌐 Direct IFrame", desc: "Native Unproxied Embed" },
+                  ].map((mode) => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => {
+                        setProxyEngine(mode.id);
+                        setUseProxy(mode.id !== "direct");
+                      }}
+                      className={cn(
+                        "p-2 rounded-xl border text-left transition-all",
+                        proxyEngine === mode.id
+                          ? "bg-cyan-600/30 border-cyan-400 text-white shadow-sm"
+                          : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
+                      )}
+                    >
+                      <div className="text-[10.5px] font-bold">{mode.label}</div>
+                      <div className="text-[8.5px] text-slate-400 mt-0.5">{mode.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

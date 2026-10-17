@@ -280,7 +280,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl bg-[#0d0e1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white max-h-[92vh]"
+        className="w-[95vw] max-w-[1380px] h-[88vh] bg-[#0d0e1a] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -440,25 +440,37 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
               </div>
             </div>
 
-            {/* Thumbnail Preview */}
+            {/* Live Embedded 16:9 YouTube Clip Preview Player */}
             {previewVideoId && (
-              <div className="p-2.5 rounded-xl bg-black/60 border border-white/10 flex items-center gap-3">
-                <img
-                  src={`https://i.ytimg.com/vi/${previewVideoId}/hqdefault.jpg`}
-                  alt="YouTube Preview"
-                  className="w-24 h-14 rounded-lg object-cover border border-white/15 shrink-0"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-white truncate">
+              <div className="space-y-2 p-3 rounded-2xl bg-black/60 border border-white/15 shadow-inner">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                    <Film className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Live 16:9 YouTube Clip Preview</span>
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono">
+                    Test Start/End Trim Live
+                  </span>
+                </div>
+
+                <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/20 shadow-xl">
+                  <iframe
+                    key={`${previewVideoId}-${parseTimeInputToSeconds(startInput) || 0}-${parseTimeInputToSeconds(endInput) || ""}`}
+                    src={`https://www.youtube-nocookie.com/embed/${previewVideoId}?autoplay=0&controls=1&start=${parseTimeInputToSeconds(startInput) || 0}${parseTimeInputToSeconds(endInput) ? `&end=${parseTimeInputToSeconds(endInput)}` : ""}&rel=0`}
+                    title="YouTube Clip Preview Player"
+                    className="w-full h-full border-0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                  <span className="text-white font-medium truncate max-w-[280px]">
                     {titleInput || `YouTube Video (${previewVideoId})`}
-                  </div>
-                  <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
-                    ID: {previewVideoId} • Subtitles: OFF
-                  </div>
-                  <div className="text-[10px] text-amber-300 flex items-center gap-1 mt-0.5">
-                    <ShieldAlert className="w-3 h-3" />
-                    <span>Fair-Use (Grain, Lines, Jerk/Pause, Flip, Speed, Volume) Ready</span>
-                  </div>
+                  </span>
+                  <span className="text-emerald-400 font-mono">
+                    Trim: {startInput || "0:00"} → {endInput || "End"}
+                  </span>
                 </div>
               </div>
             )}

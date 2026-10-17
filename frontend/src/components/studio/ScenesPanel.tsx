@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout, MediaFileItem } from "@/stores/studio.store";
+import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout, MediaFileItem, isDummyOrBrokenMediaItem, sanitizeAndDeduplicateMediaList } from "@/stores/studio.store";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
 import { TacticalMapModal } from "./TacticalMapModal";
@@ -35,6 +35,8 @@ import {
   Youtube,
   Globe,
   Clipboard,
+  Search,
+  Image as ImageIcon,
 } from "lucide-react";
 
 export const LAYOUT_LABELS: Record<string, string> = {
@@ -301,6 +303,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     removeGuestSlotFromScene,
     setAutoAddGuestsToStage,
     setReplaceHostOnGuestJoin,
+    cleanupMediaLibrary,
   } = useStudioStore();
 
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -312,6 +315,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [isNewSceneDropTarget, setIsNewSceneDropTarget] = useState(false);
   const [recentlyAddedMediaSceneId, setRecentlyAddedMediaSceneId] = useState<string | null>(null);
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
+  const [attachCategory, setAttachCategory] = useState<string>("all");
+  const [attachSearchQuery, setAttachSearchQuery] = useState<string>("");
+  const [attachCleanupNotice, setAttachCleanupNotice] = useState<string | null>(null);
   const [layoutPickerSceneId, setLayoutPickerSceneId] = useState<string | null>(null);
   const [slideCreatorSceneId, setSlideCreatorSceneId] = useState<string | null>(null);
   const [youtubeLibrarySceneId, setYoutubeLibrarySceneId] = useState<string | null>(null);
@@ -1936,276 +1942,453 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         document.body
       )}
 
-      {/* ─── Media / Presentation Attachment Modal ───────────────────────── */}
+      {/* ─── Media / Presentation Attachment Modal (Enlarged 2-Column Studio Window) ─── */}
       {isMounted && mediaPickerSceneId && createPortal(
         <div 
-          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
           onClick={() => setMediaPickerSceneId(null)}
         >
           <div 
-            className="w-full max-w-sm bg-[#121320] border border-white/20 rounded-2xl shadow-2xl overflow-hidden p-4 text-white animate-in zoom-in-95 duration-150"
+            className="w-[95vw] max-w-[1280px] h-[86vh] bg-[#0c0d18] border border-white/20 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-white animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <MonitorUp className="w-4 h-4 text-cyan-400" />
-                <h3 className="text-sm font-bold">Attach Media / Presentation</h3>
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-white/10 bg-[#121324] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300">
+                  <MonitorUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Attach Media / Presentation</span>
+                    {(() => {
+                      const tgt = scenes.find((s) => s.id === mediaPickerSceneId);
+                      return tgt ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold">
+                          Target: {tgt.name}
+                        </span>
+                      ) : null;
+                    })()}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Select a video, slides, YouTube clip, tactical map or website. Media plays directly with 0s wait time and streams live.
+                  </p>
+                </div>
               </div>
-              <button 
-                type="button"
-                onClick={() => setMediaPickerSceneId(null)}
-                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const removed = cleanupMediaLibrary();
+                    setAttachCleanupNotice(removed > 0 ? `Cleaned ${removed} item(s)!` : "Library is clean!");
+                    setTimeout(() => setAttachCleanupNotice(null), 2500);
+                  }}
+                  className="h-8 px-2.5 text-xs font-bold rounded-xl border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Purge dummy and broken media entries"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{attachCleanupNotice || "Clean"}</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setMediaPickerSceneId(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <p className="text-[11px] text-slate-400 my-2.5 leading-relaxed">
-              Select a video, slides (PDF), or media from your computer. Video plays directly from your PC with 0s wait time and streams live when switching to this scene.
-            </p>
-
-            <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar my-2 pr-1">
-              {/* Option to clear media */}
-              <button
-                type="button"
-                onClick={() => handleAttachMedia(mediaPickerSceneId, null)}
-                className="w-full p-2 rounded-xl text-left border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/10 flex items-center gap-2.5 transition-all text-xs"
-              >
-                <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-                  <User className="w-4 h-4 text-slate-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-slate-300">Camera Only (No Media)</div>
-                  <div className="text-[10px] text-slate-500">Only show hosts and guests on stage</div>
-                </div>
-              </button>
-
-              {/* ─── Uploaded Presentations & Media (Persistent & Selectable) ─── */}
-              {mediaLibrary.filter((m) => m.isUploaded || m.id.startsWith("media-upload")).length > 0 && (
-                <div className="pt-1">
-                  <div className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider mb-1.5 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" />
-                    <span>Your Uploaded Presentations & Media</span>
+            {/* 2-Column Body */}
+            <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
+              {/* Left Column (8 cols): 8 Category Tabs, Search & Selectable Verified Media List */}
+              <div className="lg:col-span-8 flex flex-col p-4 min-h-0 space-y-3 overflow-hidden">
+                {/* Search Bar + Clear Media quick action */}
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={attachSearchQuery}
+                      onChange={(e) => setAttachSearchQuery(e.target.value)}
+                      placeholder="Search media by name, type, or duration..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-black/50 border border-white/15 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-sans"
+                    />
+                    {attachSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setAttachSearchQuery("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
-                  <div className="space-y-1.5">
-                    {mediaLibrary
-                      .filter((m) => m.isUploaded || m.id.startsWith("media-upload"))
-                      .map((opt) => {
-                        const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
+
+                  {/* Option to clear media */}
+                  <button
+                    type="button"
+                    onClick={() => handleAttachMedia(mediaPickerSceneId, null)}
+                    className="h-8 px-3 rounded-xl border border-white/15 hover:border-white/30 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all"
+                  >
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Camera Only</span>
+                  </button>
+                </div>
+
+                {/* 8 Category Tabs */}
+                {(() => {
+                  const nonDummy = mediaLibrary.filter((m) => !isDummyOrBrokenMediaItem(m));
+                  const cCounts = {
+                    all: nonDummy.length,
+                    youtube: nonDummy.filter((m) => m.type === "youtube" || Boolean(m.youtubeId)).length,
+                    map: nonDummy.filter((m) => m.type === "map" || Boolean(m.mapConfig)).length,
+                    pdf: nonDummy.filter((m) => m.type === "pdf").length,
+                    website: nonDummy.filter((m) => m.type === "website" || Boolean(m.websiteConfig)).length,
+                    video: nonDummy.filter((m) => m.type === "video").length,
+                    audio: nonDummy.filter((m) => m.type === "audio").length,
+                    image: nonDummy.filter((m) => m.type === "image").length,
+                  };
+                  const tabs = [
+                    { id: "all", label: "✨ All", count: cCounts.all },
+                    { id: "youtube", label: "▶️ YouTube", count: cCounts.youtube },
+                    { id: "map", label: "🌐 3D Map", count: cCounts.map },
+                    { id: "pdf", label: "📑 Slides", count: cCounts.pdf },
+                    { id: "website", label: "🌐 Website", count: cCounts.website },
+                    { id: "video", label: "🎬 Video", count: cCounts.video },
+                    { id: "audio", label: "🎵 Audio", count: cCounts.audio },
+                    { id: "image", label: "🖼️ Image", count: cCounts.image },
+                  ];
+                  return (
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none shrink-0">
+                      {tabs.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setAttachCategory(tab.id)}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1.5 transition-all shrink-0",
+                            attachCategory === tab.id
+                              ? "bg-cyan-600 text-white border-cyan-400 shadow-sm"
+                              : "bg-white/5 text-slate-400 border-white/10 hover:text-white hover:bg-white/10"
+                          )}
+                        >
+                          <span>{tab.label}</span>
+                          <span
+                            className={cn(
+                              "px-1.5 py-0.2 rounded-full text-[9px] font-mono",
+                              attachCategory === tab.id
+                                ? "bg-white/20 text-white"
+                                : "bg-black/40 text-slate-400"
+                            )}
+                          >
+                            {tab.count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Media Cards List */}
+                {(() => {
+                  const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
+                  const nonDummy = mediaLibrary.filter((m) => !isDummyOrBrokenMediaItem(m));
+                  const filtered = nonDummy.filter((m) => {
+                    if (attachCategory !== "all") {
+                      if (attachCategory === "youtube" && !(m.type === "youtube" || m.youtubeId)) return false;
+                      else if (attachCategory === "map" && !(m.type === "map" || m.mapConfig)) return false;
+                      else if (attachCategory === "website" && !(m.type === "website" || m.websiteConfig)) return false;
+                      else if (["video", "pdf", "audio", "image"].includes(attachCategory) && m.type !== attachCategory) return false;
+                    }
+                    if (attachSearchQuery.trim()) {
+                      const q = attachSearchQuery.trim().toLowerCase();
+                      return m.name.toLowerCase().includes(q) || (m.duration || "").toLowerCase().includes(q) || m.type.toLowerCase().includes(q);
+                    }
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="flex-1 flex flex-col items-center justify-center p-8 rounded-2xl border border-dashed border-white/10 text-center space-y-2 text-slate-400">
+                        <MonitorUp className="w-10 h-10 text-cyan-400/40" />
+                        <div className="text-sm font-semibold text-slate-300">No media found</div>
+                        <p className="text-xs text-slate-500 max-w-sm">
+                          Use the right column to upload a file from your computer or create a YouTube clip, 3D tactical map, slide deck, or website scene.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 min-h-0">
+                      {filtered.map((opt) => {
                         const isAttached = targetScene?.activeMedia?.id === opt.id;
                         return (
                           <div
                             key={opt.id}
                             className={cn(
-                              "w-full p-2 rounded-xl border flex items-center gap-2.5 transition-all text-xs group",
+                              "w-full p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all group",
                               isAttached
-                                ? "bg-cyan-950/40 border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.15)]"
-                                : "border-white/10 hover:border-cyan-500/40 bg-white/5 hover:bg-white/10"
+                                ? "bg-cyan-950/40 border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.15)] ring-1 ring-cyan-500/50"
+                                : "border-white/10 hover:border-cyan-500/40 bg-white/[0.03] hover:bg-white/[0.06]"
                             )}
                           >
-                            <button
-                              type="button"
-                              onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
-                              className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
-                            >
-                              <div className="w-8 h-8 rounded-lg overflow-hidden bg-black/60 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div className="w-12 h-10 rounded-lg overflow-hidden bg-black/60 border border-white/10 flex items-center justify-center shrink-0">
                                 {opt.type === "image" || opt.thumbnail ? (
-                                  <img
-                                    src={opt.thumbnail || opt.url}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                  />
+                                  <img src={opt.thumbnail || opt.url} alt="" className="w-full h-full object-cover" />
                                 ) : opt.type === "pdf" ? (
-                                  <FileText className="w-4 h-4 text-cyan-300" />
+                                  <FileText className="w-5 h-5 text-cyan-300" />
                                 ) : opt.type === "video" ? (
-                                  <Video className="w-4 h-4 text-indigo-300" />
+                                  <Video className="w-5 h-5 text-indigo-300" />
+                                ) : opt.type === "youtube" ? (
+                                  <Youtube className="w-5 h-5 text-rose-400" />
+                                ) : opt.type === "map" ? (
+                                  <Globe className="w-5 h-5 text-emerald-400" />
+                                ) : opt.type === "website" ? (
+                                  <Globe className="w-5 h-5 text-teal-400" />
                                 ) : (
-                                  <Music className="w-4 h-4 text-amber-300" />
+                                  <Music className="w-5 h-5 text-amber-300" />
                                 )}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-slate-200 group-hover:text-white truncate">
+                                <div className="text-xs font-semibold text-slate-100 group-hover:text-white truncate">
                                   {opt.name}
                                 </div>
-                                <div className="text-[10px] text-cyan-300/80 flex items-center gap-1.5">
-                                  <span className="capitalize">{opt.type}</span>
+                                <div className="text-[10.5px] text-slate-400 flex items-center gap-2 mt-0.5">
+                                  <span className="capitalize font-mono text-cyan-300/80">{opt.type}</span>
                                   {opt.duration && <span>• {opt.duration}</span>}
                                   {isAttached && (
-                                    <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
-                                      Attached
+                                    <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
+                                      Attached ✓
                                     </span>
                                   )}
                                 </div>
                               </div>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeMediaLibraryItem(opt.id);
-                              }}
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                              title="Delete from Media Library"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
+                                className={cn(
+                                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm",
+                                  isAttached
+                                    ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                    : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                                )}
+                              >
+                                {isAttached ? "Attached" : "Attach"}
+                              </button>
+
+                              {(opt.type === "map" || opt.mapConfig || opt.type === "youtube" || opt.youtubeId || opt.type === "website" || opt.websiteConfig || (opt.type === "pdf" && opt.slides)) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const sId = mediaPickerSceneId;
+                                    setMediaPickerSceneId(null);
+                                    if (opt.type === "map" || opt.mapConfig) setTacticalMapSceneId(sId);
+                                    else if (opt.type === "youtube" || opt.youtubeId) setYoutubeLibrarySceneId(sId);
+                                    else if (opt.type === "website" || opt.websiteConfig) setWebsiteLibrarySceneId(sId);
+                                    else if (opt.type === "pdf" && opt.slides) setSlideCreatorSceneId(sId);
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                  title="Edit Media Config"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeMediaLibraryItem(opt.id);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                                title="Delete from Library"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
-                  </div>
-                </div>
-              )}
+                    </div>
+                  );
+                })()}
+              </div>
 
-              {/* ─── Sample Media & Templates ─── */}
-              <div className="pt-1">
-                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">
-                  Sample Presentations & Clips
+              {/* Right Column (4 cols): Large Creation Action Cards */}
+              <div className="lg:col-span-4 flex flex-col p-4 bg-[#080912]/80 space-y-3 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between pb-1 border-b border-white/10">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    Create & Attach New
+                  </span>
+                  <span className="text-[10px] text-slate-500">Instant on Stage</span>
                 </div>
-                <div className="space-y-1.5">
-                  {mediaLibrary
-                    .filter((m) => !m.isUploaded && !m.id.startsWith("media-upload"))
-                    .map((opt) => {
-                      const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
-                      const isAttached = targetScene?.activeMedia?.id === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
-                          className={cn(
-                            "w-full p-2 rounded-xl text-left border flex items-center gap-2.5 transition-all text-xs group",
-                            isAttached
-                              ? "bg-cyan-950/40 border-cyan-500/60"
-                              : "border-white/10 hover:border-cyan-500/50 bg-white/5 hover:bg-cyan-950/20"
-                          )}
-                        >
-                          <div className="w-8 h-8 rounded-lg overflow-hidden bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center shrink-0">
-                            {opt.thumbnail ? (
-                              <img src={opt.thumbnail} alt="" className="w-full h-full object-cover" />
-                            ) : opt.type === "pdf" ? (
-                              <FileText className="w-4 h-4 text-cyan-300" />
-                            ) : opt.type === "video" ? (
-                              <Video className="w-4 h-4 text-indigo-300" />
-                            ) : (
-                              <Music className="w-4 h-4 text-amber-300" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-semibold text-slate-200 group-hover:text-white truncate">
-                              {opt.name}
-                            </div>
-                            <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                              <span>{opt.desc || opt.type}</span>
-                              {isAttached && (
-                                <span className="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
-                                  Attached
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                </div>
+
+                {/* 1. Upload Video/Audio/Slides from Computer */}
+                <input
+                  ref={mediaFileInputRef}
+                  type="file"
+                  accept="video/*,image/*,.pdf,audio/*"
+                  className="hidden"
+                  onChange={(e) => handleCustomFileUpload(e, mediaPickerSceneId)}
+                />
+                <button
+                  type="button"
+                  disabled={isProcessingUpload}
+                  onClick={() => mediaFileInputRef.current?.click()}
+                  className="w-full p-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-600/10 hover:bg-indigo-600/20 text-left transition-all active:scale-[0.99] group disabled:opacity-50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center shrink-0">
+                      {isProcessingUpload ? (
+                        <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Upload className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-indigo-200 group-hover:text-white">
+                        {isProcessingUpload ? "Processing..." : "+ Upload File from PC"}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Video, Slides (PDF), Audio, or Image
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 2. YouTube Clip Picker */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = mediaPickerSceneId;
+                    setMediaPickerSceneId(null);
+                    setYoutubeLibrarySceneId(sId);
+                  }}
+                  className="w-full p-3 rounded-xl border border-rose-500/40 hover:border-rose-400 bg-rose-500/10 hover:bg-rose-500/20 text-left transition-all active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0">
+                      <Youtube className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-rose-200 group-hover:text-white">
+                        + YouTube Video / Clip
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Zero Download • Start/End Trim • Fair-Use
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 3. 3D Tactical News Map */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = mediaPickerSceneId;
+                    setMediaPickerSceneId(null);
+                    setTacticalMapSceneId(sId);
+                  }}
+                  className="w-full p-3 rounded-xl border border-emerald-500/40 hover:border-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 text-left transition-all active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                      <Globe className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-emerald-200 group-hover:text-white">
+                        + 3D Tactical News Map
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Air/Sea/Missile Missions & 3D Globe
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 4. Slide Deck Creator */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = mediaPickerSceneId;
+                    setMediaPickerSceneId(null);
+                    setSlideCreatorSceneId(sId);
+                  }}
+                  className="w-full p-3 rounded-xl border border-cyan-500/40 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 text-left transition-all active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
+                      <Layers className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-cyan-200 group-hover:text-white">
+                        + Slide Deck Creator
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Multi-Slide Keynote with Speaker Notes
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 5. Interactive Website */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = mediaPickerSceneId;
+                    setMediaPickerSceneId(null);
+                    setWebsiteLibrarySceneId(sId);
+                  }}
+                  className="w-full p-3 rounded-xl border border-teal-500/40 hover:border-teal-400 bg-teal-500/10 hover:bg-teal-500/20 text-left transition-all active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-500/40 flex items-center justify-center shrink-0">
+                      <Globe className="w-4 h-4 text-teal-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-teal-200 group-hover:text-white">
+                        + Interactive Website URL
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Proxy Bypassed • Laser Pointer • Reader Mode
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 6. Clipboard Screenshot Paste */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sId = mediaPickerSceneId;
+                    setMediaPickerSceneId(null);
+                    if (sId) handlePasteToScene(sId);
+                  }}
+                  className="w-full p-3 rounded-xl border border-blue-500/40 hover:border-blue-400 bg-blue-500/10 hover:bg-blue-500/20 text-left transition-all active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/40 flex items-center justify-center shrink-0">
+                      <Clipboard className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-blue-200 group-hover:text-white">
+                        Paste Screenshot (Ctrl+V)
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Clipboard Image directly to Scene
+                      </div>
+                    </div>
+                  </div>
+                </button>
               </div>
             </div>
-
-            {/* Create Slide Deck in App Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const sId = mediaPickerSceneId;
-                setMediaPickerSceneId(null);
-                setSlideCreatorSceneId(sId);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-600/30 to-indigo-600/30 border border-cyan-400/50 hover:border-cyan-400 text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
-            >
-              <Layers className="w-4 h-4 text-cyan-400" />
-              <span>Create Custom Slide Deck in App</span>
-            </button>
-
-            {/* YouTube Video / Clip Picker Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const sId = mediaPickerSceneId;
-                setMediaPickerSceneId(null);
-                setYoutubeLibrarySceneId(sId);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-xl bg-red-600/20 border border-red-500/40 hover:border-red-400 text-red-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
-            >
-              <Youtube className="w-4 h-4 text-red-400" />
-              <span>Attach YouTube Video or Clip (Zero Download)</span>
-            </button>
-
-            {/* Tactical Map Animator Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const sId = mediaPickerSceneId;
-                setMediaPickerSceneId(null);
-                setTacticalMapSceneId(sId);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-xl bg-emerald-600/20 border border-emerald-500/40 hover:border-emerald-400 text-emerald-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
-            >
-              <Globe className="w-4 h-4 text-emerald-400" />
-              <span>Create Tactical Map & Missile/Plane Trajectory</span>
-            </button>
-
-            {/* Interactive Website URL Picker Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const sId = mediaPickerSceneId;
-                setMediaPickerSceneId(null);
-                setWebsiteLibrarySceneId(sId);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-xl bg-teal-600/20 border border-teal-500/40 hover:border-teal-400 text-teal-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
-            >
-              <Globe className="w-4 h-4 text-teal-400" />
-              <span>Attach Interactive Website URL (Proxy Bypassed)</span>
-            </button>
-
-            {/* Paste Screenshot from Clipboard Button */}
-            <button
-              type="button"
-              onClick={() => {
-                const sId = mediaPickerSceneId;
-                setMediaPickerSceneId(null);
-                if (sId) handlePasteToScene(sId);
-              }}
-              className="w-full mt-2 py-2 px-3 rounded-xl bg-cyan-600/20 border border-cyan-500/40 hover:border-cyan-400 text-cyan-200 hover:text-white flex items-center justify-center gap-2 text-xs font-semibold shadow-md transition-all active:scale-95"
-            >
-              <Clipboard className="w-4 h-4 text-cyan-400" />
-              <span>Paste Screenshot from Clipboard (Ctrl+V)</span>
-            </button>
-
-            {/* Upload from Computer */}
-            <input
-              ref={mediaFileInputRef}
-              type="file"
-              accept="video/*,image/*,.pdf,audio/*"
-              className="hidden"
-              onChange={(e) => handleCustomFileUpload(e, mediaPickerSceneId)}
-            />
-            <button
-              type="button"
-              disabled={isProcessingUpload}
-              onClick={() => mediaFileInputRef.current?.click()}
-              className="w-full mt-2 py-2 px-3 rounded-xl border border-dashed border-indigo-400/50 hover:border-indigo-400 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-300 hover:text-white font-medium text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
-            >
-              {isProcessingUpload ? (
-                <>
-                  <div className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  <span>Processing Upload...</span>
-                </>
-              ) : (
-                <>
-                  <Upload className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Select Video / Presentation from PC (Instant Local Play)</span>
-                </>
-              )}
-            </button>
           </div>
         </div>,
         document.body

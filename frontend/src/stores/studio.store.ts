@@ -112,6 +112,12 @@ export interface TacticalMapConfig {
   showRadarSweep: boolean;
   showGridLines: boolean;
   routes: TacticalMapRoute[];
+  viewMode?: "2d" | "3d-perspective" | "3d-globe";
+  pitchDeg?: number;
+  yawDeg?: number;
+  altitudeScale?: number;
+  simulatorEnabled?: boolean;
+  showTelemetryHud?: boolean;
 }
 
 export type WebsitePointerStyle = "laser" | "cursor" | "crosshair" | "spotlight";
@@ -120,6 +126,7 @@ export interface WebsiteSceneConfig {
   url: string;
   title?: string;
   useProxy?: boolean;
+  proxyMode?: "web-proxy" | "reader" | "api-proxy" | "direct";
   interactiveMode?: boolean;
   showBroadcastPointer?: boolean;
   pointerStyle?: WebsitePointerStyle;
@@ -451,6 +458,7 @@ interface StudioState {
   addMediaLibraryItem: (item: MediaFileItem) => void;
   updateMediaLibraryItem: (id: string, updates: Partial<MediaFileItem>) => void;
   removeMediaLibraryItem: (id: string) => void;
+  cleanupMediaLibrary: () => number;
 
   // Chat
   messages: ChatMessage[];
@@ -691,94 +699,91 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     expectedGuestSlots: 1,
     autoAddGuestsToStage: true,
     transitionType: "fade",
-    activeMedia: {
-      id: "media-slides",
-      name: "Product_Architecture_2026.pdf",
-      type: "pdf",
-      url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-      currentSlideIndex: 0,
-      slides: [
-        "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-        "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1600&q=80",
-        "https://images.unsplash.com/photo-1504868584819-f8e8b4b6d7e3?auto=format&fit=crop&w=1600&q=80",
-      ],
-      speakerNotes: {
-        0: "Welcome everyone to the 2026 Architecture Overview.",
-        1: "Slide 2 covers real-time metrics and WebRTC scaling.",
-        2: "Slide 3: Q&A and open floor discussion.",
-      },
-    },
+    activeMedia: null,
     thumbnailColor: "#06b6d4",
   },
 ];
 
-export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [
-  {
-    id: "media-slides",
-    name: "Product_Architecture_2026.pdf",
-    type: "pdf",
-    desc: "Presentation Deck (3 slides)",
-    duration: "3 slides",
-    url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-    thumbnail: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=400&q=80",
-    currentSlideIndex: 0,
-    slides: [
-      "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=1600&q=80",
-      "https://images.unsplash.com/photo-1504868584819-f8e8b4b6d7e3?auto=format&fit=crop&w=1600&q=80",
-    ],
-  },
-  {
-    id: "media-countdown",
-    name: "Intro_Countdown_30s.mp4",
-    type: "video",
-    desc: "Countdown Video (00:30)",
-    duration: "00:30",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    thumbnail: "https://images.unsplash.com/photo-1518173946687-a4c8a383392e?auto=format&fit=crop&w=400&q=80",
-    loop: false,
-  },
-  {
-    id: "media-keynote-clip",
-    name: "Product_Demo_Highlights.mp4",
-    type: "video",
-    desc: "Demo Highlights Clip (01:15)",
-    duration: "01:15",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    thumbnail: "https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&w=400&q=80",
-    loop: true,
-  },
-  {
-    id: "media-lofi",
-    name: "Background_Lofi_Stream.mp3",
-    type: "audio",
-    desc: "Audio Stream (03:45)",
-    duration: "03:45",
-    url: "https://actions.google.com/sounds/v1/weather/rain_heavy.ogg",
-    loop: true,
-  },
-];
+export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [];
+
+const DUMMY_MEDIA_NAMES = new Set([
+  "intro_countdown_30s.mp4",
+  "product_demo_highlights.mp4",
+  "product_architecture_2026.pdf",
+  "background_lofi_stream.mp3",
+  "livestudio intro video.mp4",
+  "bigbuckbunny.mp4",
+  "forbiggerblazes.mp4",
+]);
+
+const DUMMY_MEDIA_IDS = new Set([
+  "media-slides",
+  "media-countdown",
+  "media-keynote-clip",
+  "media-lofi",
+  "media-intro",
+]);
+
+export function isDummyOrBrokenMediaItem(item: MediaFileItem | null | undefined): boolean {
+  if (!item) return true;
+  if (!item.id || !item.name) return true;
+  const lowerName = item.name.toLowerCase().trim();
+  const lowerId = item.id.toLowerCase().trim();
+  if (DUMMY_MEDIA_IDS.has(lowerId)) return true;
+  if (DUMMY_MEDIA_NAMES.has(lowerName)) return true;
+  if (
+    lowerName.includes("intro_countdown_30s") ||
+    lowerName.includes("product_demo_highlights") ||
+    lowerName.includes("product_architecture_2026") ||
+    lowerName.includes("background_lofi_stream")
+  ) {
+    return true;
+  }
+  if (!item.url && !item.mapConfig && !item.websiteConfig && !item.slides && !item.youtubeId) {
+    return true;
+  }
+  return false;
+}
+
+export function sanitizeAndDeduplicateMediaList(
+  items: MediaFileItem[],
+  removeBlobIfExpired: boolean = false
+): MediaFileItem[] {
+  if (!Array.isArray(items)) return [];
+  const seenIds = new Set<string>();
+  const seenKey = new Set<string>();
+  const result: MediaFileItem[] = [];
+
+  for (const item of items) {
+    if (isDummyOrBrokenMediaItem(item)) continue;
+    if (seenIds.has(item.id)) continue;
+
+    const key = `${item.type}:${item.url || item.name}`.toLowerCase();
+    if (seenKey.has(key)) continue;
+
+    seenIds.add(item.id);
+    seenKey.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
 
 const STUDIO_LAYOUT_STORAGE_KEY = "livestudio_saved_studio_layout";
 const STUDIO_MEDIA_STORAGE_KEY = "livestudio_media_library";
 
 function loadSavedMediaLibrary(): MediaFileItem[] {
-  if (typeof window === "undefined") return DEFAULT_STUDIO_MEDIA;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STUDIO_MEDIA_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const defaultIds = new Set(DEFAULT_STUDIO_MEDIA.map((m) => m.id));
-        // Filter out expired browser blob: URLs so only persistent server URLs or data URLs are restored
-        const custom = parsed.filter(
-          (m: MediaFileItem) => !defaultIds.has(m.id) && m.url && !m.url.startsWith("blob:")
-        );
-        return [...custom, ...DEFAULT_STUDIO_MEDIA];
+        return sanitizeAndDeduplicateMediaList(parsed, true);
       }
     }
   } catch {}
-  return DEFAULT_STUDIO_MEDIA;
+  return [];
 }
 
 function persistMediaLibrary(items: MediaFileItem[]) {
@@ -2369,7 +2374,62 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const current = get().mediaLibrary;
     const next = current.filter((m) => m.id !== id);
     persistMediaLibrary(next);
-    set({ mediaLibrary: next });
+
+    // Remove from any Scene's activeMedia
+    const currentScenes = get().scenes;
+    const nextScenes = currentScenes.map((s) =>
+      s.activeMedia?.id === id ? { ...s, activeMedia: undefined } : s
+    );
+
+    // Remove from live Stage activeMedia
+    const currentActiveMedia = get().activeMedia;
+    const nextActiveMedia = currentActiveMedia?.id === id ? null : currentActiveMedia;
+
+    // Remove from activeStageOverlay
+    const currentOverlay = get().activeStageOverlay;
+    const nextOverlay = currentOverlay?.id === id ? null : currentOverlay;
+
+    persistStudioLayout({
+      scenes: nextScenes,
+      ...(nextActiveMedia !== currentActiveMedia ? { activeMedia: nextActiveMedia || undefined } : {}),
+    });
+
+    set({
+      mediaLibrary: next,
+      scenes: nextScenes,
+      activeMedia: nextActiveMedia,
+      activeStageOverlay: nextOverlay,
+    });
+
+    // Call DELETE /api/media/:id on the backend asynchronously
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("livestudio_token");
+      fetch(`/api/media/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => {});
+    }
+  },
+  cleanupMediaLibrary: () => {
+    const current = get().mediaLibrary || [];
+    const sanitized = sanitizeAndDeduplicateMediaList(current, true);
+    const removedCount = current.length - sanitized.length;
+    persistMediaLibrary(sanitized);
+
+    // Also sanitize scenes
+    const scenes = get().scenes.map((s) => {
+      if (s.activeMedia && isDummyOrBrokenMediaItem(s.activeMedia)) {
+        return { ...s, activeMedia: undefined };
+      }
+      return s;
+    });
+
+    const activeMedia = get().activeMedia;
+    const nextActiveMedia = activeMedia && isDummyOrBrokenMediaItem(activeMedia) ? null : activeMedia;
+
+    persistStudioLayout({ scenes, activeMedia: nextActiveMedia || undefined });
+    set({ mediaLibrary: sanitized, scenes, activeMedia: nextActiveMedia });
+    return removedCount;
   },
 
   messages: [

@@ -280,6 +280,12 @@ export interface TacticalMapConfig {
   showRadarSweep: boolean;
   showGridLines: boolean;
   routes: TacticalMapRoute[];
+  viewMode?: "2d" | "3d-perspective" | "3d-globe";
+  pitchDeg?: number;
+  yawDeg?: number;
+  altitudeScale?: number;
+  simulatorEnabled?: boolean;
+  showTelemetryHud?: boolean;
 }
 
 export type WebsitePointerStyle = "laser" | "cursor" | "crosshair" | "spotlight";
@@ -288,6 +294,7 @@ export interface WebsiteSceneConfig {
   url: string;
   title?: string;
   useProxy?: boolean;
+  proxyMode?: "web-proxy" | "reader" | "api-proxy" | "direct";
   interactiveMode?: boolean;
   showBroadcastPointer?: boolean;
   pointerStyle?: WebsitePointerStyle;

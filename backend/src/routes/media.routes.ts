@@ -238,6 +238,76 @@ function serializeMediaAsset(asset: any, presignedUrl?: string) {
   };
 }
 
+const DUMMY_MEDIA_NAMES = [
+  'intro_countdown_30s.mp4',
+  'product_demo_highlights.mp4',
+  'product_architecture_2026.pdf',
+  'background_lofi_stream.mp3',
+  'livestudio intro video.mp4',
+];
+
+export async function purgeOrphanedAndDummyMedia(workspaceId: string): Promise<number> {
+  let count = 0;
+  try {
+    const assets = await prisma.mediaAsset.findMany({
+      where: { workspaceId },
+    });
+
+    for (const asset of assets) {
+      let isDummy = false;
+      const lowerName = (asset.name || '').toLowerCase();
+      if (DUMMY_MEDIA_NAMES.some((dn) => lowerName.includes(dn))) {
+        isDummy = true;
+      }
+
+      let isMissingOrZeroByte = false;
+      if (asset.storagePath.startsWith('local://')) {
+        const relPath = asset.storagePath.replace('local://', '');
+        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+        if (!fs.existsSync(fullLocalPath)) {
+          isMissingOrZeroByte = true;
+        } else {
+          try {
+            const stat = fs.statSync(fullLocalPath);
+            if (stat.size === 0) isMissingOrZeroByte = true;
+          } catch {
+            isMissingOrZeroByte = true;
+          }
+        }
+      }
+
+      if (isDummy || isMissingOrZeroByte) {
+        if (asset.storagePath.startsWith('local://')) {
+          const relPath = asset.storagePath.replace('local://', '');
+          const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+          if (fs.existsSync(fullLocalPath)) {
+            await fs.promises.unlink(fullLocalPath).catch(() => null);
+          }
+        } else {
+          await storageService.deleteFile(asset.storagePath).catch(() => null);
+        }
+        await prisma.mediaAsset.delete({ where: { id: asset.id } }).catch(() => null);
+        count++;
+        console.log(`[Media Cleanup] Purged dummy/orphaned file: ${asset.name} (${asset.id})`);
+      }
+    }
+  } catch (err) {
+    console.warn('[Media Cleanup] Error during purge:', err);
+  }
+  return count;
+}
+
+// POST /api/media/cleanup
+router.post('/cleanup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const count = await purgeOrphanedAndDummyMedia(workspaceId);
+    res.json({ success: true, count, message: `Purged ${count} orphaned/dummy media items` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/media/upload
 router.post('/upload', upload.single('file'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -247,6 +317,7 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     }
 
     const workspaceId = await resolveWorkspaceId(req);
+    await purgeOrphanedAndDummyMedia(workspaceId);
     const mimeType = req.file.mimetype || 'application/octet-stream';
     const assetType = resolveAssetType(mimeType);
 

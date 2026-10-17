@@ -1101,9 +1101,10 @@ export const StagePreview: React.FC = () => {
     setSelectedParticipantId(p.id);
 
     // StreamYard standard: in grid/column layouts, clicking selects the tile without displacing it.
-    // Only in floating PiP mode can the small floating window be dragged.
+    // Floating PiP windows and Stage Media can be freely dragged/repositioned.
     const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
-    if (!isPipMode || !stageContainerRef.current) return;
+    const isMedia = String(p.id) === "active-media";
+    if ((!isPipMode && !isMedia) || !stageContainerRef.current) return;
 
     const startClientX = e.clientX;
     const startClientY = e.clientY;
@@ -1154,6 +1155,101 @@ export const StagePreview: React.FC = () => {
           width: startBounds.width,
           height: startBounds.height,
           isLockedRatio: dragSessionRef.current.isLockedRatio,
+        });
+      });
+    };
+
+    const onMouseUp = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      dragSessionRef.current = null;
+      setActiveDragState(null);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove, { passive: false });
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  // 8-Way Interactive Mouse Resize Handler for Active Media Window
+  const handleMediaResizeMouseDown = (
+    e: React.MouseEvent,
+    handle: "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w",
+    currentBounds: ParticipantBounds
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!stageContainerRef.current) return;
+
+    setSelectedParticipantId("active-media");
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+
+    dragSessionRef.current = {
+      type: "resize",
+      handle,
+      participantId: "active-media",
+      startClientX,
+      startClientY,
+      startBounds: { ...currentBounds },
+      isLockedRatio: false,
+      hasMoved: false,
+    };
+
+    setActiveDragState({ type: "resize", handle, participantId: "active-media" });
+
+    let rafId: number | null = null;
+
+    const onMouseMove = (moveEvt: MouseEvent) => {
+      if (!dragSessionRef.current || !stageContainerRef.current) return;
+      const deltaPixelX = moveEvt.clientX - startClientX;
+      const deltaPixelY = moveEvt.clientY - startClientY;
+
+      if (!dragSessionRef.current.hasMoved) {
+        if (Math.hypot(deltaPixelX, deltaPixelY) < 3) return;
+        dragSessionRef.current.hasMoved = true;
+      }
+
+      if (rafId !== null) cancelAnimationFrame(rafId);
+
+      rafId = requestAnimationFrame(() => {
+        if (!dragSessionRef.current || !stageContainerRef.current) return;
+        const rect = stageContainerRef.current.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+
+        const deltaXPercent = (deltaPixelX / rect.width) * 100;
+        const deltaYPercent = (deltaPixelY / rect.height) * 100;
+        const { startBounds } = dragSessionRef.current;
+
+        let newX = startBounds.x;
+        let newY = startBounds.y;
+        let newW = startBounds.width;
+        let newH = startBounds.height;
+
+        if (handle.includes("e")) {
+          newW = Math.max(18, Math.min(100 - startBounds.x, startBounds.width + deltaXPercent));
+        }
+        if (handle.includes("s")) {
+          newH = Math.max(18, Math.min(100 - startBounds.y, startBounds.height + deltaYPercent));
+        }
+        if (handle.includes("w")) {
+          const clampedDelta = Math.max(-startBounds.x, Math.min(startBounds.width - 18, deltaXPercent));
+          newX = startBounds.x + clampedDelta;
+          newW = startBounds.width - clampedDelta;
+        }
+        if (handle.includes("n")) {
+          const clampedDelta = Math.max(-startBounds.y, Math.min(startBounds.height - 18, deltaYPercent));
+          newY = startBounds.y + clampedDelta;
+          newH = startBounds.height - clampedDelta;
+        }
+
+        setParticipantBounds("active-media", {
+          x: Number(newX.toFixed(1)),
+          y: Number(newY.toFixed(1)),
+          width: Number(newW.toFixed(1)),
+          height: Number(newH.toFixed(1)),
+          isLockedRatio: false,
         });
       });
     };
@@ -2578,6 +2674,34 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
 
+                {/* Quick Window Size Presets */}
+                <div className="flex items-center gap-1 bg-black/60 rounded-lg p-0.5 border border-white/10">
+                  <span className="text-[9px] font-bold text-slate-400 px-1 uppercase">Size:</span>
+                  {[
+                    { label: "25% PiP", bounds: { x: 72, y: 70, width: 26, height: 26 } },
+                    { label: "50% Half", bounds: { x: 2, y: 4, width: 48, height: 92 } },
+                    { label: "75% Large", bounds: { x: 2, y: 4, width: 72, height: 92 } },
+                    { label: "100% Full", bounds: { x: 0, y: 0, width: 100, height: 100 } },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setParticipantBounds("active-media", preset.bounds)}
+                      className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => resetParticipantBounds("active-media")}
+                    className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors"
+                    title="Reset to Default Layout Slot"
+                  >
+                    Fit Slot
+                  </button>
+                </div>
+
                 {/* Media Stage Position / Slot Selector (Left, Right, Middle, Corners) */}
                 {totalPlannedSlots >= 1 && !isSoloOrCinema && (
                   <div className="flex items-center gap-1 bg-indigo-950/80 border border-indigo-400/50 rounded-lg px-1.5 py-0.5">
@@ -2685,6 +2809,55 @@ export const StagePreview: React.FC = () => {
                   </button>
                 )}
               </div>
+
+            {/* 8-Way Interactive Resize Handles around Active Media (Corners & Edges) */}
+            {isMediaSelected && !isFullBleedLayout && (
+              <>
+                {/* 4 Corner Handles */}
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "nw", mediaBounds)}
+                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors"
+                  title="Resize Corner"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "ne", mediaBounds)}
+                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors"
+                  title="Resize Corner"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "sw", mediaBounds)}
+                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors"
+                  title="Resize Corner"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "se", mediaBounds)}
+                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors"
+                  title="Resize Corner"
+                />
+
+                {/* 4 Edge Handles */}
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "n", mediaBounds)}
+                  className="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors"
+                  title="Resize Top Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "s", mediaBounds)}
+                  className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors"
+                  title="Resize Bottom Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "w", mediaBounds)}
+                  className="absolute top-1/2 -translate-y-1/2 -left-1 h-6 w-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors"
+                  title="Resize Left Edge"
+                />
+                <div
+                  onMouseDown={(e) => handleMediaResizeMouseDown(e, "e", mediaBounds)}
+                  className="absolute top-1/2 -translate-y-1/2 -right-1 h-6 w-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors"
+                  title="Resize Right Edge"
+                />
+              </>
+            )}
           </div>
         )}
         {orderedParticipants.map((p, idx) => {
