@@ -826,6 +826,8 @@ export const StagePreview: React.FC = () => {
 
   const handleToggleMediaPlayPause = (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    stageBroadcaster.ensureAudioContext();
+    stageBroadcaster.refreshAudioConnections();
     const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
     if (activeMedia?.type === "youtube" && useYtIframeFallback) {
       if (isMediaPaused) {
@@ -1165,6 +1167,21 @@ export const StagePreview: React.FC = () => {
     sendYouTubeIframeCommand,
   ]);
 
+  // Real-time Web Audio DSP filter routing for Studio Preview & Broadcast/Recording
+  useEffect(() => {
+    stageBroadcaster.ensureAudioContext();
+    stageBroadcaster.refreshAudioConnections();
+  }, [
+    activeMedia?.id,
+    activeMedia?.isMuted,
+    fairUseConfig?.enabled,
+    fairUseConfig?.audioEqProtection,
+    fairUseConfig?.dynamicTempoVariance,
+    fairUseConfig?.autoAudioDucking,
+    fairUseConfig?.duckingVolumePct,
+    participants,
+  ]);
+
   // Enforce Playback Speed, Pitch Shift & 8-12s Random Jerk/Pause on Video, YouTube, and Audio during Studio Preview
   useEffect(() => {
     if (
@@ -1172,37 +1189,69 @@ export const StagePreview: React.FC = () => {
       (activeMedia.type !== "video" && activeMedia.type !== "youtube" && activeMedia.type !== "audio")
     )
       return;
-    const baseRate = activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig.playbackRate || 1.04) : 1.0);
-    if (activeMedia.type === "youtube" && useYtIframeFallback) {
-      sendYouTubeIframeCommand("setPlaybackRate", [baseRate]);
-    }
+
+    const isTempoOn = Boolean(fairUseConfig?.enabled && (fairUseConfig.dynamicTempoVariance ?? true));
+    const isAudioEqOn = Boolean(fairUseConfig?.enabled && (fairUseConfig.audioEqProtection ?? true));
+    const shouldShiftPitch = isTempoOn || isAudioEqOn || Boolean(fairUseConfig?.enableAudioFairUse);
+
+    const baseRate = activeMedia.playbackRate || (isTempoOn ? (fairUseConfig?.playbackRate || 1.06) : 1.0);
+
     const mediaEl = getActiveHtmlMediaElement();
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+
     if (mediaEl) {
       mediaEl.playbackRate = baseRate;
-      const shouldShiftPitch = Boolean(
-        fairUseConfig?.enabled && (fairUseConfig?.enableAudioFairUse ?? true) && (fairUseConfig?.audioEqProtection ?? true)
-      );
       try {
         (mediaEl as any).preservesPitch = !shouldShiftPitch;
         (mediaEl as any).mozPreservesPitch = !shouldShiftPitch;
         (mediaEl as any).webkitPreservesPitch = !shouldShiftPitch;
       } catch { }
     }
+    if (audioEl) {
+      audioEl.playbackRate = baseRate;
+      try {
+        (audioEl as any).preservesPitch = !shouldShiftPitch;
+        (audioEl as any).mozPreservesPitch = !shouldShiftPitch;
+        (audioEl as any).webkitPreservesPitch = !shouldShiftPitch;
+      } catch { }
+    }
+    if (activeMedia.type === "youtube" && useYtIframeFallback) {
+      sendYouTubeIframeCommand("setPlaybackRate", [baseRate]);
+    }
 
     if (!fairUseConfig?.enabled) return;
 
-    // Gentle Dual-Wave Irrational Tempo LFO (Clean audio without warble)
+    // Distinct Dynamic Tempo LFO wave when Tempo+EQ is active (audible dynamic speed & natural pitch motion)
     let lfoInterval: NodeJS.Timeout | null = null;
-    if (fairUseConfig.dynamicTempoVariance ?? true) {
+    if (isTempoOn) {
       lfoInterval = setInterval(() => {
         const el = getActiveHtmlMediaElement();
+        const aud = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+        const nowT = performance.now();
+        const jitter = Math.sin(nowT / 1400) * 0.025 + Math.cos(nowT / 2700) * 0.015;
+        const centerRate = activeMedia.playbackRate || fairUseConfig?.playbackRate || 1.06;
+        const currentRate = Number(Math.max(0.5, Math.min(2.0, centerRate + jitter)).toFixed(3));
+
         if (el && !el.paused) {
-          const centerRate = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
-          const nowT = performance.now();
-          const jitter = Math.sin(nowT / 2200) * 0.012 + Math.cos(nowT / 3700) * 0.008;
-          el.playbackRate = Number(Math.max(0.5, Math.min(2.0, centerRate + jitter)).toFixed(3));
+          el.playbackRate = currentRate;
+          try {
+            (el as any).preservesPitch = false;
+            (el as any).mozPreservesPitch = false;
+            (el as any).webkitPreservesPitch = false;
+          } catch { }
         }
-      }, 1500);
+        if (aud && !aud.paused) {
+          aud.playbackRate = currentRate;
+          try {
+            (aud as any).preservesPitch = false;
+            (aud as any).mozPreservesPitch = false;
+            (aud as any).webkitPreservesPitch = false;
+          } catch { }
+        }
+        if (activeMedia.type === "youtube" && useYtIframeFallback) {
+          sendYouTubeIframeCommand("setPlaybackRate", [currentRate]);
+        }
+      }, 600);
     }
 
     if (
@@ -3232,14 +3281,23 @@ export const StagePreview: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          const nextState = !(
+                          const isCurrentlyOn = Boolean(
                             (fairUseConfig?.dynamicTempoVariance ?? true) &&
                             (fairUseConfig?.audioEqProtection ?? true)
                           );
+                          const nextState = !isCurrentlyOn;
+                          const nextRate = nextState ? 1.06 : 1.0;
+
                           setFairUseConfig({
                             dynamicTempoVariance: nextState,
                             audioEqProtection: nextState,
+                            enableAudioFairUse: nextState,
+                            playbackRate: nextRate,
                           });
+
+                          handleChangeMediaPitch(nextRate, nextState);
+                          stageBroadcaster.ensureAudioContext();
+                          stageBroadcaster.refreshAudioConnections();
                         }}
                         className={cn(
                           "px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-colors cursor-pointer",
@@ -3282,6 +3340,8 @@ export const StagePreview: React.FC = () => {
                         } else {
                           handleChangeMediaPitch(1.04, true);
                         }
+                        stageBroadcaster.ensureAudioContext();
+                        stageBroadcaster.refreshAudioConnections();
                       }}
                       className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-300 focus:outline-none cursor-pointer"
                       title="Real-time Audio Pitch Shift (prevents audio content-ID match)"

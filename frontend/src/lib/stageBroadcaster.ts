@@ -129,6 +129,9 @@ class StageBroadcaster {
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch((e) => console.warn("[StageBroadcaster] AudioContext resume error:", e));
       }
+      if (!this.audioDestination && this.audioCtx) {
+        this.audioDestination = this.audioCtx.createMediaStreamDestination();
+      }
     } catch (e) {
       console.warn("[StageBroadcaster] AudioContext init error:", e);
     }
@@ -207,16 +210,20 @@ class StageBroadcaster {
 
     // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live & Local Recording)
     try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioCtx = new AudioContextClass();
+      if (!this.audioCtx) {
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioCtx = new AudioContextClass();
+      }
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch((audioResumeErr) => {
           console.warn("[StageBroadcaster] AudioContext resume warning:", audioResumeErr);
         });
       }
-      this.audioDestination = this.audioCtx.createMediaStreamDestination();
+      if (!this.audioDestination) {
+        this.audioDestination = this.audioCtx.createMediaStreamDestination();
+      }
 
       // Continuous ultra-low carrier (-76dB) to prevent WebRTC/FFmpeg silence drop
       const sampleRate = this.audioCtx.sampleRate || 48000;
@@ -369,16 +376,20 @@ class StageBroadcaster {
       return;
     }
 
-    // 2. Smooth Playback Speed + Pitch Unlinking (Gentle LFO so audio never warbles or distorts in recording)
-    const baseRate = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
-    const lfoOffset = (fairUseConfig.dynamicTempoVariance ?? true)
-      ? Math.sin(now / 2400) * 0.012 + Math.cos(now / 3900) * 0.006
+    // 2. Smooth Playback Speed + Pitch Unlinking (Dynamic LFO so audio breaks Content-ID matching)
+    const isTempoOn = Boolean(fairUseConfig.dynamicTempoVariance ?? true);
+    const baseRate = activeMedia.playbackRate || (isTempoOn ? (fairUseConfig.playbackRate || 1.06) : 1.0);
+    const lfoOffset = isTempoOn
+      ? Math.sin(now / 1400) * 0.025 + Math.cos(now / 2700) * 0.015
       : 0;
     const targetRate = Number(Math.max(0.5, Math.min(2.0, baseRate + lfoOffset)).toFixed(3));
     if (Math.abs(activeEl.playbackRate - targetRate) > 0.01) {
       activeEl.playbackRate = targetRate;
     }
-    const isAudioFairUse = Boolean(fairUseConfig.enableAudioFairUse ?? fairUseConfig.audioEqProtection ?? true);
+    const isAudioFairUse = Boolean(
+      fairUseConfig.enableAudioFairUse ??
+      (isTempoOn || fairUseConfig.audioEqProtection)
+    );
     try {
       (activeEl as any).preservesPitch = !isAudioFairUse;
       (activeEl as any).mozPreservesPitch = !isAudioFairUse;
@@ -761,7 +772,10 @@ class StageBroadcaster {
    * Ensures clean, transparent, distortion-free audio on both Record to PC and Live Stream.
    */
   public refreshAudioConnections() {
-    if (!this.audioCtx || !this.audioDestination) return;
+    if (!this.audioCtx) return;
+    if (!this.audioDestination) {
+      this.audioDestination = this.audioCtx.createMediaStreamDestination();
+    }
 
     try {
       if (this.audioCtx.state === "suspended") {
@@ -827,18 +841,18 @@ class StageBroadcaster {
           try {
             this.mediaHighpassFilter = this.audioCtx.createBiquadFilter();
             this.mediaHighpassFilter.type = "highpass";
-            this.mediaHighpassFilter.frequency.value = 55;
+            this.mediaHighpassFilter.frequency.value = 20;
 
             this.mediaNotchFilter = this.audioCtx.createBiquadFilter();
             this.mediaNotchFilter.type = "peaking";
-            this.mediaNotchFilter.frequency.value = 1650;
-            this.mediaNotchFilter.Q.value = 2.8;
+            this.mediaNotchFilter.frequency.value = 1550;
+            this.mediaNotchFilter.Q.value = 1.8;
             this.mediaNotchFilter.gain.value = 0;
 
             this.mediaFormantFilter = this.audioCtx.createBiquadFilter();
             this.mediaFormantFilter.type = "peaking";
-            this.mediaFormantFilter.frequency.value = 2350;
-            this.mediaFormantFilter.Q.value = 1.2;
+            this.mediaFormantFilter.frequency.value = 3400;
+            this.mediaFormantFilter.Q.value = 1.4;
             this.mediaFormantFilter.gain.value = 0;
 
             this.mediaGainNode = this.audioCtx.createGain();
@@ -846,6 +860,8 @@ class StageBroadcaster {
             this.mediaNotchFilter.connect(this.mediaFormantFilter);
             this.mediaFormantFilter.connect(this.mediaGainNode);
             this.mediaGainNode.connect(this.audioDestination);
+            // Route processed DSP audio to host speakers so preview accurately hears EQ, volume and ducking
+            this.mediaGainNode.connect(this.audioCtx.destination);
           } catch (gainErr) {
             console.warn("[StageBroadcaster] Failed to create media audio DSP chain:", gainErr);
           }
@@ -853,15 +869,20 @@ class StageBroadcaster {
 
         if (this.mediaFormantFilter && this.mediaHighpassFilter && this.mediaNotchFilter) {
           const eqActive = Boolean(store.fairUseConfig?.enabled && (store.fairUseConfig?.audioEqProtection ?? true));
-          this.mediaHighpassFilter.frequency.value = eqActive ? 75 : 20;
-          const sweepHz = 1100 + ((1 + Math.sin(performance.now() / 1900)) / 2) * 1200;
-          this.mediaNotchFilter.frequency.setTargetAtTime(sweepHz, this.audioCtx.currentTime, 0.15);
-          // Gentle -2.8 dB notch & +2.2 dB formant shift alters audio fingerprint without any muffled or metallic distortion
-          this.mediaNotchFilter.gain.value = eqActive ? -2.8 : 0;
-          this.mediaFormantFilter.gain.value = eqActive ? 2.2 : 0;
+          this.mediaHighpassFilter.frequency.setTargetAtTime(eqActive ? 160 : 20, this.audioCtx.currentTime, 0.05);
+          this.mediaHighpassFilter.Q.setTargetAtTime(eqActive ? 0.9 : 0.7, this.audioCtx.currentTime, 0.05);
+
+          const sweepHz = 1350 + ((1 + Math.sin(performance.now() / 1500)) / 2) * 400;
+          this.mediaNotchFilter.frequency.setTargetAtTime(eqActive ? sweepHz : 1550, this.audioCtx.currentTime, 0.1);
+          this.mediaNotchFilter.Q.setTargetAtTime(eqActive ? 1.8 : 1.0, this.audioCtx.currentTime, 0.05);
+          this.mediaNotchFilter.gain.setTargetAtTime(eqActive ? -7.5 : 0, this.audioCtx.currentTime, 0.05);
+
+          this.mediaFormantFilter.frequency.setTargetAtTime(3400, this.audioCtx.currentTime, 0.05);
+          this.mediaFormantFilter.Q.setTargetAtTime(1.4, this.audioCtx.currentTime, 0.05);
+          this.mediaFormantFilter.gain.setTargetAtTime(eqActive ? 5.5 : 0, this.audioCtx.currentTime, 0.05);
         }
 
-        const isMediaMuted = Boolean(store.activeMedia?.isMuted || activeMediaEls.every((el) => el.muted));
+        const isMediaMuted = Boolean(store.activeMedia?.isMuted);
         const rawVol = store.activeMedia?.volume;
         const normalizedVolPct =
           typeof rawVol === "number" && !Number.isNaN(rawVol)
@@ -902,9 +923,8 @@ class StageBroadcaster {
                 src.connect(entryNode);
               } else {
                 src.connect(this.audioDestination);
+                src.connect(this.audioCtx.destination);
               }
-              // Connect to local speakers so host hears audio without echo
-              src.connect(this.audioCtx.destination);
               this.connectedMediaElements.add(el);
             } catch (err) {
               console.warn("[StageBroadcaster] Media element audio connect warning:", err);
