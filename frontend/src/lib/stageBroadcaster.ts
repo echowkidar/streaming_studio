@@ -817,12 +817,12 @@ class StageBroadcaster {
         }
       });
 
-      // 2. Active Stage Media Video / Audio Element (Crystal-clear audio with optional gentle Fair-Use EQ)
-      const mediaVideo =
-        (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
-        (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
+      // 2. Active Stage Media Video / Audio Element (Direct Web Audio routing for 100% reliable recording & broadcast)
+      const mediaVideo = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+      const mediaAudio = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+      const activeMediaEls = [mediaVideo, mediaAudio].filter((el): el is HTMLMediaElement => Boolean(el));
 
-      if (mediaVideo && this.audioCtx && this.audioDestination) {
+      if (activeMediaEls.length > 0 && this.audioCtx && this.audioDestination) {
         if (!this.mediaGainNode) {
           try {
             this.mediaHighpassFilter = this.audioCtx.createBiquadFilter();
@@ -861,7 +861,7 @@ class StageBroadcaster {
           this.mediaFormantFilter.gain.value = eqActive ? 2.2 : 0;
         }
 
-        const isMediaMuted = Boolean(store.activeMedia?.isMuted || mediaVideo.muted);
+        const isMediaMuted = Boolean(store.activeMedia?.isMuted || activeMediaEls.every((el) => el.muted));
         const rawVol = store.activeMedia?.volume;
         const normalizedVolPct =
           typeof rawVol === "number" && !Number.isNaN(rawVol)
@@ -880,45 +880,36 @@ class StageBroadcaster {
         if (this.mediaGainNode) {
           this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.1);
         }
-        if (mediaVideo.muted !== isMediaMuted) {
-          mediaVideo.muted = isMediaMuted;
-        }
 
-        try {
-          const stream =
-            (mediaVideo as any).captureStream?.() ||
-            (mediaVideo as any).mozCaptureStream?.();
-
-          const entryNode = this.mediaHighpassFilter || this.mediaGainNode;
-          if (stream) {
-            const audioTrack = stream.getAudioTracks()[0];
-            if (audioTrack && audioTrack.readyState === "live" && !this.mediaStreamSources.has(audioTrack.id)) {
-              this.mediaStreamSources.forEach((oldSrc, oldId) => {
-                try {
-                  oldSrc.disconnect();
-                } catch { }
-                this.mediaStreamSources.delete(oldId);
-              });
-              const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-              if (entryNode) {
-                srcNode.connect(entryNode);
-              } else {
-                srcNode.connect(this.audioDestination);
-              }
-              this.mediaStreamSources.set(audioTrack.id, srcNode);
-            }
-          } else if (!this.connectedMediaElements.has(mediaVideo)) {
-            const src = this.audioCtx.createMediaElementSource(mediaVideo);
-            if (entryNode) {
-              src.connect(entryNode);
-            } else {
-              src.connect(this.audioDestination);
-            }
-            src.connect(this.audioCtx.destination);
-            this.connectedMediaElements.add(mediaVideo);
+        // Clean up unmounted media elements from the connected set
+        this.connectedMediaElements.forEach((el) => {
+          if (typeof document !== "undefined" && !document.body.contains(el)) {
+            this.connectedMediaElements.delete(el);
           }
-        } catch (err) {
-          console.warn("[StageBroadcaster] Media audio capture error:", err);
+        });
+
+        const entryNode = this.mediaHighpassFilter || this.mediaGainNode;
+
+        for (const el of activeMediaEls) {
+          if (el.muted !== isMediaMuted) {
+            el.muted = isMediaMuted;
+          }
+
+          if (!this.connectedMediaElements.has(el)) {
+            try {
+              const src = this.audioCtx.createMediaElementSource(el);
+              if (entryNode) {
+                src.connect(entryNode);
+              } else {
+                src.connect(this.audioDestination);
+              }
+              // Connect to local speakers so host hears audio without echo
+              src.connect(this.audioCtx.destination);
+              this.connectedMediaElements.add(el);
+            } catch (err) {
+              console.warn("[StageBroadcaster] Media element audio connect warning:", err);
+            }
+          }
         }
       }
     } catch (e) {
@@ -1348,6 +1339,21 @@ class StageBroadcaster {
                     h,
                     currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
                   );
+                }
+
+                if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
+                  const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
+                  ctx.save();
+                  ctx.font = "bold 11px Inter, system-ui, sans-serif";
+                  const bw = ctx.measureText(badgeTxt).width + 24;
+                  ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+                  this.drawRoundedRect(ctx, x + 12, y + h - 34, bw, 22, 6);
+                  ctx.fill();
+                  ctx.fillStyle = "#38bdf8";
+                  ctx.textAlign = "left";
+                  ctx.textBaseline = "middle";
+                  ctx.fillText(badgeTxt, x + 24, y + h - 23);
+                  ctx.restore();
                 }
               }
             } else if (activeM.type === "website") {

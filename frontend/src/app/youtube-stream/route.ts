@@ -13,6 +13,7 @@ function extractYouTubeId(input: string): string | null {
 }
 
 const ytUrlCache = new Map<string, { url: string; durationSec?: number; expiresAt: number }>();
+const inFlightStreamPromises = new Map<string, Promise<{ url: string; durationSec?: number } | null>>();
 
 async function resolveYouTubeDirectStreamUrl(
   videoId: string
@@ -22,135 +23,143 @@ async function resolveYouTubeDirectStreamUrl(
     return cached;
   }
 
-  // Parallel Race Tier 1: Query all InnerTube Client Profiles simultaneously (cuts resolution latency from ~12s down to <1.2s!)
-  const clients = [
-    {
-      clientName: "IOS",
-      clientVersion: "19.45.4",
-      deviceMake: "Apple",
-      deviceModel: "iPhone16,2",
-      userAgent:
-        "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-    },
-    {
-      clientName: "ANDROID_VR",
-      clientVersion: "1.60.19",
-      androidSdkVersion: 32,
-      userAgent:
-        "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-    },
-    {
-      clientName: "ANDROID",
-      clientVersion: "19.44.38",
-      androidSdkVersion: 34,
-      userAgent:
-        "com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip",
-    },
-    {
-      clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-      clientVersion: "2.0",
-      userAgent:
-        "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0 Safari/605.1.15",
-    },
-  ];
+  const existing = inFlightStreamPromises.get(videoId);
+  if (existing) {
+    return existing;
+  }
 
-  try {
-    const winner = await Promise.any(
-      clients.map(async (c) => {
-        const bodyPayload: any = {
-          videoId,
-          context: {
-            client: {
-              clientName: c.clientName,
-              clientVersion: c.clientVersion,
-              hl: "en",
-              gl: "US",
-              ...(c.androidSdkVersion ? { androidSdkVersion: c.androidSdkVersion } : {}),
-              ...(c.deviceMake ? { deviceMake: c.deviceMake, deviceModel: c.deviceModel } : {}),
+  const p = (async () => {
+    // Parallel Race Tier 1: Query ANDROID_VR and mobile InnerTube Client Profiles
+    const clients = [
+      {
+        clientName: "ANDROID_VR",
+        clientVersion: "1.60.19",
+        androidSdkVersion: 32,
+        userAgent:
+          "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+      },
+      {
+        clientName: "IOS",
+        clientVersion: "19.45.4",
+        deviceMake: "Apple",
+        deviceModel: "iPhone16,2",
+        userAgent:
+          "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+      },
+      {
+        clientName: "ANDROID",
+        clientVersion: "19.44.38",
+        androidSdkVersion: 34,
+        userAgent:
+          "com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip",
+      },
+    ];
+
+    try {
+      const winner = await Promise.any(
+        clients.map(async (c) => {
+          const bodyPayload: any = {
+            videoId,
+            context: {
+              client: {
+                clientName: c.clientName,
+                clientVersion: c.clientVersion,
+                hl: "en",
+                gl: "US",
+                ...(c.androidSdkVersion ? { androidSdkVersion: c.androidSdkVersion } : {}),
+                ...(c.deviceMake ? { deviceMake: c.deviceMake, deviceModel: c.deviceModel } : {}),
+              },
+              thirdParty: { embedUrl: "https://www.youtube.com/" },
             },
-            ...(c.clientName === "TVHTML5_SIMPLY_EMBEDDED_PLAYER"
-              ? { thirdParty: { embedUrl: "https://www.youtube.com/" } }
-              : {}),
-          },
-          contentCheckOk: true,
-          racyCheckOk: true,
-        };
+            contentCheckOk: true,
+            racyCheckOk: true,
+          };
 
-        const res = await fetch(
-          "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "User-Agent": c.userAgent,
-            },
-            body: JSON.stringify(bodyPayload),
-            signal: AbortSignal.timeout(2600),
-          }
-        );
+          const res = await fetch(
+            "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "User-Agent": c.userAgent,
+                Origin: "https://www.youtube.com",
+              },
+              body: JSON.stringify(bodyPayload),
+              signal: AbortSignal.timeout(2800),
+            }
+          );
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: any = await res.json();
-        const formats: any[] = data?.streamingData?.formats || [];
-        const best =
-          formats.find((f) => f.itag === 22 && f.url) ||
-          formats.find((f) => f.itag === 18 && f.url) ||
-          formats.find(
-            (f) => f.url && String(f.mimeType || "").includes("video/mp4") && f.audioQuality
-          ) ||
-          formats.find((f) => f.url && String(f.mimeType || "").includes("video/mp4"));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data: any = await res.json();
+          const formats: any[] = [
+            ...(data?.streamingData?.formats || []),
+            ...(data?.streamingData?.adaptiveFormats || []),
+          ];
+          const best =
+            formats.find((f) => f.itag === 22 && f.url) ||
+            formats.find((f) => f.itag === 18 && f.url) ||
+            formats.find(
+              (f) => f.url && String(f.mimeType || "").includes("video/mp4") && f.audioQuality
+            ) ||
+            formats.find((f) => f.url && String(f.mimeType || "").includes("video/mp4"));
 
-        if (!best?.url) throw new Error("No MP4 format");
-        const durSec = Number(data?.videoDetails?.lengthSeconds || 0) || undefined;
-        return { url: String(best.url), durationSec: durSec };
-      })
-    );
+          if (!best?.url) throw new Error("No MP4 format");
+          const durSec = Number(data?.videoDetails?.lengthSeconds || 0) || undefined;
+          return { url: String(best.url), durationSec: durSec };
+        })
+      );
 
-    if (winner?.url) {
-      ytUrlCache.set(videoId, {
-        url: winner.url,
-        durationSec: winner.durationSec,
-        expiresAt: Date.now() + 25 * 60 * 1000,
-      });
-      return winner;
-    }
-  } catch { }
+      if (winner?.url) {
+        ytUrlCache.set(videoId, {
+          url: winner.url,
+          durationSec: winner.durationSec,
+          expiresAt: Date.now() + 45 * 60 * 1000,
+        });
+        return winner;
+      }
+    } catch { }
 
-  // Parallel Race Tier 2: Public Piped / Invidious Stream Mirrors
-  const mirrors = [
-    `https://pipedapi.kavin.rocks/streams/${videoId}`,
-    `https://pipedapi.adminforge.de/streams/${videoId}`,
-    `https://pipedapi.drgns.space/streams/${videoId}`,
-    `https://pipedapi.smnz.de/streams/${videoId}`,
-  ];
+    // Parallel Race Tier 2: Public Piped / Invidious Stream Mirrors
+    const mirrors = [
+      `https://pipedapi.kavin.rocks/streams/${videoId}`,
+      `https://pipedapi.adminforge.de/streams/${videoId}`,
+      `https://pipedapi.drgns.space/streams/${videoId}`,
+      `https://pipedapi.smnz.de/streams/${videoId}`,
+    ];
 
-  try {
-    const mirrorWinner = await Promise.any(
-      mirrors.map(async (apiUrl) => {
-        const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(2400) });
-        if (!resp.ok) throw new Error(`Mirror ${resp.status}`);
-        const data: any = await resp.json();
-        const streams: any[] = data?.videoStreams || [];
-        const mp4 =
-          streams.find((s) => !s.videoOnly && s.format === "MPEG_4" && s.url) ||
-          streams.find((s) => !s.videoOnly && s.url);
-        if (!mp4?.url) throw new Error("No stream");
-        const durSec = Number(data?.duration || 0) || undefined;
-        return { url: String(mp4.url), durationSec: durSec };
-      })
-    );
+    try {
+      const mirrorWinner = await Promise.any(
+        mirrors.map(async (apiUrl) => {
+          const resp = await fetch(apiUrl, { signal: AbortSignal.timeout(2400) });
+          if (!resp.ok) throw new Error(`Mirror ${resp.status}`);
+          const data: any = await resp.json();
+          const streams: any[] = data?.videoStreams || [];
+          const mp4 =
+            streams.find((s) => !s.videoOnly && s.format === "MPEG_4" && s.url) ||
+            streams.find((s) => !s.videoOnly && s.url);
+          if (!mp4?.url) throw new Error("No stream");
+          const durSec = Number(data?.duration || 0) || undefined;
+          return { url: String(mp4.url), durationSec: durSec };
+        })
+      );
 
-    if (mirrorWinner?.url) {
-      ytUrlCache.set(videoId, {
-        url: mirrorWinner.url,
-        durationSec: mirrorWinner.durationSec,
-        expiresAt: Date.now() + 25 * 60 * 1000,
-      });
-      return mirrorWinner;
-    }
-  } catch { }
+      if (mirrorWinner?.url) {
+        ytUrlCache.set(videoId, {
+          url: mirrorWinner.url,
+          durationSec: mirrorWinner.durationSec,
+          expiresAt: Date.now() + 45 * 60 * 1000,
+        });
+        return mirrorWinner;
+      }
+    } catch { }
 
-  return null;
+    return null;
+  })().finally(() => {
+    inFlightStreamPromises.delete(videoId);
+  });
+
+  inFlightStreamPromises.set(videoId, p);
+  return p;
 }
 
 export async function GET(req: NextRequest) {

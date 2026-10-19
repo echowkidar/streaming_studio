@@ -571,8 +571,7 @@ export const StagePreview: React.FC = () => {
       }
     }
 
-    // Fetch YouTube duration metadata + pre-warm stream cache in parallel, and set a fast 2.4s watchdog
-    // so switching to a YouTube scene NEVER stalls for 10+ seconds!
+    // Fetch YouTube duration metadata + pre-warm stream cache in parallel
     const resolvedYtId =
       activeMedia.type === "youtube"
         ? activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")
@@ -592,38 +591,25 @@ export const StagePreview: React.FC = () => {
               updateMediaLibraryItem(activeMedia.id, { durationSeconds: durSec });
             }
           }
-          // If backend confirms no direct MP4 stream is available, switch to instant IFrame player immediately!
-          if (json.data.hasDirectStream === false && !ytReadyConfirmedRef.current) {
-            setUseYtIframeFallback(true);
-          }
         })
         .catch(() => { });
 
-      // Fast 2.5s watchdog: if direct MP4 stream hasn't loaded frames within 2.5s, switch to Next.js proxy or instant IFrame player
-      const fastWatchdog = setTimeout(() => {
+      // Resilient 8s watchdog: only switch to iframe fallback if direct MP4 stream fails to decode/buffer
+      const streamWatchdog = setTimeout(() => {
         if (cancelled || ytReadyConfirmedRef.current) return;
         const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-        if (!v || v.readyState < 2) {
-          setYtStreamAttempt((prev) => {
-            if (prev === 0) return 1;
-            setUseYtIframeFallback(true);
-            return prev;
-          });
+        if (v && v.networkState === 2 && !v.paused) {
+          // Video is actively receiving network stream, allow it to continue
+          return;
         }
-      }, 2400);
-
-      const fallbackWatchdog = setTimeout(() => {
-        if (cancelled || ytReadyConfirmedRef.current) return;
-        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
         if (!v || v.readyState < 2) {
           setUseYtIframeFallback(true);
         }
-      }, 4200);
+      }, 8000);
 
       return () => {
         cancelled = true;
-        clearTimeout(fastWatchdog);
-        clearTimeout(fallbackWatchdog);
+        clearTimeout(streamWatchdog);
       };
     }
   }, [activeMedia?.id, activeMedia?.url, activeMedia?.youtubeId]);
@@ -649,12 +635,16 @@ export const StagePreview: React.FC = () => {
       if (typeof e.data !== "string") return;
       try {
         const data = JSON.parse(e.data);
+        const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+
         if (data?.event === "onReady") {
           syncYouTubePlayerState();
-          if (!activeMedia?.isMuted) {
-            sendYouTubeIframeCommand("unMute", []);
-            sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct || 100)]);
-            sendYouTubeIframeCommand("playVideo", []);
+          // Mute iframe directly: sound is piped through livestudio-active-media-audio into Web Audio & broadcast mix without echo
+          sendYouTubeIframeCommand("mute", []);
+          sendYouTubeIframeCommand("playVideo", []);
+          if (audioEl && !activeMedia?.isMuted && normalizedMediaVolumePct > 0) {
+            audioEl.muted = false;
+            audioEl.play().catch(() => { });
           }
         }
         if (data?.event === "infoDelivery" && data?.info) {
@@ -663,6 +653,9 @@ export const StagePreview: React.FC = () => {
             const ct = data.info.currentTime;
             mediaCurrentTimeRef.current = ct;
             setMediaCurrentTime(ct);
+            if (audioEl && Math.abs(audioEl.currentTime - ct) > 0.45) {
+              try { audioEl.currentTime = ct; } catch { }
+            }
             const endSec = activeMedia?.endTimeSec;
             if (endSec && endSec > 0 && ct >= endSec) {
               if (activeMedia.loop !== false) {
@@ -671,8 +664,13 @@ export const StagePreview: React.FC = () => {
                 setMediaCurrentTime(startTarget);
                 sendYouTubeIframeCommand("seekTo", [startTarget, true]);
                 sendYouTubeIframeCommand("playVideo", []);
+                if (audioEl) {
+                  try { audioEl.currentTime = startTarget; } catch { }
+                  audioEl.play().catch(() => { });
+                }
               } else {
                 sendYouTubeIframeCommand("pauseVideo", []);
+                audioEl?.pause();
                 setIsMediaPaused(true);
                 isMediaPausedRef.current = true;
                 useStudioStore.getState().triggerMediaEnded();
@@ -691,12 +689,19 @@ export const StagePreview: React.FC = () => {
             if (data.info.playerState === 1) {
               setIsMediaPaused(false);
               isMediaPausedRef.current = false;
+              sendYouTubeIframeCommand("mute", []);
               sendYouTubeIframeCommand("unloadModule", ["captions"]);
               sendYouTubeIframeCommand("unloadModule", ["cc"]);
+              if (audioEl && audioEl.paused && !activeMedia?.isMuted) {
+                audioEl.play().catch(() => { });
+              }
             }
             if (data.info.playerState === 2) {
               setIsMediaPaused(true);
               isMediaPausedRef.current = true;
+              if (audioEl && !audioEl.paused) {
+                audioEl.pause();
+              }
             }
             if (data.info.playerState === 0) {
               if (activeMedia.loop !== false) {
@@ -705,7 +710,12 @@ export const StagePreview: React.FC = () => {
                 setMediaCurrentTime(startTarget);
                 sendYouTubeIframeCommand("seekTo", [startTarget, true]);
                 sendYouTubeIframeCommand("playVideo", []);
+                if (audioEl) {
+                  try { audioEl.currentTime = startTarget; } catch { }
+                  audioEl.play().catch(() => { });
+                }
               } else {
+                audioEl?.pause();
                 useStudioStore.getState().triggerMediaEnded();
               }
             }
@@ -816,12 +826,15 @@ export const StagePreview: React.FC = () => {
 
   const handleToggleMediaPlayPause = (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
     if (activeMedia?.type === "youtube" && useYtIframeFallback) {
       if (isMediaPaused) {
         sendYouTubeIframeCommand("playVideo", []);
+        audioEl?.play().catch(() => { });
         setIsMediaPaused(false);
       } else {
         sendYouTubeIframeCommand("pauseVideo", []);
+        audioEl?.pause();
         setIsMediaPaused(true);
       }
       return;
@@ -845,6 +858,11 @@ export const StagePreview: React.FC = () => {
         ? activeMedia.endTimeSec
         : finiteDur;
     const clamped = Math.max(minSec, maxDur > 0 ? Math.min(maxDur, targetSeconds) : targetSeconds);
+
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (audioEl) {
+      try { audioEl.currentTime = clamped; } catch { }
+    }
 
     if (activeMedia?.type === "youtube" && useYtIframeFallback) {
       mediaCurrentTimeRef.current = clamped;
@@ -2163,13 +2181,9 @@ export const StagePreview: React.FC = () => {
                         sendYouTubeIframeCommand("unloadModule", ["cc"]);
                         sendYouTubeIframeCommand("setOption", ["captions", "track", {}]);
                         sendYouTubeIframeCommand("setOption", ["cc", "track", {}]);
-                        if (activeMedia.isMuted || normalizedMediaVolumePct === 0) {
-                          sendYouTubeIframeCommand("mute", []);
-                        } else {
-                          sendYouTubeIframeCommand("unMute", []);
-                          sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct || 100)]);
-                          sendYouTubeIframeCommand("playVideo", []);
-                        }
+                        // Mute iframe directly: sound is piped into Web Audio & broadcast mix via livestudio-active-media-audio without echo
+                        sendYouTubeIframeCommand("mute", []);
+                        sendYouTubeIframeCommand("playVideo", []);
                         const rate =
                           activeMedia.playbackRate ||
                           (fairUseConfig?.enabled ? fairUseConfig.playbackRate || 1.04 : 1.0);
@@ -2189,6 +2203,52 @@ export const StagePreview: React.FC = () => {
                       transform: "translate(-50%, -50%)",
                     }}
                     className="border-0 pointer-events-none select-none"
+                  />
+
+                  {/* Same-Origin Dedicated Audio Stream: feeds stageBroadcaster & studioStageRecorder Web Audio graph */}
+                  <audio
+                    id="livestudio-active-media-audio"
+                    key={`yt-audio-${ytVideoId || activeMedia.id}`}
+                    src={`/api/media/youtube/audio?videoId=${ytVideoId}`}
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    crossOrigin="anonymous"
+                    muted={Boolean(activeMedia.isMuted)}
+                    className="hidden pointer-events-none"
+                    onPlay={() => setIsMediaPaused(false)}
+                    onPause={() => setIsMediaPaused(true)}
+                    onCanPlay={(e) => {
+                      const a = e.currentTarget;
+                      if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
+                        a.muted = false;
+                        try {
+                          a.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
+                        } catch { }
+                      }
+                      if (a.paused && !isMediaPausedRef.current) {
+                        a.play().catch(() => { });
+                      }
+                    }}
+                    onLoadedMetadata={(e) => {
+                      const a = e.currentTarget;
+                      if (Number.isFinite(a.duration) && a.duration > 0 && a.duration < 86400 * 3) {
+                        setMediaDuration(a.duration);
+                        mediaDurationRef.current = a.duration;
+                      }
+                      if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
+                        try { a.currentTime = activeMedia.startTimeSec; } catch { }
+                      }
+                      a.play().catch(() => { });
+                    }}
+                    onTimeUpdate={(e) => {
+                      const a = e.currentTarget;
+                      const ct = a.currentTime || 0;
+                      if (mediaCurrentTimeRef.current === 0 || Math.abs(mediaCurrentTimeRef.current - ct) > 0.5) {
+                        setMediaCurrentTime(ct);
+                        mediaCurrentTimeRef.current = ct;
+                      }
+                    }}
                   />
                 </div>
               );
