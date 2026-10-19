@@ -4108,6 +4108,87 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                         </select>
                       </div>
                     </div>
+
+                    {/* Missile Flight Trajectory Arc & Height Control */}
+                    <div className="pt-2.5 border-t border-white/10 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] text-slate-200 font-bold flex items-center gap-1.5">
+                          <span>🚀 Missile / Trajectory Flight Arc & Height:</span>
+                        </label>
+                        <span className="font-mono text-xs font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/40">
+                          {Math.round((activeRoute.arcHeight ?? 0.32) * 100)}% ({activeRoute.arcHeight === 0 || activeRoute.curveDirection === "straight" ? "Flat / Sea" : activeRoute.arcHeight && activeRoute.arcHeight > 0.45 ? "High Ballistic" : "Elevated Arc"})
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-400 font-mono shrink-0">0% (Flat)</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={0.8}
+                          step={0.02}
+                          value={activeRoute.arcHeight ?? 0.32}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            updateActiveRoute({
+                              arcHeight: val,
+                              curveDirection: val === 0 ? "straight" : (activeRoute.curveDirection === "straight" ? "up" : activeRoute.curveDirection || "up"),
+                            });
+                          }}
+                          className="flex-1 h-2 accent-amber-400 bg-white/20 rounded-lg cursor-pointer"
+                          title="Adjust Missile Flight Arc Height (from direct flat flight to high-altitude ballistic trajectory)"
+                        />
+                        <span className="text-[10px] text-amber-300 font-mono shrink-0">80% (High Ballistic)</span>
+                      </div>
+
+                      {/* Quick Presets for Trajectory Height */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] text-slate-400 font-semibold mr-1">Height Presets:</span>
+                        {[
+                          { label: "Direct Flat (0%)", arc: 0, dir: "straight" as const },
+                          { label: "Low Cruise (18%)", arc: 0.18, dir: "up" as const },
+                          { label: "Standard Arc (35%)", arc: 0.35, dir: "up" as const },
+                          { label: "High Ballistic (60%)", arc: 0.6, dir: "up" as const },
+                        ].map((p) => (
+                          <button
+                            key={p.label}
+                            type="button"
+                            onClick={() => updateActiveRoute({ arcHeight: p.arc, curveDirection: p.dir })}
+                            className={cn(
+                              "px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all cursor-pointer",
+                              Math.abs((activeRoute.arcHeight ?? 0.32) - p.arc) < 0.05
+                                ? "bg-amber-500 text-slate-950 border-amber-400 font-bold shadow"
+                                : "bg-black/40 border-white/10 text-slate-300 hover:text-white hover:bg-white/10"
+                            )}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 3D Perspective Altitude / Camera Elevation Scale */}
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-[10.5px] font-bold text-emerald-300 block">3D Altitude Scale:</span>
+                          <span className="text-[9.5px] text-slate-400">Controls 3D terrain arc elevation in 3D perspective mode</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <input
+                            type="range"
+                            min={0.5}
+                            max={2.5}
+                            step={0.1}
+                            value={mapConfig.altitudeScale ?? 1.25}
+                            onChange={(e) => setMapConfig({ ...mapConfig, altitudeScale: Number(e.target.value) })}
+                            className="w-24 h-1.5 accent-emerald-400 bg-white/20 rounded cursor-pointer"
+                            title="3D Altitude Elevation Scale"
+                          />
+                          <span className="text-[10px] font-mono text-emerald-300 font-bold min-w-[32px] text-right">
+                            {(mapConfig.altitudeScale ?? 1.25).toFixed(1)}x
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </>

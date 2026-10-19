@@ -797,6 +797,15 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
 
       const helperScript = `<script>
         (function() {
+          var _realStudioHost = null;
+          try {
+            if (window.parent && window.parent !== window) {
+              _realStudioHost = window.parent;
+            } else if (window.top && window.top !== window) {
+              _realStudioHost = window.top;
+            }
+          } catch (e) {}
+
           try {
             Object.defineProperty(window, "top", { get: function() { return window.self; } });
             Object.defineProperty(window, "parent", { get: function() { return window.self; } });
@@ -832,6 +841,30 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
               } catch (err) {}
             }
           }, true);
+
+          window.addEventListener("mousemove", function(e) {
+            try {
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_MOVE",
+                  clientX: e.clientX,
+                  clientY: e.clientY,
+                  innerWidth: window.innerWidth,
+                  innerHeight: window.innerHeight
+                }, "*");
+              }
+            } catch (err) {}
+          }, { passive: true });
+
+          window.addEventListener("mousedown", function(e) {
+            try {
+              if (_realStudioHost) {
+                _realStudioHost.postMessage({
+                  type: "LIVESTUDIO_WEB_POINTER_CLICK"
+                }, "*");
+              }
+            } catch (err) {}
+          }, { passive: true });
         })();
       </script>`;
 

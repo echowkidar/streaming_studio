@@ -45,7 +45,7 @@ import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds, getLayoutExpectedSlots, calculateStageLayout } from "@/lib/layoutBounds";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { StageTelestrator } from "./StageTelestrator";
-import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
+import { YouTubeLibraryModal, extractYouTubeVideoId } from "./YouTubeLibraryModal";
 import { TacticalMapStageCanvas, TacticalMapModal } from "./TacticalMapModal";
 import { InteractiveWebsiteStageView, WebsiteLibraryModal } from "./WebsiteLibraryModal";
 
@@ -311,6 +311,15 @@ export const StagePreview: React.FC = () => {
   const [isWebsiteModalOpen, setIsWebsiteModalOpen] = useState(false);
   const [pastedToastMsg, setPastedToastMsg] = useState<string | null>(null);
   const [clipSavedToast, setClipSavedToast] = useState<string | null>(null);
+  const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  const [isMediaToolbarCollapsed, setIsMediaToolbarCollapsed] = useState(false);
+  const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
+  const dragToolbarStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number }>({
+    mouseX: 0,
+    mouseY: 0,
+    startX: 0,
+    startY: 0,
+  });
 
   const mediaCurrentTimeRef = useRef<number>(0);
   const mediaDurationRef = useRef<number>(0);
@@ -447,6 +456,84 @@ export const StagePreview: React.FC = () => {
     }
   }, []);
 
+  const handleStartDragToolbar = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const stageEl = document.getElementById("livestudio-stage-container");
+    if (!stageEl) return;
+    const stageRect = stageEl.getBoundingClientRect();
+    const currentX = mediaToolbarPos?.x ?? Math.max(10, Math.round(stageRect.width / 2 - 200));
+    const currentY = mediaToolbarPos?.y ?? (activeMedia?.type === "website" ? 48 : 12);
+
+    dragToolbarStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startX: currentX,
+      startY: currentY,
+    };
+    setIsDraggingToolbar(true);
+
+    const handleMouseMove = (moveEv: MouseEvent) => {
+      const deltaX = moveEv.clientX - dragToolbarStartRef.current.mouseX;
+      const deltaY = moveEv.clientY - dragToolbarStartRef.current.mouseY;
+      const nextX = Math.max(4, Math.min(stageRect.width - 140, dragToolbarStartRef.current.startX + deltaX));
+      const nextY = Math.max(4, Math.min(stageRect.height - 48, dragToolbarStartRef.current.startY + deltaY));
+      setMediaToolbarPos({ x: Math.round(nextX), y: Math.round(nextY) });
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingToolbar(false);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const handleChangeMediaSpeed = (rate: number) => {
+    if (!activeMedia) return;
+    setActiveMedia({ ...activeMedia, playbackRate: rate });
+    if (fairUseConfig?.enabled) {
+      setFairUseConfig({ playbackRate: rate });
+    }
+    const mediaEl = getActiveHtmlMediaElement();
+    if (mediaEl) {
+      mediaEl.playbackRate = rate;
+    }
+    if (activeMedia.type === "youtube" && useYtIframeFallback) {
+      sendYouTubeIframeCommand("setPlaybackRate", [rate]);
+    }
+  };
+
+  const handleChangeMediaPitch = (rate: number, enablePitchShift: boolean) => {
+    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    if (videoEl) {
+      videoEl.playbackRate = rate;
+      try {
+        (videoEl as any).preservesPitch = !enablePitchShift;
+        (videoEl as any).mozPreservesPitch = !enablePitchShift;
+        (videoEl as any).webkitPreservesPitch = !enablePitchShift;
+      } catch { }
+    }
+    if (audioEl) {
+      audioEl.playbackRate = rate;
+      try {
+        (audioEl as any).preservesPitch = !enablePitchShift;
+        (audioEl as any).mozPreservesPitch = !enablePitchShift;
+        (audioEl as any).webkitPreservesPitch = !enablePitchShift;
+      } catch { }
+    }
+    if (activeMedia && activeMedia.type === "youtube" && useYtIframeFallback) {
+      sendYouTubeIframeCommand("setPlaybackRate", [rate]);
+    }
+    setFairUseConfig({
+      playbackRate: rate,
+      enableAudioFairUse: enablePitchShift,
+    });
+  };
+
   // Fast YouTube Scene Switch & Pre-Warm + Default Unmuted Audible Volume Enforcement
   React.useEffect(() => {
     setMediaLoadError(false);
@@ -486,9 +573,14 @@ export const StagePreview: React.FC = () => {
 
     // Fetch YouTube duration metadata + pre-warm stream cache in parallel, and set a fast 2.4s watchdog
     // so switching to a YouTube scene NEVER stalls for 10+ seconds!
-    if (activeMedia.type === "youtube" && activeMedia.youtubeId) {
+    const resolvedYtId =
+      activeMedia.type === "youtube"
+        ? activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")
+        : null;
+
+    if (activeMedia.type === "youtube" && resolvedYtId) {
       let cancelled = false;
-      fetch(`/api/media/youtube/info?url=${encodeURIComponent(activeMedia.youtubeId)}`)
+      fetch(`/api/media/youtube/info?url=${encodeURIComponent(resolvedYtId)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((json) => {
           if (cancelled || !json?.success || !json?.data) return;
@@ -1069,7 +1161,9 @@ export const StagePreview: React.FC = () => {
     const mediaEl = getActiveHtmlMediaElement();
     if (mediaEl) {
       mediaEl.playbackRate = baseRate;
-      const shouldShiftPitch = Boolean(fairUseConfig?.enabled && (fairUseConfig?.audioEqProtection ?? true));
+      const shouldShiftPitch = Boolean(
+        fairUseConfig?.enabled && (fairUseConfig?.enableAudioFairUse ?? true) && (fairUseConfig?.audioEqProtection ?? true)
+      );
       try {
         (mediaEl as any).preservesPitch = !shouldShiftPitch;
         (mediaEl as any).mozPreservesPitch = !shouldShiftPitch;
@@ -1082,19 +1176,13 @@ export const StagePreview: React.FC = () => {
     // Gentle Dual-Wave Irrational Tempo LFO (Clean audio without warble)
     let lfoInterval: NodeJS.Timeout | null = null;
     if (fairUseConfig.dynamicTempoVariance ?? true) {
-      let ytTempoStep = false;
       lfoInterval = setInterval(() => {
         const el = getActiveHtmlMediaElement();
-        if (el && !el.paused && !stageBroadcaster.isStreaming()) {
+        if (el && !el.paused) {
           const centerRate = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
           const nowT = performance.now();
           const jitter = Math.sin(nowT / 2200) * 0.012 + Math.cos(nowT / 3700) * 0.008;
           el.playbackRate = Number(Math.max(0.5, Math.min(2.0, centerRate + jitter)).toFixed(3));
-        } else if (activeMedia.type === "youtube" && useYtIframeFallback && !isMediaPausedRef.current) {
-          ytTempoStep = !ytTempoStep;
-          const baseR = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
-          const modRate = ytTempoStep ? baseR : (baseR <= 1.05 ? 1.05 : 1.0);
-          sendYouTubeIframeCommand("setPlaybackRate", [modRate]);
         }
       }, 1500);
     }
@@ -1118,7 +1206,7 @@ export const StagePreview: React.FC = () => {
 
       timer = setTimeout(() => {
         const mode = fairUseConfig.antiMatchMode || "jerk-skip";
-        const pauseMs = mode === "jerk-skip" ? 150 : mode === "micro-pause" ? 340 : 1500;
+        const pauseMs = mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 340 : 1500;
 
         if (activeMedia.type === "youtube" && useYtIframeFallback) {
           if (!isMediaPausedRef.current) {
@@ -1140,7 +1228,7 @@ export const StagePreview: React.FC = () => {
           }
         } else {
           const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-          if (v && !v.paused && !stageBroadcaster.isStreaming()) {
+          if (v && !v.paused) {
             if (mode === "jerk-skip") {
               setIsYtJerking(true);
               setTimeout(() => setIsYtJerking(false), 220);
@@ -1153,7 +1241,7 @@ export const StagePreview: React.FC = () => {
                 (!Number.isFinite(v.duration) || v.currentTime + 0.4 < v.duration)
               ) {
                 try {
-                  v.currentTime += 0.22;
+                  v.currentTime += 0.22 + Math.random() * 0.1;
                 } catch { }
               }
               v.play().catch(() => { });
@@ -1176,6 +1264,7 @@ export const StagePreview: React.FC = () => {
     fairUseConfig?.autoPauseIntervalSec,
     fairUseConfig?.antiMatchMode,
     fairUseConfig?.playbackRate,
+    fairUseConfig?.enableAudioFairUse,
     fairUseConfig?.audioEqProtection,
     fairUseConfig?.dynamicTempoVariance,
     useYtIframeFallback,
@@ -1888,6 +1977,10 @@ export const StagePreview: React.FC = () => {
     const isMediaFullBleed = isFullBleedLayout || mediaFitMode === "cover";
     const effBounds = currentMediaBounds || { x: 0, y: 0, width: 100, height: 100 };
     const touchesBottomTicker = Boolean(showTicker && effBounds.y + effBounds.height > 88);
+    const activeYtVideoId =
+      activeMedia.type === "youtube"
+        ? activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")
+        : "";
     return (
       <div
         data-stage-tile="true"
@@ -1987,8 +2080,9 @@ export const StagePreview: React.FC = () => {
                 }}
               />
             </div>
-          ) : activeMedia.type === "youtube" && useYtIframeFallback && activeMedia.youtubeId ? (
+          ) : activeMedia.type === "youtube" && useYtIframeFallback && (activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url || "")) ? (
             (() => {
+              const ytVideoId = activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url || "");
               const tileRelAspect = Math.max(
                 0.2,
                 Math.min(4.0, (effBounds.width || 100) / Math.max(1, effBounds.height || 100))
@@ -2053,8 +2147,8 @@ export const StagePreview: React.FC = () => {
                 >
                   <iframe
                     id="livestudio-active-youtube-iframe"
-                    key={activeMedia.youtubeId}
-                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${activeMedia.youtubeId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
+                    key={ytVideoId || activeMedia.id}
+                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
                     title={activeMedia.name}
                     allow="autoplay; encrypted-media; picture-in-picture"
                     onLoad={(e) => {
@@ -2103,10 +2197,10 @@ export const StagePreview: React.FC = () => {
             <video
               id="livestudio-active-media-video"
               src={
-                activeMedia.type === "youtube" && activeMedia.youtubeId
+                activeMedia.type === "youtube" && activeYtVideoId
                   ? ytStreamAttempt === 0
-                    ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId}`
-                    : `/youtube-stream?videoId=${activeMedia.youtubeId}`
+                    ? `/api/media/youtube/stream?videoId=${activeYtVideoId}`
+                    : `/youtube-stream?videoId=${activeYtVideoId}`
                   : activeMedia.url
               }
               autoPlay
@@ -2116,7 +2210,7 @@ export const StagePreview: React.FC = () => {
               muted={Boolean(activeMedia.isMuted)}
               crossOrigin="anonymous"
               onError={() => {
-                if (activeMedia.type === "youtube" && activeMedia.youtubeId) {
+                if (activeMedia.type === "youtube" && activeYtVideoId) {
                   if (ytStreamAttempt === 0) {
                     setYtStreamAttempt(1);
                   } else {
@@ -2228,6 +2322,7 @@ export const StagePreview: React.FC = () => {
                       ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
                       : "",
                     isMediaMirrored ? "scaleX(-1)" : "",
+                    isYtJerking ? "scale(1.025) translate(1px, -1px)" : "",
                   ]
                     .filter(Boolean)
                     .join(" ") || undefined,
@@ -2358,151 +2453,7 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* Custom Broadcast Video & YouTube Transport Bar */}
-        {(activeMedia.type === "video" || activeMedia.type === "youtube") && !mediaLoadError && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-            className={cn(
-              "absolute inset-x-2.5 z-30 bg-[#080912]/92 backdrop-blur-md border border-white/15 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5 shadow-2xl opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pointer-events-auto",
-              touchesBottomTicker ? "bottom-11" : "bottom-2"
-            )}
-          >
-            {/* Instant 30s Clip Button */}
-            <button
-              type="button"
-              onClick={handleQuickClipFromTransport}
-              className="px-2 py-1 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-[9.5px] font-bold flex items-center gap-1 shrink-0 shadow"
-              title="Extract 30s Highlight Clip around current timestamp to Media Library"
-            >
-              <Scissors className="w-3 h-3" />
-              <span>Clip</span>
-            </button>
 
-            {/* Play / Pause */}
-            <button
-              type="button"
-              onClick={handleToggleMediaPlayPause}
-              className="w-6 h-6 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow"
-              title={isMediaPaused ? "Play Video" : "Pause Video"}
-            >
-              {isMediaPaused ? <Play className="w-3 h-3 fill-current ml-0.5" /> : <Pause className="w-3 h-3 fill-current" />}
-            </button>
-
-            {/* Rewind -10s / Forward +10s */}
-            <button
-              type="button"
-              onClick={(e) => handleSkipMediaSeconds(-10, e)}
-              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white shrink-0"
-              title="Rewind 10 seconds"
-            >
-              -10s
-            </button>
-
-            {/* Timeline Seekbar with Clean Duration (No Infinity:NaN!) */}
-            <span className="text-[9.5px] font-mono text-cyan-300 shrink-0">
-              {formatMediaTime(mediaCurrentTime)} / {formattedTotalDuration}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(
-                1,
-                Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
-                  ? mediaDuration
-                  : activeMedia.durationSeconds || 300
-              )}
-              step={0.5}
-              value={Math.min(
-                mediaCurrentTime,
-                Math.max(
-                  1,
-                  Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
-                    ? mediaDuration
-                    : activeMedia.durationSeconds || 300
-                )
-              )}
-              onChange={(e) => handleSeekMedia(Number(e.target.value))}
-              className="flex-1 h-1.5 accent-indigo-500 bg-white/20 rounded-lg cursor-pointer min-w-[50px]"
-              title="Seek video timeline"
-            />
-
-            <button
-              type="button"
-              onClick={(e) => handleSkipMediaSeconds(10, e)}
-              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white shrink-0"
-              title="Forward 10 seconds"
-            >
-              +10s
-            </button>
-
-            {/* Playback Speed Selector */}
-            <select
-              value={String(activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1))}
-              onChange={(e) => {
-                const rate = Number(e.target.value);
-                setActiveMedia({ ...activeMedia, playbackRate: rate });
-                if (fairUseConfig?.enabled) {
-                  setFairUseConfig({ playbackRate: rate });
-                }
-              }}
-              className="bg-slate-900 border border-white/15 rounded px-1 py-0.5 text-[9.5px] font-mono text-slate-200 focus:outline-none shrink-0"
-              title="Playback Speed"
-            >
-              <option value="0.75">0.75x</option>
-              <option value="1">1.0x</option>
-              <option value="1.04">1.04x (Safe)</option>
-              <option value="1.15">1.15x</option>
-              <option value="1.25">1.25x</option>
-              <option value="1.5">1.5x</option>
-            </select>
-
-            {/* Volume Control (0% to 200% Gain Boost) */}
-            <div className="flex items-center gap-1 bg-white/5 rounded-lg px-1.5 py-0.5 border border-white/10 shrink-0">
-              <button
-                type="button"
-                onClick={() => toggleMediaMute()}
-                className="text-slate-300 hover:text-white"
-                title={activeMedia.isMuted ? "Unmute Video" : "Mute Video"}
-              >
-                {activeMedia.isMuted || normalizedMediaVolumePct === 0 ? (
-                  <VolumeX className="w-3.5 h-3.5 text-rose-400" />
-                ) : (
-                  <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                )}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={200}
-                step={5}
-                value={activeMedia.isMuted ? 0 : normalizedMediaVolumePct}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setMediaVolume(v);
-                }}
-                className="w-12 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
-                title={`Media Volume: ${normalizedMediaVolumePct}%`}
-              />
-            </div>
-
-            {/* Loop Toggle */}
-            <button
-              type="button"
-              onClick={() => setActiveMedia({ ...activeMedia, loop: !(activeMedia.loop ?? true) })}
-              className={cn(
-                "p-1 rounded border transition-colors shrink-0",
-                (activeMedia.loop ?? true)
-                  ? "bg-indigo-600/40 border-indigo-400 text-indigo-200"
-                  : "bg-white/5 border-white/10 text-slate-400"
-              )}
-              title="Toggle Loop"
-            >
-              <Repeat className="w-3 h-3" />
-            </button>
-          </div>
-        )}
 
         {/* Multi-Slide Presentation Deck Controls */}
         {activeMedia.slides && activeMedia.slides.length > 0 && (
@@ -2800,564 +2751,789 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* Unified Floating Action Pill Toolbar for Media (Anchored at Top-Center of Stage) */}
+        {/* Unified Draggable Floating Action Pill Toolbar for Media */}
         {hasVisualMedia && activeMedia && (
           <div
-            onMouseEnter={() => setIsMediaHovered(true)}
-            onMouseLeave={() => setIsMediaHovered(false)}
+            style={
+              mediaToolbarPos
+                ? {
+                    left: `${mediaToolbarPos.x}px`,
+                    top: `${mediaToolbarPos.y}px`,
+                    transform: "none",
+                  }
+                : undefined
+            }
             className={cn(
-              "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] transition-all duration-150 w-max max-w-[calc(100%-16px)] top-2 left-1/2 -translate-x-1/2",
-              isMediaSelected || isMediaHovered
-                ? "opacity-100 pointer-events-auto"
-                : "opacity-0 pointer-events-none"
+              "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-75 max-w-[calc(100%-16px)]",
+              mediaToolbarPos
+                ? ""
+                : activeMedia.type === "website"
+                ? showTicker
+                  ? "bottom-14 left-1/2 -translate-x-1/2"
+                  : "top-12 left-1/2 -translate-x-1/2"
+                : "top-2 left-1/2 -translate-x-1/2",
+              isMediaToolbarCollapsed
+                ? "bg-transparent p-0"
+                : "bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)]"
             )}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
-            {/* Drag Handle + Reset */}
-            <span className="text-[9.5px] font-semibold text-slate-400 px-1 flex items-center gap-0.5">
-              <Move className="w-3 h-3 text-indigo-400" />
-              <span>Drag</span>
-            </span>
-
-            <button
-              type="button"
-              onClick={handleResetMediaTransform}
-              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9.5px] text-slate-300 hover:text-white flex items-center gap-0.5 border border-white/10"
-              title="Reset Media Pan, Zoom & Crop"
-            >
-              <RotateCcw className="w-2.5 h-2.5 text-amber-400" />
-              <span>Reset</span>
-            </button>
-
-            {/* Media Name Tag */}
-            <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[115px] truncate">
-              🎬 {activeMedia.name}
-            </span>
-
-            {/* Crop vs Fit Toggle Button */}
-            <button
-              type="button"
-              onClick={handleToggleMediaCrop}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
-                mediaFitMode === "cover"
-                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
-              )}
-              title={
-                mediaFitMode === "cover"
-                  ? "Currently: Cropped (Fill) — Click to Fit 100%"
-                  : "Currently: Fit — Click to Crop & Fill Window"
-              }
-            >
-              <Crop className="w-3 h-3 text-amber-400" />
-              <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
-            </button>
-
-            {/* Always-Visible Zoom Controls */}
-            <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
-              <button
-                type="button"
-                onClick={handleMediaZoomOut}
-                disabled={mediaZoom <= 1}
-                className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3 h-3 text-cyan-400" />
-              </button>
-              <span className="text-[10px] font-mono font-bold text-cyan-300 min-w-[28px] text-center">
-                {Number(mediaZoom.toFixed(1))}x
-              </span>
-              <button
-                type="button"
-                onClick={handleMediaZoomIn}
-                disabled={mediaZoom >= 3}
-                className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3 h-3 text-cyan-400" />
-              </button>
-            </div>
-
-            {/* ALWAYS-VISIBLE LEFT / MID / RIGHT / TOP / BTM PAN CONTROLS + HORIZONTAL L/R SLIDER FOR YOUTUBE & VIDEO */}
-            <div className="flex items-center gap-1 bg-cyan-950/50 rounded-lg border border-cyan-500/40 px-1.5 py-0.5">
-              <span className="text-[9px] font-bold text-cyan-300 uppercase">Pan:</span>
-              <button
-                type="button"
-                onClick={() => handleMediaCropPreset("left")}
-                className={cn(
-                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
-                  mediaPanX <= -15
-                    ? "bg-cyan-500 text-slate-950 shadow"
-                    : "bg-white/10 text-slate-200 hover:text-white"
-                )}
-                title="Pan Video to Left Side (Show Left)"
-              >
-                ◄ Left
-              </button>
-              <button
-                type="button"
-                onClick={() => handleMediaCropPreset("center")}
-                className={cn(
-                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
-                  Math.abs(mediaPanX) < 15 && Math.abs(mediaPanY) < 15
-                    ? "bg-cyan-500 text-slate-950 shadow"
-                    : "bg-white/10 text-slate-200 hover:text-white"
-                )}
-                title="Center Video Alignment"
-              >
-                Mid
-              </button>
-              <button
-                type="button"
-                onClick={() => handleMediaCropPreset("right")}
-                className={cn(
-                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
-                  mediaPanX >= 15
-                    ? "bg-cyan-500 text-slate-950 shadow"
-                    : "bg-white/10 text-slate-200 hover:text-white"
-                )}
-                title="Pan Video to Right Side (Show Right)"
-              >
-                Right ►
-              </button>
-
-              {/* Smooth Horizontal Left <-> Right Slider */}
-              <input
-                type="range"
-                min="-50"
-                max="50"
-                step="1"
-                value={Math.round(mediaPanX)}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  const targetFit = mediaZoom > 1 ? mediaFitMode : "cover";
-                  setTileTransform("active-media", {
-                    fitMode: targetFit,
-                    panX: val,
-                  });
-                }}
-                className="w-16 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
-                title={`Horizontal Left/Right Pan: ${Math.round(objectPosX)}% (Slide Left or Right)`}
-              />
-
-              <span className="w-px h-3 bg-white/20 mx-0.5" />
-              <button
-                type="button"
-                onClick={() => handleMediaCropPreset("top")}
-                className={cn(
-                  "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                  mediaPanY <= -15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
-                )}
-                title="Pan Video to Top"
-              >
-                Top
-              </button>
-              <button
-                type="button"
-                onClick={() => handleMediaCropPreset("bottom")}
-                className={cn(
-                  "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
-                  mediaPanY >= 15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
-                )}
-                title="Pan Video to Bottom"
-              >
-                Btm
-              </button>
-            </div>
-
-            {/* Mirror Video Button */}
-            <button
-              type="button"
-              onClick={() =>
-                setFairUseConfig({
-                  mirrorMediaVideo: !fairUseConfig?.mirrorMediaVideo,
-                })
-              }
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                fairUseConfig?.mirrorMediaVideo
-                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
-              )}
-              title="Mirror / Flip Video Horizontally"
-            >
-              <span>Mirror</span>
-            </button>
-
-            {/* Fair-Use Safe Mode Controls */}
-            <button
-              type="button"
-              onClick={() => setFairUseConfig({ enabled: !fairUseConfig.enabled })}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors",
-                fairUseConfig?.enabled
-                  ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
-                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-              )}
-              title="Toggle YouTube Fair-Use & Anti-Content-ID Safe Mode"
-            >
-              <ShieldAlert className="w-3 h-3" />
-              <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
-            </button>
-
-            {fairUseConfig?.enabled && (
+            {isMediaToolbarCollapsed ? (
+              <div className="flex items-center gap-1">
+                <div
+                  onMouseDown={handleStartDragToolbar}
+                  className="cursor-grab active:cursor-grabbing px-2 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 text-slate-400 hover:text-white flex items-center shadow-lg text-[10px] select-none cursor-move"
+                  title="Drag controls"
+                >
+                  ⠿ Drag
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMediaToolbarCollapsed(false)}
+                  className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
+                  title="Expand Floating Media Action Controls"
+                >
+                  <span>🎬 {activeMedia.name}</span>
+                  <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
+                </button>
+              </div>
+            ) : (
               <>
-                <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
+                {/* Drag Handle */}
+                <div
+                  onMouseDown={handleStartDragToolbar}
+                  className="cursor-grab active:cursor-grabbing px-1.5 py-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white flex items-center gap-1 select-none text-[9.5px] font-mono border border-transparent hover:border-white/20 transition-all cursor-move"
+                  title="Click and drag to move controls anywhere on the stage"
+                >
+                  <span className="text-[12px] leading-none">⠿</span>
+                  <span>Drag</span>
+                </div>
+
+                {mediaToolbarPos !== null && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setFairUseConfig({
-                        zoomBreathing: !(fairUseConfig?.zoomBreathing ?? true),
-                      })
-                    }
-                    className={cn(
-                      "px-1 rounded text-[10px] font-semibold transition-colors",
-                      (fairUseConfig?.zoomBreathing ?? true)
-                        ? "text-amber-300 font-bold"
-                        : "text-slate-400 hover:text-white"
-                    )}
-                    title="Toggle Zoom Breathing"
+                    onClick={() => setMediaToolbarPos(null)}
+                    className="px-1.5 py-0.5 rounded text-[9px] font-semibold text-slate-400 hover:text-cyan-300 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
+                    title="Reset controls position to default"
                   >
-                    Breath {(fairUseConfig?.zoomBreathing ?? true) ? "ON" : "OFF"}
+                    ↺ Reset
+                  </button>
+                )}
+
+                {/* Media Name Tag */}
+                <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[130px] truncate select-none">
+                  🎬 {activeMedia.name}
+                </span>
+
+                {/* Multi-Step Undo Button */}
+                {mediaBoundsHistory.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleUndoMediaBounds}
+                    className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-amber-500/30"
+                    title="Undo previous resize / position change"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Undo</span>
+                  </button>
+                )}
+
+                {/* Reset Media Pan & Zoom */}
+                <button
+                  type="button"
+                  onClick={handleResetMediaTransform}
+                  className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9.5px] text-slate-300 hover:text-white flex items-center gap-0.5 border border-white/10 cursor-pointer"
+                  title="Reset Media Pan, Zoom & Crop"
+                >
+                  <RotateCcw className="w-2.5 h-2.5 text-amber-400" />
+                  <span>Reset Pan</span>
+                </button>
+
+                {/* Crop vs Fit Toggle Button */}
+                <button
+                  type="button"
+                  onClick={handleToggleMediaCrop}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
+                    mediaFitMode === "cover"
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
+                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
+                  )}
+                  title={
+                    mediaFitMode === "cover"
+                      ? "Currently: Cropped (Fill) — Click to Fit 100%"
+                      : "Currently: Fit — Click to Crop & Fill Window"
+                  }
+                >
+                  <Crop className="w-3 h-3 text-amber-400" />
+                  <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
+                </button>
+
+                {/* Always-Visible Zoom Controls */}
+                <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
+                  <button
+                    type="button"
+                    onClick={handleMediaZoomOut}
+                    disabled={mediaZoom <= 1}
+                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-3 h-3 text-cyan-400" />
+                  </button>
+                  <span className="text-[10px] font-mono font-bold text-cyan-300 min-w-[28px] text-center">
+                    {Number(mediaZoom.toFixed(1))}x
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleMediaZoomIn}
+                    disabled={mediaZoom >= 3}
+                    className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-3 h-3 text-cyan-400" />
                   </button>
                 </div>
 
-                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                {/* ALWAYS-VISIBLE LEFT / MID / RIGHT / TOP / BTM PAN CONTROLS + HORIZONTAL L/R SLIDER FOR YOUTUBE & VIDEO */}
+                <div className="flex items-center gap-1 bg-cyan-950/50 rounded-lg border border-cyan-500/40 px-1.5 py-0.5">
+                  <span className="text-[9px] font-bold text-cyan-300 uppercase">Pan:</span>
                   <button
                     type="button"
-                    onClick={() => {
-                      const nextState = !(
-                        (fairUseConfig?.dynamicTempoVariance ?? true) &&
-                        (fairUseConfig?.audioEqProtection ?? true)
-                      );
-                      setFairUseConfig({
-                        dynamicTempoVariance: nextState,
-                        audioEqProtection: nextState,
+                    onClick={() => handleMediaCropPreset("left")}
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors cursor-pointer",
+                      mediaPanX <= -15
+                        ? "bg-cyan-500 text-slate-950 shadow"
+                        : "bg-white/10 text-slate-200 hover:text-white"
+                    )}
+                    title="Pan Video to Left Side (Show Left)"
+                  >
+                    ◄ Left
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMediaCropPreset("center")}
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors cursor-pointer",
+                      Math.abs(mediaPanX) < 15 && Math.abs(mediaPanY) < 15
+                        ? "bg-cyan-500 text-slate-950 shadow"
+                        : "bg-white/10 text-slate-200 hover:text-white"
+                    )}
+                    title="Center Video Alignment"
+                  >
+                    Mid
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMediaCropPreset("right")}
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors cursor-pointer",
+                      mediaPanX >= 15
+                        ? "bg-cyan-500 text-slate-950 shadow"
+                        : "bg-white/10 text-slate-200 hover:text-white"
+                    )}
+                    title="Pan Video to Right Side (Show Right)"
+                  >
+                    Right ►
+                  </button>
+
+                  {/* Smooth Horizontal Left <-> Right Slider */}
+                  <input
+                    type="range"
+                    min="-50"
+                    max="50"
+                    step="1"
+                    value={Math.round(mediaPanX)}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      const targetFit = mediaZoom > 1 ? mediaFitMode : "cover";
+                      setTileTransform("active-media", {
+                        fitMode: targetFit,
+                        panX: val,
                       });
                     }}
-                    className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-colors",
-                      (fairUseConfig?.dynamicTempoVariance ?? true) &&
-                        (fairUseConfig?.audioEqProtection ?? true)
-                        ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 font-bold"
-                        : "bg-white/10 text-slate-400 border-white/15 hover:text-white"
-                    )}
-                    title="Audio Tempo LFO + Spectral Formant EQ Protection"
-                  >
-                    <span>
-                      🎵 Tempo+EQ{" "}
-                      {(fairUseConfig?.dynamicTempoVariance ?? true) &&
-                        (fairUseConfig?.audioEqProtection ?? true)
-                        ? "ON"
-                        : "OFF"}
-                    </span>
-                  </button>
-                )}
+                    className="w-16 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                    title={`Horizontal Left/Right Pan: ${Math.round(objectPosX)}% (Slide Left or Right)`}
+                  />
 
-                {/* Vintage Lines Toggle + Refined Thickness Selector */}
-                <div className="flex items-center gap-0.5 bg-emerald-950/30 border border-emerald-500/40 rounded px-1 py-0.5">
+                  <span className="w-px h-3 bg-white/20 mx-0.5" />
                   <button
                     type="button"
-                    onClick={() =>
-                      setFairUseConfig({
-                        vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
-                      })
-                    }
+                    onClick={() => handleMediaCropPreset("top")}
                     className={cn(
-                      "px-1 rounded text-[10px] font-semibold transition-colors",
-                      (fairUseConfig?.vintageLinesOverlay ?? true)
-                        ? "text-emerald-300 font-bold"
-                        : "text-slate-400 hover:text-white"
+                      "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors cursor-pointer",
+                      mediaPanY <= -15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
                     )}
+                    title="Pan Video to Top"
                   >
-                    Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}
+                    Top
                   </button>
-                  {(fairUseConfig?.vintageLinesOverlay ?? true) && (
-                    <select
-                      value={fairUseConfig?.vintageLinesIntensity || "medium"}
-                      onChange={(e) =>
-                        setFairUseConfig({
-                          vintageLinesIntensity: e.target.value as "light" | "medium" | "strong",
-                        })
-                      }
-                      className="bg-slate-900 border border-emerald-500/30 rounded px-1 py-0 text-[9px] text-emerald-200 font-mono focus:outline-none"
-                      title="35mm Vintage Hairline Thickness"
-                    >
-                      <option value="light">Light 0.8px</option>
-                      <option value="medium">Medium 1.4px</option>
-                      <option value="strong">Strong 2.1px</option>
-                    </select>
-                  )}
-                </div>
-
-                {/* Film Grain Toggle + Intensity Selector */}
-                <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
                   <button
                     type="button"
-                    onClick={() =>
-                      setFairUseConfig({
-                        filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
-                      })
-                    }
+                    onClick={() => handleMediaCropPreset("bottom")}
                     className={cn(
-                      "px-1 rounded text-[10px] font-semibold transition-colors",
-                      (fairUseConfig?.filmGrainOverlay ?? true)
-                        ? "text-amber-300 font-bold"
-                        : "text-slate-400 hover:text-white"
+                      "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors cursor-pointer",
+                      mediaPanY >= 15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
                     )}
+                    title="Pan Video to Bottom"
                   >
-                    Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}
+                    Btm
                   </button>
-                  {(fairUseConfig?.filmGrainOverlay ?? true) && (
-                    <select
-                      value={fairUseConfig?.grainIntensity || "random"}
-                      onChange={(e) =>
-                        setFairUseConfig({
-                          grainIntensity: e.target.value as "light" | "medium" | "strong" | "random",
-                        })
-                      }
-                      className="bg-slate-900 border border-amber-500/30 rounded px-1 py-0 text-[9px] text-amber-200 font-mono focus:outline-none"
-                    >
-                      <option value="random">🎲 Random</option>
-                      <option value="light">Light</option>
-                      <option value="medium">Medium</option>
-                      <option value="strong">Strong</option>
-                    </select>
-                  )}
                 </div>
 
-                {/* 8-12s Skip Selector */}
-                <select
-                  value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
-                  onChange={(e) => {
-                    const [sec, mode] = e.target.value.split(":");
-                    setFairUseConfig({
-                      autoPauseIntervalSec: Number(sec),
-                      antiMatchMode: (mode as any) || "jerk-skip",
-                    });
-                  }}
-                  className="bg-slate-900 border border-rose-500/40 rounded px-1.5 py-0.5 text-[9.5px] text-rose-300 font-mono focus:outline-none"
-                  title="Anti-Content ID Jerk / Frame-Skip Mode"
-                >
-                  <option value="0:jerk-skip">Skip OFF</option>
-                  <option value="8:jerk-skip">⚡ 8-12s Skip ON</option>
-                  <option value="8:micro-pause">8-12s Micro-Pause</option>
-                  <option value="10:pause">10s Full Pause</option>
-                </select>
-              </>
-            )}
-
-            {/* Quick Media Window Resize Presets (25% PiP, 50% Half, 75% Large, 100% Full + Fit Slot) */}
-            <div className="flex items-center gap-0.5 bg-indigo-950/70 border border-indigo-400/40 rounded-lg px-1.5 py-0.5">
-              <span className="text-[9px] font-bold text-indigo-300 uppercase mr-0.5">Size:</span>
-              {[
-                {
-                  label: "25% PiP",
-                  w: 28,
-                  h: 30,
-                  x: mediaSlotIndex === 0 ? 3 : 69,
-                  y: showTicker ? 58 : 64,
-                  z: 30,
-                },
-                {
-                  label: "50% Half",
-                  w: 50,
-                  h: 100,
-                  x: mediaSlotIndex >= 1 ? 50 : 0,
-                  y: 0,
-                  z: 20,
-                },
-                {
-                  label: "75% Large",
-                  w: 75,
-                  h: 100,
-                  x: 0,
-                  y: 0,
-                  z: 20,
-                },
-                {
-                  label: "100% Full",
-                  w: 100,
-                  h: 100,
-                  x: 0,
-                  y: 0,
-                  z: 20,
-                },
-              ].map((sz) => (
+                {/* Mirror Video Button */}
                 <button
-                  key={sz.label}
                   type="button"
                   onClick={() =>
-                    handleApplyMediaSizePreset({
-                      x: sz.x,
-                      y: sz.y,
-                      width: sz.w,
-                      height: sz.h,
-                      zIndex: sz.z,
-                      isLockedRatio: false,
+                    setFairUseConfig({
+                      mirrorMediaVideo: !fairUseConfig?.mirrorMediaVideo,
                     })
                   }
                   className={cn(
-                    "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors",
-                    customMediaBounds && Math.abs(mediaBounds.width - sz.w) <= 3
-                      ? "bg-indigo-500 text-white shadow"
-                      : "text-slate-300 hover:text-white hover:bg-white/10"
+                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
+                    fairUseConfig?.mirrorMediaVideo
+                      ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                      : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
                   )}
+                  title="Mirror / Flip Video Horizontally"
                 >
-                  {sz.label}
+                  <span>Mirror</span>
                 </button>
-              ))}
-              <button
-                type="button"
-                onClick={handleResetMediaBoundsToSlot}
-                className={cn(
-                  "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors ml-0.5",
-                  !customMediaBounds
-                    ? "bg-emerald-600 text-white shadow"
-                    : "bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-200"
-                )}
-                title="Fit Media to Default Scene Slot"
-              >
-                Fit Slot
-              </button>
-            </div>
 
-            {/* PROMINENT LEFT / RIGHT SWAP & POSITION CONTROLS (Host ⇄ Media) */}
-            {totalPlannedSlots >= 1 && !isSoloOrCinema && (
-              <div className="flex items-center gap-1 bg-indigo-950/90 border border-indigo-400/60 rounded-lg px-1.5 py-0.5 shadow">
+                {/* VIDEO & YOUTUBE TRANSPORT CONTROLS (ALWAYS VISIBLE & DRAGGABLE TOGETHER!) */}
+                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                  <div className="flex items-center gap-1 bg-[#10121e]/90 border border-indigo-400/40 rounded-lg px-2 py-0.5 shadow">
+                    {/* Instant 30s Clip Button */}
+                    <button
+                      type="button"
+                      onClick={handleQuickClipFromTransport}
+                      className="px-1.5 py-0.5 rounded bg-rose-600/90 hover:bg-rose-500 text-white text-[9px] font-bold flex items-center gap-1 shrink-0 shadow cursor-pointer"
+                      title="Extract 30s Highlight Clip around current timestamp to Media Library"
+                    >
+                      <Scissors className="w-2.5 h-2.5" />
+                      <span>Clip</span>
+                    </button>
+
+                    {/* Play / Pause */}
+                    <button
+                      type="button"
+                      onClick={handleToggleMediaPlayPause}
+                      className="w-5 h-5 rounded bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow cursor-pointer"
+                      title={isMediaPaused ? "Play Video" : "Pause Video"}
+                    >
+                      {isMediaPaused ? <Play className="w-2.5 h-2.5 fill-current ml-0.5" /> : <Pause className="w-2.5 h-2.5 fill-current" />}
+                    </button>
+
+                    {/* Rewind -10s / Forward +10s */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleSkipMediaSeconds(-10, e)}
+                      className="px-1 py-0.2 rounded bg-white/10 hover:bg-white/20 text-[8.5px] font-mono text-slate-300 hover:text-white shrink-0 cursor-pointer"
+                      title="Rewind 10 seconds"
+                    >
+                      -10s
+                    </button>
+
+                    {/* Timeline Seekbar with Clean Duration */}
+                    <span className="text-[9px] font-mono text-cyan-300 shrink-0">
+                      {formatMediaTime(mediaCurrentTime)} / {formattedTotalDuration}
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(
+                        1,
+                        Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
+                          ? mediaDuration
+                          : activeMedia.durationSeconds || 300
+                      )}
+                      step={0.5}
+                      value={Math.min(
+                        mediaCurrentTime,
+                        Math.max(
+                          1,
+                          Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
+                            ? mediaDuration
+                            : activeMedia.durationSeconds || 300
+                        )
+                      )}
+                      onChange={(e) => handleSeekMedia(Number(e.target.value))}
+                      className="w-20 h-1 accent-indigo-500 bg-white/20 rounded cursor-pointer"
+                      title="Seek video timeline"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleSkipMediaSeconds(10, e)}
+                      className="px-1 py-0.2 rounded bg-white/10 hover:bg-white/20 text-[8.5px] font-mono text-slate-300 hover:text-white shrink-0 cursor-pointer"
+                      title="Forward 10 seconds"
+                    >
+                      +10s
+                    </button>
+
+                    {/* Playback Speed Selector (Direct execution) */}
+                    <select
+                      value={String(activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1))}
+                      onChange={(e) => handleChangeMediaSpeed(Number(e.target.value))}
+                      className="bg-slate-900 border border-white/20 rounded px-1 py-0.2 text-[9px] font-mono text-slate-200 focus:outline-none shrink-0 cursor-pointer"
+                      title="Playback Speed"
+                    >
+                      <option value="0.75">0.75x</option>
+                      <option value="1">1.0x</option>
+                      <option value="1.04">1.04x Safe</option>
+                      <option value="1.15">1.15x</option>
+                      <option value="1.25">1.25x</option>
+                      <option value="1.5">1.5x</option>
+                      <option value="2">2.0x</option>
+                    </select>
+
+                    {/* Volume Control */}
+                    <button
+                      type="button"
+                      onClick={() => toggleMediaMute()}
+                      className="text-slate-300 hover:text-white shrink-0 ml-0.5 cursor-pointer"
+                      title={activeMedia.isMuted ? "Unmute Video" : "Mute Video"}
+                    >
+                      {activeMedia.isMuted || normalizedMediaVolumePct === 0 ? (
+                        <VolumeX className="w-3 h-3 text-rose-400" />
+                      ) : (
+                        <Volume2 className="w-3 h-3 text-emerald-400" />
+                      )}
+                    </button>
+                    <input
+                      type="range"
+                      min={0}
+                      max={200}
+                      step={5}
+                      value={activeMedia.isMuted ? 0 : normalizedMediaVolumePct}
+                      onChange={(e) => setMediaVolume(Number(e.target.value))}
+                      className="w-10 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer shrink-0"
+                      title={`Media Volume: ${normalizedMediaVolumePct}%`}
+                    />
+
+                    {/* Loop Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setActiveMedia({ ...activeMedia, loop: !(activeMedia.loop ?? true) })}
+                      className={cn(
+                        "p-0.5 rounded border transition-colors shrink-0 cursor-pointer",
+                        (activeMedia.loop ?? true)
+                          ? "bg-indigo-600/40 border-indigo-400 text-indigo-200"
+                          : "bg-white/5 border-white/10 text-slate-400"
+                      )}
+                      title="Toggle Loop"
+                    >
+                      <Repeat className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Fair-Use Safe Mode Master Button */}
                 <button
                   type="button"
-                  onClick={handleSwapMediaAndHostPosition}
-                  className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-[9.5px] flex items-center gap-1 shadow transition-all cursor-pointer"
-                  title="1-Click Swap: Shift Media Left/Right & Move Host to Opposite Side!"
+                  onClick={() => setFairUseConfig({ enabled: !fairUseConfig.enabled })}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                    fairUseConfig?.enabled
+                      ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
+                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+                  )}
+                  title="Toggle YouTube Fair-Use & Anti-Content-ID Safe Mode"
                 >
-                  <ArrowLeftRight className="w-3 h-3" />
-                  <span>
-                    {mediaSlotIndex === 0
-                      ? "Shift Media Right (Host Left)"
-                      : "Shift Media Left (Host Right)"}
-                  </span>
+                  <ShieldAlert className="w-3 h-3" />
+                  <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
                 </button>
 
-                <select
-                  value={mediaSlotIndex}
-                  onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
-                  className="bg-slate-900 border border-white/15 rounded px-1 py-0.2 text-[9.5px] font-bold text-white focus:outline-none cursor-pointer"
-                  title="Choose Media & Host Slot Position"
-                >
-                  {activeLayout === "cropped" ||
-                    activeLayout === "podcast" ||
-                    activeLayout === "side-by-side" ||
-                    activeLayout === "fit" ||
-                    activeLayout === "interview" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">
-                        ◧ Media Left (Host Right)
-                      </option>
-                      <option value={1} className="bg-slate-900">
-                        ◨ Media Right (Host Left)
-                      </option>
-                    </>
-                  ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
-                    <>
-                      <option value={0} className="bg-slate-900">◧ Left Col</option>
-                      <option value={1} className="bg-slate-900">⫿ Middle Col</option>
-                      <option value={2} className="bg-slate-900">◨ Right Col</option>
-                    </>
-                  ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
-                    <>
-                      <option value={0} className="bg-slate-900">↖ Top-Left</option>
-                      <option value={1} className="bg-slate-900">↗ Top-Right</option>
-                      <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
-                      <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
-                    </>
-                  ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">★ Hero Left (Host Right)</option>
-                      <option value={1} className="bg-slate-900">▤ Side Right (Host Left)</option>
-                      {totalPlannedSlots >= 2 && (
-                        <option value={2} className="bg-slate-900">▤ Side Btm-Right</option>
+                {fairUseConfig?.enabled && (
+                  <>
+                    <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFairUseConfig({
+                            zoomBreathing: !(fairUseConfig?.zoomBreathing ?? true),
+                          })
+                        }
+                        className={cn(
+                          "px-1 rounded text-[10px] font-semibold transition-colors cursor-pointer",
+                          (fairUseConfig?.zoomBreathing ?? true)
+                            ? "text-amber-300 font-bold"
+                            : "text-slate-400 hover:text-white"
+                        )}
+                        title="Toggle Zoom Breathing"
+                      >
+                        Breath {(fairUseConfig?.zoomBreathing ?? true) ? "ON" : "OFF"}
+                      </button>
+                    </div>
+
+                    {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextState = !(
+                            (fairUseConfig?.dynamicTempoVariance ?? true) &&
+                            (fairUseConfig?.audioEqProtection ?? true)
+                          );
+                          setFairUseConfig({
+                            dynamicTempoVariance: nextState,
+                            audioEqProtection: nextState,
+                          });
+                        }}
+                        className={cn(
+                          "px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-colors cursor-pointer",
+                          (fairUseConfig?.dynamicTempoVariance ?? true) &&
+                            (fairUseConfig?.audioEqProtection ?? true)
+                            ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 font-bold"
+                            : "bg-white/10 text-slate-400 border-white/15 hover:text-white"
+                        )}
+                        title="Audio Tempo LFO + Spectral Formant EQ Protection"
+                      >
+                        <span>
+                          🎵 Tempo+EQ{" "}
+                          {(fairUseConfig?.dynamicTempoVariance ?? true) &&
+                            (fairUseConfig?.audioEqProtection ?? true)
+                            ? "ON"
+                            : "OFF"}
+                        </span>
+                      </button>
+                    )}
+
+                    {/* Interactive Real-Time Pitch Shift Selector */}
+                    <select
+                      value={
+                        fairUseConfig?.enableAudioFairUse === false
+                          ? "1.0-normal"
+                          : fairUseConfig?.playbackRate === 1.08
+                          ? "1.08-high"
+                          : fairUseConfig?.playbackRate === 0.95
+                          ? "0.95-deep"
+                          : "1.04-safe"
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "1.0-normal") {
+                          handleChangeMediaPitch(1.0, false);
+                        } else if (val === "1.08-high") {
+                          handleChangeMediaPitch(1.08, true);
+                        } else if (val === "0.95-deep") {
+                          handleChangeMediaPitch(0.95, true);
+                        } else {
+                          handleChangeMediaPitch(1.04, true);
+                        }
+                      }}
+                      className="bg-slate-900 border border-amber-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-300 focus:outline-none cursor-pointer"
+                      title="Real-time Audio Pitch Shift (prevents audio content-ID match)"
+                    >
+                      <option value="1.0-normal">🎵 1.0x Normal</option>
+                      <option value="1.04-safe">🎵 1.04x Safe Pitch (+0.7st)</option>
+                      <option value="1.08-high">🎵 1.08x High Pitch (+1.3st)</option>
+                      <option value="0.95-deep">🎵 0.95x Deep Pitch (-0.9st)</option>
+                    </select>
+
+                    {/* Vintage Lines Toggle + Refined Thickness Selector */}
+                    <div className="flex items-center gap-0.5 bg-emerald-950/30 border border-emerald-500/40 rounded px-1 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFairUseConfig({
+                            vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
+                          })
+                        }
+                        className={cn(
+                          "px-1 rounded text-[10px] font-semibold transition-colors cursor-pointer",
+                          (fairUseConfig?.vintageLinesOverlay ?? true)
+                            ? "text-emerald-300 font-bold"
+                            : "text-slate-400 hover:text-white"
+                        )}
+                      >
+                        Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}
+                      </button>
+                      {(fairUseConfig?.vintageLinesOverlay ?? true) && (
+                        <select
+                          value={fairUseConfig?.vintageLinesIntensity || "medium"}
+                          onChange={(e) =>
+                            setFairUseConfig({
+                              vintageLinesIntensity: e.target.value as "light" | "medium" | "strong",
+                            })
+                          }
+                          className="bg-slate-900 border border-emerald-500/30 rounded px-1 py-0 text-[9px] text-emerald-200 font-mono focus:outline-none cursor-pointer"
+                          title="35mm Vintage Hairline Thickness"
+                        >
+                          <option value="light">Light 0.8px</option>
+                          <option value="medium">Medium 1.4px</option>
+                          <option value="strong">Strong 2.1px</option>
+                        </select>
                       )}
-                    </>
-                  ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">⬆ Media Top (Host Bottom)</option>
-                      <option value={1} className="bg-slate-900">⬇ Media Bottom (Host Top)</option>
-                    </>
-                  ) : (
-                    Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
-                      <option key={sIdx} value={sIdx} className="bg-slate-900">
-                        Slot {sIdx + 1}
-                      </option>
-                    ))
+                    </div>
+
+                    {/* Film Grain Toggle + Intensity Selector */}
+                    <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFairUseConfig({
+                            filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                          })
+                        }
+                        className={cn(
+                          "px-1 rounded text-[10px] font-semibold transition-colors cursor-pointer",
+                          (fairUseConfig?.filmGrainOverlay ?? true)
+                            ? "text-amber-300 font-bold"
+                            : "text-slate-400 hover:text-white"
+                        )}
+                      >
+                        Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}
+                      </button>
+                      {(fairUseConfig?.filmGrainOverlay ?? true) && (
+                        <select
+                          value={fairUseConfig?.grainIntensity || "random"}
+                          onChange={(e) =>
+                            setFairUseConfig({
+                              grainIntensity: e.target.value as "light" | "medium" | "strong" | "random",
+                            })
+                          }
+                          className="bg-slate-900 border border-amber-500/30 rounded px-1 py-0 text-[9px] text-amber-200 font-mono focus:outline-none cursor-pointer"
+                        >
+                          <option value="random">🎲 Random</option>
+                          <option value="light">Light</option>
+                          <option value="medium">Medium</option>
+                          <option value="strong">Strong</option>
+                        </select>
+                      )}
+                    </div>
+
+                    {/* 8-12s Skip Selector */}
+                    <select
+                      value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
+                      onChange={(e) => {
+                        const [sec, mode] = e.target.value.split(":");
+                        setFairUseConfig({
+                          autoPauseIntervalSec: Number(sec),
+                          antiMatchMode: (mode as any) || "jerk-skip",
+                        });
+                      }}
+                      className="bg-slate-900 border border-rose-500/40 rounded px-1.5 py-0.5 text-[9.5px] text-rose-300 font-mono focus:outline-none cursor-pointer"
+                      title="Anti-Content ID Jerk / Frame-Skip Mode"
+                    >
+                      <option value="0:jerk-skip">Skip OFF</option>
+                      <option value="8:jerk-skip">⚡ 8-12s Skip ON</option>
+                      <option value="8:micro-pause">8-12s Micro-Pause</option>
+                      <option value="10:pause">10s Full Pause</option>
+                    </select>
+                  </>
+                )}
+
+                {/* Quick Media Window Resize Presets */}
+                <div className="flex items-center gap-0.5 bg-indigo-950/70 border border-indigo-400/40 rounded-lg px-1.5 py-0.5">
+                  <span className="text-[9px] font-bold text-indigo-300 uppercase mr-0.5">Size:</span>
+                  {[
+                    {
+                      label: "25% PiP",
+                      w: 28,
+                      h: 30,
+                      x: mediaSlotIndex === 0 ? 3 : 69,
+                      y: showTicker ? 58 : 64,
+                      z: 30,
+                    },
+                    {
+                      label: "50% Half",
+                      w: 50,
+                      h: 100,
+                      x: mediaSlotIndex >= 1 ? 50 : 0,
+                      y: 0,
+                      z: 20,
+                    },
+                    {
+                      label: "75% Large",
+                      w: 75,
+                      h: 100,
+                      x: 0,
+                      y: 0,
+                      z: 20,
+                    },
+                    {
+                      label: "100% Full",
+                      w: 100,
+                      h: 100,
+                      x: 0,
+                      y: 0,
+                      z: 20,
+                    },
+                  ].map((sz) => (
+                    <button
+                      key={sz.label}
+                      type="button"
+                      onClick={() =>
+                        handleApplyMediaSizePreset({
+                          x: sz.x,
+                          y: sz.y,
+                          width: sz.w,
+                          height: sz.h,
+                          zIndex: sz.z,
+                          isLockedRatio: false,
+                        })
+                      }
+                      className={cn(
+                        "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors cursor-pointer",
+                        customMediaBounds && Math.abs(mediaBounds.width - sz.w) <= 3
+                          ? "bg-indigo-500 text-white shadow"
+                          : "text-slate-300 hover:text-white hover:bg-white/10"
+                      )}
+                    >
+                      {sz.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleResetMediaBoundsToSlot}
+                    className={cn(
+                      "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors ml-0.5 cursor-pointer",
+                      !customMediaBounds
+                        ? "bg-emerald-600 text-white shadow"
+                        : "bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-200"
+                    )}
+                    title="Fit Media to Default Scene Slot"
+                  >
+                    Fit Slot
+                  </button>
+                </div>
+
+                {/* Host ⇄ Media Swap Position Controls */}
+                {totalPlannedSlots >= 1 && !isSoloOrCinema && (
+                  <div className="flex items-center gap-1 bg-indigo-950/90 border border-indigo-400/60 rounded-lg px-1.5 py-0.5 shadow">
+                    <button
+                      type="button"
+                      onClick={handleSwapMediaAndHostPosition}
+                      className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-[9.5px] flex items-center gap-1 shadow transition-all cursor-pointer"
+                      title="1-Click Swap: Shift Media Left/Right & Move Host to Opposite Side!"
+                    >
+                      <ArrowLeftRight className="w-3 h-3" />
+                      <span>
+                        {mediaSlotIndex === 0
+                          ? "Shift Right (Host Left)"
+                          : "Shift Left (Host Right)"}
+                      </span>
+                    </button>
+
+                    <select
+                      value={mediaSlotIndex}
+                      onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
+                      className="bg-slate-900 border border-white/15 rounded px-1 py-0.2 text-[9.5px] font-bold text-white focus:outline-none cursor-pointer"
+                      title="Choose Media & Host Slot Position"
+                    >
+                      {activeLayout === "cropped" ||
+                        activeLayout === "podcast" ||
+                        activeLayout === "side-by-side" ||
+                        activeLayout === "fit" ||
+                        activeLayout === "interview" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">
+                            ◧ Media Left (Host Right)
+                          </option>
+                          <option value={1} className="bg-slate-900">
+                            ◨ Media Right (Host Left)
+                          </option>
+                        </>
+                      ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
+                        <>
+                          <option value={0} className="bg-slate-900">◧ Left Col</option>
+                          <option value={1} className="bg-slate-900">⫿ Middle Col</option>
+                          <option value={2} className="bg-slate-900">◨ Right Col</option>
+                        </>
+                      ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
+                        <>
+                          <option value={0} className="bg-slate-900">↖ Top-Left</option>
+                          <option value={1} className="bg-slate-900">↗ Top-Right</option>
+                          <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
+                          <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
+                        </>
+                      ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">★ Hero Left (Host Right)</option>
+                          <option value={1} className="bg-slate-900">▤ Side Right (Host Left)</option>
+                          {totalPlannedSlots >= 2 && (
+                            <option value={2} className="bg-slate-900">▤ Side Btm-Right</option>
+                          )}
+                        </>
+                      ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
+                        <>
+                          <option value={0} className="bg-slate-900">⬆ Media Top (Host Bottom)</option>
+                          <option value={1} className="bg-slate-900">⬇ Media Bottom (Host Top)</option>
+                        </>
+                      ) : (
+                        Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
+                          <option key={sIdx} value={sIdx} className="bg-slate-900">
+                            Slot {sIdx + 1}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                )}
+
+                {/* 1-Click Solo / Restore Media Button */}
+                <button
+                  type="button"
+                  onClick={() => toggleSoloParticipant("active-media")}
+                  className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                    soloTargetId === "active-media"
+                      ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
+                      : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
                   )}
-                </select>
-              </div>
-            )}
+                  title="Solo Media Fullscreen"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                  <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
+                </button>
 
-            {/* 1-Click Solo / Restore Media Button */}
-            <button
-              type="button"
-              onClick={() => toggleSoloParticipant("active-media")}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
-                soloTargetId === "active-media"
-                  ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
-                  : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
-              )}
-              title="Solo Media Fullscreen"
-            >
-              <Maximize2 className="w-3 h-3" />
-              <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
-            </button>
+                {/* Replace Media */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (activeMedia.type === "youtube") {
+                      setIsYouTubeModalOpen(true);
+                    } else if (activeMedia.type === "map") {
+                      setIsTacticalMapModalOpen(true);
+                    } else if (activeMedia.type === "website") {
+                      setIsWebsiteModalOpen(true);
+                    } else {
+                      window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Replace or Edit Media"
+                >
+                  <MonitorUp className="w-3 h-3 text-emerald-400" />
+                  <span>Replace</span>
+                </button>
 
-            {/* Replace Media */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (activeMedia.type === "youtube") {
-                  setIsYouTubeModalOpen(true);
-                } else if (activeMedia.type === "map") {
-                  setIsTacticalMapModalOpen(true);
-                } else if (activeMedia.type === "website") {
-                  setIsWebsiteModalOpen(true);
-                } else {
-                  window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
-                }
-              }}
-              className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-semibold flex items-center gap-1 transition-colors"
-              title="Replace or Edit Media"
-            >
-              <MonitorUp className="w-3 h-3 text-emerald-400" />
-              <span>Replace</span>
-            </button>
+                {/* Stop / Remove Media */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetParticipantBounds("active-media");
+                    setActiveMedia(null);
+                  }}
+                  className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-semibold transition-colors cursor-pointer"
+                  title="Remove Media from Stage"
+                >
+                  Remove
+                </button>
 
-            {/* Stop / Remove Media */}
-            <button
-              type="button"
-              onClick={() => {
-                resetParticipantBounds("active-media");
-                setActiveMedia(null);
-              }}
-              className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-semibold transition-colors"
-              title="Remove Media from Stage"
-            >
-              Remove
-            </button>
-
-            {isMediaSelected && (
-              <button
-                type="button"
-                onClick={() => setSelectedParticipantId(null)}
-                className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
-                title="Close toolbar"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+                {/* Minimize / Collapse Toolbar Button */}
+                <button
+                  type="button"
+                  onClick={() => setIsMediaToolbarCollapsed(true)}
+                  className="px-1.5 py-0.5 hover:bg-white/15 rounded text-slate-400 hover:text-white text-[9.5px] font-bold border border-white/10 transition-colors cursor-pointer"
+                  title="Minimize Media Action Controls"
+                >
+                  ✕
+                </button>
+              </>
             )}
           </div>
         )}

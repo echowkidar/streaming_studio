@@ -211,6 +211,7 @@ export interface FairUseConfig {
   zoomBreathing?: boolean;
   breathIntensity?: "subtle" | "medium" | "strong";
   audioEqProtection?: boolean;
+  enableAudioFairUse?: boolean;
   dynamicTempoVariance?: boolean;
   vintageLinesOverlay?: boolean;
   vintageLinesIntensity?: "light" | "medium" | "strong";
@@ -1402,6 +1403,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     zoomBreathing: true,
     breathIntensity: "medium",
     audioEqProtection: true,
+    enableAudioFairUse: true,
     dynamicTempoVariance: true,
     vintageLinesOverlay: true,
     vintageLinesIntensity: "medium",

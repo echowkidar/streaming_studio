@@ -378,11 +378,11 @@ class StageBroadcaster {
     if (Math.abs(activeEl.playbackRate - targetRate) > 0.01) {
       activeEl.playbackRate = targetRate;
     }
-    const shouldShiftPitch = Boolean(fairUseConfig.audioEqProtection ?? true);
+    const isAudioFairUse = Boolean(fairUseConfig.enableAudioFairUse ?? fairUseConfig.audioEqProtection ?? true);
     try {
-      (activeEl as any).preservesPitch = !shouldShiftPitch;
-      (activeEl as any).mozPreservesPitch = !shouldShiftPitch;
-      (activeEl as any).webkitPreservesPitch = !shouldShiftPitch;
+      (activeEl as any).preservesPitch = !isAudioFairUse;
+      (activeEl as any).mozPreservesPitch = !isAudioFairUse;
+      (activeEl as any).webkitPreservesPitch = !isAudioFairUse;
     } catch { }
 
     // 3. 8-12s Random Jerk / Frame-Skip / Pause (Anti-Content ID Continuous Match for Video & YouTube)
@@ -2135,19 +2135,19 @@ class StageBroadcaster {
 
     const alpha =
       intensity === "light"
-        ? 0.06
+        ? 0.18
         : intensity === "medium"
-          ? 0.1
+          ? 0.26
           : intensity === "strong"
-            ? 0.15
-            : 0.08 + Math.random() * 0.06;
+            ? 0.36
+            : 0.22 + Math.random() * 0.08;
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.clip();
     ctx.globalAlpha = alpha;
-    ctx.globalCompositeOperation = "overlay";
+    ctx.globalCompositeOperation = "source-over";
 
     const jitterX = (Math.random() * 160) | 0;
     const jitterY = (Math.random() * 160) | 0;
