@@ -17,15 +17,14 @@ import {
   Check,
   MapPin,
   Edit2,
-  Shield,
-  Compass,
   Box,
   Gamepad2,
   Flame,
   ZoomIn,
   ZoomOut,
   Move,
-  RotateCw,
+  Maximize2,
+  Radio,
 } from "lucide-react";
 import {
   MediaFileItem,
@@ -41,10 +40,8 @@ import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILT-IN OFFLINE GLOBAL, MARITIME & INDIAN STRATEGIC GAZETTEER (85+ Hotspots)
-// Ensures 0ms instant search & fallback even if Nominatim is offline!
 // ─────────────────────────────────────────────────────────────────────────────
 export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
-  // India & Indian Ocean Naval Bases
   { name: "New Delhi, India", lat: 28.6139, lon: 77.209 },
   { name: "Mumbai / Western Naval Command, India", lat: 19.076, lon: 72.8777 },
   { name: "Aligarh, UP, India", lat: 27.8974, lon: 78.088 },
@@ -61,7 +58,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "Karwar Naval Base (INS Kadamba), India", lat: 14.8185, lon: 74.124 },
   { name: "Kochi Southern Naval Command, India", lat: 9.9312, lon: 76.2673 },
   { name: "Andaman & Nicobar Command, India", lat: 11.6234, lon: 92.7265 },
-  // Maritime Seas & Chokepoints
   { name: "Arabian Sea (Central)", lat: 16.5, lon: 64.5 },
   { name: "Bay of Bengal (Central)", lat: 14.0, lon: 87.5 },
   { name: "Indian Ocean (Central)", lat: -2.0, lon: 76.0 },
@@ -74,7 +70,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "Taiwan Strait", lat: 24.4798, lon: 119.5 },
   { name: "South China Sea", lat: 14.5995, lon: 114.5 },
   { name: "Strait of Malacca", lat: 2.5, lon: 101.8 },
-  // South Asia & Neighbors
   { name: "Islamabad, Pakistan", lat: 33.6844, lon: 73.0479 },
   { name: "Karachi Naval Port, Pakistan", lat: 24.8607, lon: 67.0011 },
   { name: "Gwadar Port, Pakistan", lat: 25.1264, lon: 62.3225 },
@@ -85,7 +80,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "Chittagong Port, Bangladesh", lat: 22.3569, lon: 91.7832 },
   { name: "Colombo / Hambantota, Sri Lanka", lat: 6.9271, lon: 79.8612 },
   { name: "Kathmandu, Nepal", lat: 27.7172, lon: 85.324 },
-  // Middle East / West Asia
   { name: "Tel Aviv, Israel", lat: 32.0853, lon: 34.7818 },
   { name: "Jerusalem", lat: 31.7683, lon: 35.2137 },
   { name: "Gaza Strip", lat: 31.5017, lon: 34.4668 },
@@ -106,7 +100,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "Doha, Qatar", lat: 25.2854, lon: 51.531 },
   { name: "Ankara, Turkey", lat: 39.9334, lon: 32.8597 },
   { name: "Istanbul, Turkey", lat: 41.0082, lon: 28.9784 },
-  // Europe / Russia / Ukraine
   { name: "Kyiv, Ukraine", lat: 50.4501, lon: 30.5234 },
   { name: "Kharkiv, Ukraine", lat: 49.9935, lon: 36.2304 },
   { name: "Odesa Port, Ukraine", lat: 46.4825, lon: 30.7233 },
@@ -115,7 +108,6 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "London, UK", lat: 51.5074, lon: -0.1278 },
   { name: "Paris, France", lat: 48.8566, lon: 2.3522 },
   { name: "Berlin, Germany", lat: 52.52, lon: 13.405 },
-  // East Asia & Americas
   { name: "Beijing, China", lat: 39.9042, lon: 116.4074 },
   { name: "Taipei, Taiwan", lat: 25.033, lon: 121.5654 },
   { name: "Pyongyang, North Korea", lat: 39.0392, lon: 125.7625 },
@@ -125,6 +117,15 @@ export const STRATEGIC_LOCATIONS_GAZETTEER: TacticalMapPoint[] = [
   { name: "Washington D.C. / Pentagon, USA", lat: 38.9072, lon: -77.0369 },
   { name: "New York City, USA", lat: 40.7128, lon: -74.006 },
 ];
+
+// Deterministic Starfield for 3D Globe Space & High-Altitude 3D Sky
+const SPACE_STARFIELD = Array.from({ length: 150 }, (_, idx) => ({
+  xPct: ((idx * 73 + 19) % 1000) / 1000,
+  yPct: ((idx * 137 + 43) % 1000) / 1000,
+  r: 0.7 + (idx % 4) * 0.45,
+  phase: (idx * 0.7) % (Math.PI * 2),
+  tint: idx % 5 === 0 ? "#bae6fd" : idx % 7 === 0 ? "#fef08a" : "#ffffff",
+}));
 
 export function computeGreatCircleDistanceKm(a: TacticalMapPoint, b: TacticalMapPoint): number {
   const R = 6371;
@@ -214,7 +215,7 @@ function projectPoint3D(
     return { x: mapX, y: mapY, scale: 1 };
   }
   const cx = W / 2;
-  const cy = H * 0.54;
+  const cy = H * 0.56;
   const dx = mapX - cx;
   const dy = mapY - cy;
 
@@ -233,9 +234,15 @@ function projectPoint3D(
   const perspectiveFactor = fov / Math.max(280, fov - depthZ * 0.55);
 
   const screenX = cx + rx * perspectiveFactor;
-  // Ground plane foreshortening + vertical altitude lift in 3D space
-  const screenY = cy + ry * cosP * perspectiveFactor - altitudePx * (0.7 + sinP * 0.55) * perspectiveFactor;
-  return { x: screenX, y: screenY, scale: Math.max(0.55, Math.min(1.65, perspectiveFactor)) };
+  const screenY =
+    cy +
+    ry * cosP * perspectiveFactor -
+    altitudePx * (0.72 + sinP * 0.55) * perspectiveFactor;
+  return {
+    x: screenX,
+    y: screenY,
+    scale: Math.max(0.55, Math.min(1.65, perspectiveFactor)),
+  };
 }
 
 /**
@@ -253,18 +260,22 @@ function unprojectScreenToMapXY(
     return { x: screenX, y: screenY };
   }
   const cx = W / 2;
-  const cy = H * 0.54;
+  const cy = H * 0.56;
   const pitchRad = (Math.max(0, Math.min(64, pitchDeg)) * Math.PI) / 180;
   const cosP = Math.max(0.35, Math.cos(pitchRad));
+  const sinP = Math.sin(pitchRad);
 
   const ryApprox = (screenY - cy) / cosP;
-  const rxApprox = screenX - cx;
+  const fov = 1100;
+  const perspectiveFactor = fov / Math.max(280, fov - ryApprox * sinP * 0.55);
+  const rxApprox = (screenX - cx) / Math.max(0.5, perspectiveFactor);
+  const ryCorrected = (screenY - cy) / (cosP * Math.max(0.5, perspectiveFactor));
 
   const yawRad = (-yawDeg * Math.PI) / 180;
   const cosY = Math.cos(yawRad);
   const sinY = Math.sin(yawRad);
-  const dx = rxApprox * cosY - ryApprox * sinY;
-  const dy = rxApprox * sinY + ryApprox * cosY;
+  const dx = rxApprox * cosY - ryCorrected * sinY;
+  const dy = rxApprox * sinY + ryCorrected * cosY;
 
   return { x: cx + dx, y: cy + dy };
 }
@@ -297,13 +308,57 @@ function latLonToGlobe3D(
   const y =
     cy -
     rEff *
-      (Math.cos(phi0) * Math.sin(phi) -
-        Math.sin(phi0) * Math.cos(phi) * Math.cos(dLambda));
+    (Math.cos(phi0) * Math.sin(phi) -
+      Math.sin(phi0) * Math.cos(phi) * Math.cos(dLambda));
 
   return { x, y, visible: cosC >= -0.15, z: cosC };
 }
 
-// Shared tile cache so switching scenes or frames never re-fetches map tiles
+/**
+ * Inverse Orthographic Projection: Converts clicked (x, y) on 3D Globe back to (lat, lon)
+ */
+function globeXYToLatLon(
+  screenX: number,
+  screenY: number,
+  centerLat: number,
+  centerLon: number,
+  radius: number,
+  cx: number,
+  cy: number
+): { lat: number; lon: number } | null {
+  const dx = screenX - cx;
+  const dy = cy - screenY;
+  const rho = Math.hypot(dx, dy);
+  if (rho < 1e-4) {
+    return { lat: centerLat, lon: centerLon };
+  }
+  const clampedRho = Math.min(radius * 0.995, rho);
+  const c = Math.asin(clampedRho / radius);
+  const sinC = Math.sin(c);
+  const cosC = Math.cos(c);
+  const phi0 = (centerLat * Math.PI) / 180;
+  const lambda0 = (centerLon * Math.PI) / 180;
+
+  const phi = Math.asin(
+    cosC * Math.sin(phi0) + (dy * sinC * Math.cos(phi0)) / clampedRho
+  );
+  const lambda =
+    lambda0 +
+    Math.atan2(
+      dx * sinC,
+      clampedRho * Math.cos(phi0) * cosC - dy * Math.sin(phi0) * sinC
+    );
+
+  let lonDeg = (lambda * 180) / Math.PI;
+  while (lonDeg > 180) lonDeg -= 360;
+  while (lonDeg < -180) lonDeg += 360;
+
+  return {
+    lat: Number(Math.max(-82, Math.min(82, (phi * 180) / Math.PI)).toFixed(4)),
+    lon: Number(lonDeg.toFixed(4)),
+  };
+}
+
 const globalTileCache = new Map<string, HTMLImageElement>();
 const customIconCache = new Map<string, HTMLImageElement>();
 
@@ -697,6 +752,8 @@ export interface TacticalMapStageCanvasProps {
   config: TacticalMapConfig;
   fitMode?: "contain" | "cover";
   isInteractive?: boolean;
+  simToolOverride?: SimulatorCommandTool;
+  onSimToolChange?: (tool: SimulatorCommandTool) => void;
   onMapClickLatLon?: (lat: number, lon: number) => void;
   onConfigChange?: (updates: Partial<TacticalMapConfig>) => void;
   onOpenEditorModal?: () => void;
@@ -704,14 +761,17 @@ export interface TacticalMapStageCanvasProps {
 
 export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   config,
-  fitMode = "contain",
+  fitMode = "cover",
   isInteractive = true,
+  simToolOverride,
+  onSimToolChange,
   onMapClickLatLon,
   onConfigChange,
   onOpenEditorModal,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenMapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rotatedMapCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
@@ -726,23 +786,42 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   const [centerLat, setCenterLat] = useState<number>(config.centerLat || 32.8);
   const [centerLon, setCenterLon] = useState<number>(config.centerLon || 44.0);
   const [zoom, setZoom] = useState<number>(config.zoom || 5);
+  const [globeScale, setGlobeScale] = useState<number>(config.globeScale ?? 1.18);
+  const [showRadarSweep, setShowRadarSweep] = useState<boolean>(
+    config.showRadarSweep !== false
+  );
+
+  // Interactive 3D Mouse Mode ("pan" vs "orbit") & Auto-Orbit 3D
+  const [mouseControlMode, setMouseControlMode] = useState<"pan" | "orbit">("orbit");
+  const [autoOrbit3D, setAutoOrbit3D] = useState<boolean>(false);
 
   // Interactive Simulator State (Works live on Stage & inside Editor!)
   const [simulatorActive, setSimulatorActive] = useState<boolean>(
     config.simulatorEnabled ?? false
   );
-  const [simTool, setSimTool] = useState<SimulatorCommandTool>("launch-missile");
+  const [simTool, setSimTool] = useState<SimulatorCommandTool>(
+    simToolOverride || "launch-missile"
+  );
   const [simRoutes, setSimRoutes] = useState<
     Array<TacticalMapRoute & { spawnedAt: number; simProgress: number }>
-  >([]);
+  >(() =>
+    (config.simRoutes || []).map((r) => ({
+      ...r,
+      spawnedAt: performance.now(),
+      simProgress: 0,
+    }))
+  );
 
-  // Mouse Drag Mode & 3D Auto-Orbit State
-  const [mouseDragMode, setMouseDragMode] = useState<"pan" | "rotate-tilt">("rotate-tilt");
-  const [isAutoOrbiting, setIsAutoOrbiting] = useState<boolean>(false);
-  const yawDegRef = useRef<number>(config.yawDeg ?? 0);
   useEffect(() => {
-    yawDegRef.current = yawDeg;
-  }, [yawDeg]);
+    if (simToolOverride) {
+      setSimTool(simToolOverride);
+    }
+  }, [simToolOverride]);
+
+  const updateSimTool = (nextTool: SimulatorCommandTool) => {
+    setSimTool(nextTool);
+    onSimToolChange?.(nextTool);
+  };
 
   // Mouse Drag Pan / 3D Orbit State
   const [isDraggingMap, setIsDraggingMap] = useState(false);
@@ -761,7 +840,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   const lastTimeRef = useRef<number>(performance.now());
   const simRoutesRef = useRef<
     Array<TacticalMapRoute & { spawnedAt: number; simProgress: number }>
-  >([]);
+  >(simRoutes);
 
   useEffect(() => {
     simRoutesRef.current = simRoutes;
@@ -775,7 +854,23 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     if (typeof config.centerLat === "number") setCenterLat(config.centerLat);
     if (typeof config.centerLon === "number") setCenterLon(config.centerLon);
     if (typeof config.zoom === "number") setZoom(config.zoom);
+    if (typeof config.globeScale === "number") setGlobeScale(config.globeScale);
+    if (typeof config.showRadarSweep === "boolean") setShowRadarSweep(config.showRadarSweep);
     if (typeof config.simulatorEnabled === "boolean") setSimulatorActive(config.simulatorEnabled);
+    if (Array.isArray(config.simRoutes)) {
+      if (config.simRoutes.length === 0 && simRoutesRef.current.length > 0) {
+        simRoutesRef.current = [];
+        setSimRoutes([]);
+      } else if (config.simRoutes.length > simRoutesRef.current.length) {
+        const synced = config.simRoutes.map((r, i) => ({
+          ...r,
+          spawnedAt: performance.now(),
+          simProgress: simRoutesRef.current[i]?.simProgress ?? 0,
+        }));
+        simRoutesRef.current = synced;
+        setSimRoutes(synced);
+      }
+    }
   }, [
     config.mapStyle,
     config.viewMode,
@@ -784,7 +879,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     config.centerLat,
     config.centerLon,
     config.zoom,
+    config.globeScale,
+    config.showRadarSweep,
     config.simulatorEnabled,
+    config.simRoutes,
   ]);
 
   const syncCameraToParent = useCallback(
@@ -803,59 +901,64 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
   };
 
   // Trigger a 5x Multi-Target Salvo Barrage in Simulator!
-  const handleTriggerSalvoBarrage = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const baseRoute = config.routes?.[0];
-    const origin: TacticalMapPoint = baseRoute?.from || {
-      name: "Command Launch Site",
-      lat: centerLat + 2.5,
-      lon: centerLon + 3.5,
-    };
-    const baseTarget: TacticalMapPoint = baseRoute?.to || {
-      name: "Strategic Target Zone",
-      lat: centerLat - 2.0,
-      lon: centerLon - 3.5,
-    };
+  const handleTriggerSalvoBarrage = useCallback(
+    (e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      const baseRoute = config.routes?.[0];
+      const origin: TacticalMapPoint = baseRoute?.from || {
+        name: "Command Launch Site",
+        lat: Number((centerLat + 2.5).toFixed(3)),
+        lon: Number((centerLon + 3.5).toFixed(3)),
+      };
+      const baseTarget: TacticalMapPoint = baseRoute?.to || {
+        name: "Strategic Target Zone",
+        lat: Number((centerLat - 2.0).toFixed(3)),
+        lon: Number((centerLon - 3.5).toFixed(3)),
+      };
 
-    const offsets = [
-      { dLat: 0, dLon: 0, label: "Salvo Alpha" },
-      { dLat: 0.85, dLon: -0.65, label: "Salvo Bravo" },
-      { dLat: -0.75, dLon: 0.8, label: "Salvo Charlie" },
-      { dLat: 1.35, dLon: 0.55, label: "Salvo Delta" },
-      { dLat: -1.15, dLon: -0.9, label: "Salvo Echo" },
-    ];
+      const offsets = [
+        { dLat: 0, dLon: 0, label: "Salvo Alpha" },
+        { dLat: 0.95, dLon: -0.75, label: "Salvo Bravo" },
+        { dLat: -0.85, dLon: 0.9, label: "Salvo Charlie" },
+        { dLat: 1.45, dLon: 0.65, label: "Salvo Delta" },
+        { dLat: -1.25, dLon: -1.0, label: "Salvo Echo" },
+      ];
 
-    const now = performance.now();
-    const barrageRoutes = offsets.map((off, idx) => ({
-      id: `sim-salvo-${Date.now()}-${idx}`,
-      from: origin,
-      to: {
-        name: `${baseTarget.name.split(",")[0]} (${off.label})`,
-        lat: Number((baseTarget.lat + off.dLat).toFixed(3)),
-        lon: Number((baseTarget.lon + off.dLon).toFixed(3)),
-      },
-      assetType: "missile" as TacticalRouteAssetType,
-      targetEffect: "explosion" as TacticalTargetEffect,
-      targetMarkerType: "radar-site" as TacticalTargetMarkerType,
-      curveDirection: "up" as const,
-      color: idx % 2 === 0 ? "#ef4444" : "#f97316",
-      arcHeight: 0.32 + idx * 0.04,
-      speed: 1.15 + idx * 0.08,
-      showImpactShockwave: true,
-      showDistanceKm: idx === 0,
-      spawnedAt: now,
-      simProgress: -idx * 0.09,
-    }));
+      const now = performance.now();
+      const barrageRoutes = offsets.map((off, idx) => ({
+        id: `sim-salvo-${Date.now()}-${idx}`,
+        from: origin,
+        to: {
+          name: `${baseTarget.name.split(",")[0]} (${off.label})`,
+          lat: Number((baseTarget.lat + off.dLat).toFixed(3)),
+          lon: Number((baseTarget.lon + off.dLon).toFixed(3)),
+        },
+        assetType: "missile" as TacticalRouteAssetType,
+        targetEffect: "explosion" as TacticalTargetEffect,
+        targetMarkerType: "radar-site" as TacticalTargetMarkerType,
+        curveDirection: "up" as const,
+        color: idx % 2 === 0 ? "#ef4444" : "#f97316",
+        arcHeight: 0.32 + idx * 0.04,
+        speed: 1.15 + idx * 0.08,
+        showImpactShockwave: true,
+        showDistanceKm: idx === 0,
+        spawnedAt: now,
+        simProgress: -idx * 0.09,
+      }));
 
-    const next = [...simRoutesRef.current, ...barrageRoutes];
-    simRoutesRef.current = next;
-    setSimRoutes(next);
-    setIsPlaying(true);
-  };
+      const next = [...simRoutesRef.current, ...barrageRoutes];
+      simRoutesRef.current = next;
+      setSimRoutes(next);
+      setIsPlaying(true);
+      syncCameraToParent({ simRoutes: next });
+    },
+    [config.routes, centerLat, centerLon, syncCameraToParent]
+  );
 
   // Spawn a dynamic Simulator Route when clicking on the map in Simulator Mode
   const spawnSimulatorActionAtLatLon = useCallback(
-    (targetLat: number, targetLon: number) => {
+    (targetLat: number, targetLon: number, toolOverride?: SimulatorCommandTool) => {
+      const activeTool = toolOverride || simTool;
       const baseOrigin: TacticalMapPoint = config.routes?.[0]?.from || {
         name: "Launch Command",
         lat: Number((centerLat + 2.2).toFixed(3)),
@@ -874,25 +977,25 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       let color = "#ef4444";
       let arcHeight = 0.35;
 
-      if (simTool === "air-defense-intercept") {
+      if (activeTool === "air-defense-intercept") {
         assetType = "missile";
         targetEffect = "intercept";
         targetMarkerType = "radar-site";
         color = "#38bdf8";
         arcHeight = 0.36;
-      } else if (simTool === "fighter-airstrike") {
+      } else if (activeTool === "fighter-airstrike") {
         assetType = "fighter-jet";
         targetEffect = "jet-airstrike";
         targetMarkerType = "airbase";
         color = "#f97316";
         arcHeight = 0.26;
-      } else if (simTool === "naval-strike") {
+      } else if (activeTool === "naval-strike") {
         assetType = "warship";
         targetEffect = "ship-launch-missile";
         targetMarkerType = "warship";
         color = "#06b6d4";
         arcHeight = 0.0;
-      } else if (simTool === "airliner-flight") {
+      } else if (activeTool === "airliner-flight") {
         assetType = "airliner";
         targetEffect = "landing";
         targetMarkerType = "airbase";
@@ -901,7 +1004,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       }
 
       const newSimRoute: TacticalMapRoute & { spawnedAt: number; simProgress: number } = {
-        id: `sim-${Date.now()}`,
+        id: `sim-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
         from: baseOrigin,
         to: clickedTarget,
         assetType,
@@ -921,15 +1024,19 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       simRoutesRef.current = next;
       setSimRoutes(next);
       setIsPlaying(true);
+      syncCameraToParent({ simRoutes: next });
     },
-    [config.routes, centerLat, centerLon, simTool]
+    [config.routes, centerLat, centerLon, simTool, syncCameraToParent]
   );
 
   // Mouse Handlers for Real-Time Stage Pan, 3D Tilt/Orbit & Simulator Clicks
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.stopPropagation();
-    const isOrbit = mouseDragMode === "rotate-tilt" || e.button === 2 || e.shiftKey;
-    dragModeRef.current = isOrbit ? "orbit" : "pan";
+    const isRightOrShift = e.button === 2 || e.shiftKey;
+    dragModeRef.current =
+      isRightOrShift || (viewMode === "3d-perspective" && mouseControlMode === "orbit")
+        ? "orbit"
+        : "pan";
     setIsDraggingMap(true);
     dragStartRef.current = {
       clientX: e.clientX,
@@ -937,7 +1044,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       startLat: centerLat,
       startLon: centerLon,
       startPitch: pitchDeg,
-      startYaw: yawDegRef.current,
+      startYaw: yawDeg,
       movedPx: 0,
     };
   };
@@ -949,12 +1056,16 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     const dy = e.clientY - dragStartRef.current.clientY;
     dragStartRef.current.movedPx = Math.hypot(dx, dy);
 
-    if (dragModeRef.current === "orbit") {
-      const nextPitch = Math.max(0, Math.min(60, Math.round(dragStartRef.current.startPitch - dy * 0.25)));
-      const nextYaw = Math.max(-180, Math.min(180, Math.round(dragStartRef.current.startYaw + dx * 0.35)));
+    if (viewMode === "3d-globe") {
+      const nextLon = ((dragStartRef.current.startLon - dx * 0.28 + 540) % 360) - 180;
+      const nextLat = Math.max(-75, Math.min(75, dragStartRef.current.startLat + dy * 0.24));
+      setCenterLat(Number(nextLat.toFixed(3)));
+      setCenterLon(Number(nextLon.toFixed(3)));
+    } else if (dragModeRef.current === "orbit") {
+      const nextPitch = Math.max(0, Math.min(62, Math.round(dragStartRef.current.startPitch - dy * 0.28)));
+      const nextYaw = Math.max(-180, Math.min(180, Math.round(dragStartRef.current.startYaw + dx * 0.42)));
       setPitchDeg(nextPitch);
       setYawDeg(nextYaw);
-      yawDegRef.current = nextYaw;
       if (viewMode === "2d" && nextPitch > 8) {
         setViewMode("3d-perspective");
       }
@@ -984,7 +1095,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       return;
     }
 
-    // If it was a clean click (< 6px drag), resolve clicked Lat/Lon!
+    // Clean click (< 6px drag) -> resolve clicked Lat/Lon in 2D, 3D Tilt, or 3D Globe!
     if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = 1280 / Math.max(1, rect.width);
@@ -992,19 +1103,26 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     const rawCx = (e.clientX - rect.left) * scaleX;
     const rawCy = (e.clientY - rect.top) * scaleY;
 
-    const effectivePitch = viewMode === "3d-perspective" ? pitchDeg : 0;
-    const effectiveYaw = viewMode === "3d-perspective" ? yawDeg : 0;
-    const unproj = unprojectScreenToMapXY(rawCx, rawCy, 1280, 720, effectivePitch, effectiveYaw);
+    let coords: { lat: number; lon: number } | null = null;
+    if (viewMode === "3d-globe") {
+      const globeRadius = Math.min(1280, 720) * 0.42 * globeScale;
+      coords = globeXYToLatLon(rawCx, rawCy, centerLat, centerLon, globeRadius, 640, 720 * 0.52);
+    } else {
+      const effectivePitch = viewMode === "3d-perspective" ? pitchDeg : 0;
+      const effectiveYaw = viewMode === "3d-perspective" ? yawDeg : 0;
+      const unproj = unprojectScreenToMapXY(rawCx, rawCy, 1280, 720, effectivePitch, effectiveYaw);
+      coords = canvasXYToLatLon(
+        unproj.x,
+        unproj.y,
+        centerLat,
+        centerLon,
+        Math.max(2, Math.min(10, Math.round(zoom || 4))),
+        1280,
+        720
+      );
+    }
 
-    const coords = canvasXYToLatLon(
-      unproj.x,
-      unproj.y,
-      centerLat,
-      centerLon,
-      Math.max(2, Math.min(10, Math.round(zoom || 4))),
-      1280,
-      720
-    );
+    if (!coords) return;
 
     if (simulatorActive) {
       spawnSimulatorActionAtLatLon(coords.lat, coords.lon);
@@ -1015,6 +1133,13 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
 
   const handleCanvasWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.stopPropagation();
+    if (viewMode === "3d-globe") {
+      const step = e.deltaY < 0 ? 0.1 : -0.1;
+      const nextScale = Number(Math.max(0.7, Math.min(1.85, globeScale + step)).toFixed(2));
+      setGlobeScale(nextScale);
+      syncCameraToParent({ globeScale: nextScale });
+      return;
+    }
     const delta = e.deltaY < 0 ? 1 : -1;
     const nextZ = Math.max(2, Math.min(10, zoom + delta));
     if (nextZ !== zoom) {
@@ -1034,17 +1159,36 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
       off.height = H;
       offscreenMapCanvasRef.current = off;
     }
+    if (!rotatedMapCanvasRef.current && typeof document !== "undefined") {
+      const rot = document.createElement("canvas");
+      rot.width = W;
+      rot.height = H;
+      rotatedMapCanvasRef.current = rot;
+    }
 
     const renderLoop = (now: number) => {
       const dt = Math.min(0.1, (now - lastTimeRef.current) / 1000);
       lastTimeRef.current = now;
 
+      if (autoOrbit3D && !isDraggingMap) {
+        if (viewMode === "3d-globe") {
+          setCenterLon((prev) => Number((((prev + dt * 14 + 540) % 360) - 180).toFixed(3)));
+        } else {
+          setYawDeg((prev) => {
+            const next = prev + dt * 18;
+            return next > 180 ? next - 360 : Number(next.toFixed(1));
+          });
+        }
+      }
+
       const canvas = canvasRef.current;
       const offCanvas = offscreenMapCanvasRef.current;
-      if (canvas && offCanvas) {
+      const rotCanvas = rotatedMapCanvasRef.current;
+      if (canvas && offCanvas && rotCanvas) {
         const ctx = canvas.getContext("2d");
         const offCtx = offCanvas.getContext("2d");
-        if (ctx && offCtx) {
+        const rotCtx = rotCanvas.getContext("2d");
+        if (ctx && offCtx && rotCtx) {
           const zInt = Math.max(2, Math.min(10, Math.round(zoom || 4)));
           const cTileX = lonToTileX(centerLon, zInt);
           const cTileY = latToTileY(centerLat, zInt);
@@ -1052,7 +1196,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           // ─────────────────────────────────────────────────────────────────
           // STEP 1: RENDER SLIPPY MAP TILES & BORDERS TO OFFSCREEN SURFACE
           // ─────────────────────────────────────────────────────────────────
-          offCtx.fillStyle = localStyle === "political" ? "#cbd5e1" : "#040a14";
+          offCtx.fillStyle = localStyle === "political" ? "#cbd5e1" : "#06182c";
           offCtx.fillRect(0, 0, W, H);
 
           const startTileX = Math.floor(cTileX - W / 512) - 2;
@@ -1081,7 +1225,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   const drawY = Math.round(H / 2 + (ty - cTileY) * 256);
                   try {
                     offCtx.drawImage(tileImg, drawX, drawY, 256, 256);
-                  } catch {}
+                  } catch { }
                 }
               }
             }
@@ -1106,7 +1250,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                     offCtx.globalAlpha = localStyle === "dark-radar" ? 0.78 : 0.92;
                     offCtx.drawImage(refImg, drawX, drawY, 256, 256);
                     offCtx.restore();
-                  } catch {}
+                  } catch { }
                 }
               }
             }
@@ -1137,64 +1281,103 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           }
 
           // ─────────────────────────────────────────────────────────────────
-          // STEP 2: COMPOSITE 3D SKY HORIZON / 3D GLOBE / 3D TILTED TERRAIN
+          // STEP 2: COMPOSITE 3D SKY HORIZON / 3D GLOBE STARFIELD / 2D MAP
           // ─────────────────────────────────────────────────────────────────
-          ctx.fillStyle = "#030712";
-          ctx.fillRect(0, 0, W, H);
-
-          if (isAutoOrbiting && !isDraggingMap) {
-            yawDegRef.current = ((yawDegRef.current + 0.35 + 180) % 360) - 180;
-          }
-
           const is3DPersp = viewMode === "3d-perspective" && pitchDeg > 2;
           const is3DGlobe = viewMode === "3d-globe";
           const effPitch = is3DPersp ? pitchDeg : 0;
-          const effYaw = is3DPersp ? yawDegRef.current : 0;
+          const effYaw = is3DPersp ? yawDeg : 0;
           const altScale = config.altitudeScale ?? 1.25;
 
           if (is3DGlobe) {
-            // ── 3D INTERACTIVE SPHERICAL EARTH GLOBE VIEW ──
-            const globeRadius = Math.min(W, H) * 0.42;
-            const gCx = W / 2;
-            const gCy = H * 0.53;
+            // ── 3D INTERACTIVE SPHERICAL EARTH GLOBE WITH DEEP SPACE STARFIELD ──
+            const spaceGrad = ctx.createRadialGradient(W * 0.5, H * 0.5, 40, W * 0.5, H * 0.5, W * 0.85);
+            spaceGrad.addColorStop(0, "#0b1d3a");
+            spaceGrad.addColorStop(0.45, "#061024");
+            spaceGrad.addColorStop(1, "#020612");
+            ctx.fillStyle = spaceGrad;
+            ctx.fillRect(0, 0, W, H);
 
-            // Outer atmospheric glow halo
+            // Subtle cosmic Milky Way / Nebula atmospheric band
+            const nebulaGrad = ctx.createLinearGradient(0, H * 0.1, W, H * 0.9);
+            nebulaGrad.addColorStop(0, "rgba(14, 165, 233, 0.0)");
+            nebulaGrad.addColorStop(0.35, "rgba(56, 189, 248, 0.08)");
+            nebulaGrad.addColorStop(0.65, "rgba(99, 102, 241, 0.09)");
+            nebulaGrad.addColorStop(1, "rgba(14, 165, 233, 0.0)");
+            ctx.fillStyle = nebulaGrad;
+            ctx.fillRect(0, 0, W, H);
+
+            // Twinkling Deep-Space Stars
+            ctx.save();
+            SPACE_STARFIELD.forEach((st) => {
+              const twinkle = 0.45 + 0.55 * Math.sin(now / 520 + st.phase);
+              ctx.globalAlpha = twinkle;
+              ctx.fillStyle = st.tint;
+              ctx.beginPath();
+              ctx.arc(st.xPct * W, st.yPct * H, st.r, 0, Math.PI * 2);
+              ctx.fill();
+            });
+            ctx.restore();
+
+            const globeRadius = Math.min(W, H) * 0.42 * globeScale;
+            const gCx = W / 2;
+            const gCy = H * 0.52;
+
+            // Outer atmospheric blue sky corona halo
             const haloGrad = ctx.createRadialGradient(
               gCx,
               gCy,
-              globeRadius * 0.88,
+              globeRadius * 0.86,
               gCx,
               gCy,
-              globeRadius * 1.22
+              globeRadius * 1.28
             );
-            haloGrad.addColorStop(0, "rgba(56, 189, 248, 0.32)");
-            haloGrad.addColorStop(0.5, "rgba(14, 165, 233, 0.12)");
-            haloGrad.addColorStop(1, "rgba(3, 7, 18, 0)");
+            haloGrad.addColorStop(0, "rgba(56, 189, 248, 0.42)");
+            haloGrad.addColorStop(0.45, "rgba(14, 165, 233, 0.18)");
+            haloGrad.addColorStop(1, "rgba(2, 6, 18, 0)");
             ctx.fillStyle = haloGrad;
             ctx.beginPath();
-            ctx.arc(gCx, gCy, globeRadius * 1.22, 0, Math.PI * 2);
+            ctx.arc(gCx, gCy, globeRadius * 1.28, 0, Math.PI * 2);
             ctx.fill();
 
-            // Clip to 3D Sphere and draw surface + spherical shading
+            // Clip to 3D Sphere and draw spherical strips
             ctx.save();
             ctx.beginPath();
             ctx.arc(gCx, gCy, globeRadius, 0, Math.PI * 2);
             ctx.clip();
 
-            ctx.drawImage(
-              offCanvas,
-              0,
-              0,
-              W,
-              H,
-              gCx - globeRadius * 1.35,
-              gCy - globeRadius * 1.05,
-              globeRadius * 2.7,
-              globeRadius * 2.1
+            const oceanBase = ctx.createRadialGradient(
+              gCx - globeRadius * 0.25,
+              gCy - globeRadius * 0.25,
+              globeRadius * 0.1,
+              gCx,
+              gCy,
+              globeRadius
             );
+            oceanBase.addColorStop(0, "#0c4a6e");
+            oceanBase.addColorStop(1, "#082f49");
+            ctx.fillStyle = oceanBase;
+            ctx.fillRect(gCx - globeRadius, gCy - globeRadius, globeRadius * 2, globeRadius * 2);
+
+            const latStrips = 36;
+            for (let s = 0; s < latStrips; s++) {
+              const t0 = s / latStrips;
+              const t1 = (s + 1) / latStrips;
+              const yNorm = -1 + (s + 0.5) * (2 / latStrips);
+              const chordFactor = Math.sqrt(Math.max(0.08, 1 - yNorm * yNorm));
+              const sy = t0 * H;
+              const sh = H / latStrips;
+              const dy = gCy - globeRadius + t0 * (globeRadius * 2);
+              const dh = (t1 - t0) * (globeRadius * 2) + 1.2;
+              const dw = globeRadius * 2 * chordFactor * 1.18;
+              const dx = gCx - dw / 2;
+              try {
+                ctx.drawImage(offCanvas, 0, sy, W, sh, dx, dy, dw, dh);
+              } catch { }
+            }
 
             // 3D Spherical Latitude/Longitude Graticule
-            ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.24)";
             ctx.lineWidth = 1;
             for (let latLine = -60; latLine <= 60; latLine += 20) {
               ctx.beginPath();
@@ -1233,7 +1416,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.stroke();
             }
 
-            // 3D Sphere Day/Night Terminator & Specular Highlight
+            // 3D Sphere Specular Sunlight & Atmosphere Rim Shading
             const sphereShade = ctx.createRadialGradient(
               gCx - globeRadius * 0.3,
               gCy - globeRadius * 0.3,
@@ -1242,51 +1425,92 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               gCy,
               globeRadius
             );
-            sphereShade.addColorStop(0, "rgba(255, 255, 255, 0.08)");
-            sphereShade.addColorStop(0.65, "rgba(4, 12, 28, 0.15)");
-            sphereShade.addColorStop(1, "rgba(2, 6, 18, 0.78)");
+            sphereShade.addColorStop(0, "rgba(255, 255, 255, 0.12)");
+            sphereShade.addColorStop(0.68, "rgba(14, 165, 233, 0.08)");
+            sphereShade.addColorStop(1, "rgba(2, 8, 23, 0.72)");
             ctx.fillStyle = sphereShade;
             ctx.fillRect(gCx - globeRadius, gCy - globeRadius, globeRadius * 2, globeRadius * 2);
             ctx.restore();
 
-            ctx.strokeStyle = "rgba(56, 189, 248, 0.65)";
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = "rgba(125, 211, 252, 0.78)";
+            ctx.lineWidth = 2.2;
             ctx.beginPath();
             ctx.arc(gCx, gCy, globeRadius, 0, Math.PI * 2);
             ctx.stroke();
           } else if (is3DPersp) {
-            // ── 3D PERSPECTIVE TILTED TERRAIN VIEW ──
-            const horizonY = Math.round(H * (0.24 * (effPitch / 60)));
-
-            // 1. 3D Atmospheric Sky Horizon Gradient
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY + 80);
-            skyGrad.addColorStop(0, "#020617");
-            skyGrad.addColorStop(0.65, "#082f49");
-            skyGrad.addColorStop(1, "#0ea5e933");
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, W, horizonY + 80);
-
-            // 2. Render Tilted 3D Map Plane using 56 horizontal perspective scanline strips for true 3D trapezoid depth!
-            const strips = 56;
-            const stripSrcH = H / strips;
+            // ── 3D PERSPECTIVE TILTED TERRAIN VIEW WITH FULL REALISTIC SKY BACKDROP ──
             const pitchRad = (effPitch * Math.PI) / 180;
             const cosP = Math.cos(pitchRad);
             const sinP = Math.sin(pitchRad);
+            const horizonY = Math.max(85, Math.round(H * 0.56 - H * 0.52 * cosP));
 
+            // 1. Full-Canvas Realistic Atmospheric Sky Backdrop (Replaces all black background!)
+            const fullSkyGrad = ctx.createLinearGradient(0, 0, 0, H);
+            fullSkyGrad.addColorStop(0, "#041028");
+            fullSkyGrad.addColorStop(Math.min(0.45, horizonY / H), "#0ea5e9");
+            fullSkyGrad.addColorStop(Math.min(0.58, (horizonY + 48) / H), "#7dd3fc");
+            fullSkyGrad.addColorStop(Math.min(0.75, (horizonY + 140) / H), "#0c4a6e");
+            fullSkyGrad.addColorStop(1, "#082f49");
+            ctx.fillStyle = fullSkyGrad;
+            ctx.fillRect(0, 0, W, H);
+
+            // High-altitude stars in upper stratosphere above the horizon
+            ctx.save();
+            SPACE_STARFIELD.slice(0, 75).forEach((st) => {
+              const sy = st.yPct * (horizonY * 0.85);
+              const alpha = (1 - sy / Math.max(1, horizonY)) * (0.4 + 0.4 * Math.sin(now / 600 + st.phase));
+              if (alpha > 0.05) {
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = "#e0f2fe";
+                ctx.beginPath();
+                ctx.arc(st.xPct * W, sy, st.r * 0.85, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            });
+            ctx.restore();
+
+            // Soft atmospheric cloud wisps near horizon
+            ctx.save();
+            for (let c = 0; c < 6; c++) {
+              const cloudX = ((c * 260 + now * 0.012) % (W + 320)) - 160;
+              const cloudY = horizonY * (0.42 + (c % 3) * 0.16);
+              const cGrad = ctx.createRadialGradient(cloudX, cloudY, 10, cloudX, cloudY, 150);
+              cGrad.addColorStop(0, "rgba(224, 242, 254, 0.18)");
+              cGrad.addColorStop(1, "rgba(224, 242, 254, 0)");
+              ctx.fillStyle = cGrad;
+              ctx.beginPath();
+              ctx.ellipse(cloudX, cloudY, 150, 26, 0, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+
+            // 2. Rotate offscreen map plane by yawDeg before perspective slicing
+            rotCtx.save();
+            rotCtx.fillStyle = localStyle === "political" ? "#cbd5e1" : "#072138";
+            rotCtx.fillRect(0, 0, W, H);
+            rotCtx.translate(W / 2, H * 0.56);
+            rotCtx.rotate((effYaw * Math.PI) / 180);
+            rotCtx.scale(1.22, 1.22);
+            rotCtx.translate(-W / 2, -H * 0.56);
+            rotCtx.drawImage(offCanvas, 0, 0);
+            rotCtx.restore();
+
+            // 3. Render Tilted 3D Map Plane with wide perspective overscan so NO black triangles appear on left/right!
+            const strips = 56;
+            const stripSrcH = H / strips;
             ctx.save();
             for (let s = 0; s < strips; s++) {
               const sy = s * stripSrcH;
-              const normY = (sy + stripSrcH / 2 - H * 0.54) / H; // -0.5 to +0.5
-              // Near bottom of screen -> wider (closer to camera); near top -> narrower (further toward horizon)
-              const depthScale = Math.max(0.58, 1 + normY * sinP * 0.72);
-              const destY = H * 0.54 + (sy - H * 0.54) * cosP;
-              const nextDestY = H * 0.54 + (sy + stripSrcH - H * 0.54) * cosP;
-              const destH = Math.max(1.5, nextDestY - destY + 1.2);
+              const normY = (sy + stripSrcH / 2 - H * 0.56) / H; // -0.56 to +0.44
+              const depthScale = Math.max(0.96, 1.16 + normY * sinP * 0.78);
+              const destY = H * 0.56 + (sy - H * 0.56) * cosP;
+              const nextDestY = H * 0.56 + (sy + stripSrcH - H * 0.56) * cosP;
+              const destH = Math.max(2, nextDestY - destY + 1.6);
               const destW = W * depthScale;
-              const destX = (W - destW) / 2 - (effYaw / 90) * normY * 140;
+              const destX = (W - destW) / 2;
 
               ctx.drawImage(
-                offCanvas,
+                rotCanvas,
                 0,
                 sy,
                 W,
@@ -1297,50 +1521,40 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 destH
               );
             }
-
-            // 3D Terrain Plane Rim (extruded military tabletop depth)
-            const lastNormY = (H - stripSrcH / 2 - H * 0.54) / H;
-            const lastDepthScale = Math.max(0.58, 1 + lastNormY * sinP * 0.72);
-            const lastDestY = H * 0.54 + (H - stripSrcH - H * 0.54) * cosP;
-            const lastDestW = W * lastDepthScale;
-            const lastDestX = (W - lastDestW) / 2 - (effYaw / 90) * lastNormY * 140;
-            ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.moveTo(lastDestX, lastDestY + 2);
-            ctx.lineTo(lastDestX + lastDestW, lastDestY + 2);
-            ctx.stroke();
             ctx.restore();
 
-            // 3. Horizon Glow Line & Compass Ticks
-            const hGlow = ctx.createLinearGradient(0, horizonY - 12, 0, horizonY + 28);
-            hGlow.addColorStop(0, "rgba(14, 165, 233, 0)");
-            hGlow.addColorStop(0.5, "rgba(56, 189, 248, 0.45)");
-            hGlow.addColorStop(1, "rgba(4, 10, 20, 0)");
+            // 4. Atmospheric Horizon Mist Blend where tilted map meets the sky
+            const topEdgeY = H * 0.56 - H * 0.56 * cosP;
+            const hGlow = ctx.createLinearGradient(0, topEdgeY - 28, 0, topEdgeY + 42);
+            hGlow.addColorStop(0, "rgba(56, 189, 248, 0)");
+            hGlow.addColorStop(0.45, "rgba(125, 211, 252, 0.68)");
+            hGlow.addColorStop(1, "rgba(14, 165, 233, 0)");
             ctx.fillStyle = hGlow;
-            ctx.fillRect(0, Math.max(0, horizonY - 12), W, 40);
+            ctx.fillRect(0, Math.max(0, topEdgeY - 28), W, 70);
           } else {
             // ── 2D FLAT MAP VIEW ──
             ctx.drawImage(offCanvas, 0, 0);
           }
 
           // ─────────────────────────────────────────────────────────────────
-          // STEP 3: ROTATING TACTICAL RADAR SWEEP (3D Projected)
+          // STEP 3: ROTATING TACTICAL RADAR SWEEP (Controlled by Radar ON/OFF)
           // ─────────────────────────────────────────────────────────────────
-          if (config.showRadarSweep) {
+          if (showRadarSweep) {
             ctx.save();
             const sweepAngle = (now / 1600) % (Math.PI * 2);
             const rCx = W / 2;
-            const rCy = is3DPersp ? H * 0.56 : H / 2;
-            const rRadiusX = Math.min(W, H) * 0.42;
+            const rCy = is3DPersp ? H * 0.56 : is3DGlobe ? H * 0.52 : H / 2;
+            const rRadiusX = is3DGlobe
+              ? Math.min(W, H) * 0.42 * globeScale
+              : Math.min(W, H) * 0.42;
             const rRadiusY = is3DPersp
               ? rRadiusX * Math.max(0.45, Math.cos((effPitch * Math.PI) / 180))
               : rRadiusX;
 
             ctx.translate(rCx, rCy);
             ctx.scale(1, rRadiusY / rRadiusX);
-            ctx.strokeStyle = "rgba(16, 185, 129, 0.24)";
-            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = "rgba(16, 185, 129, 0.28)";
+            ctx.lineWidth = 1.6;
             ctx.beginPath();
             ctx.arc(0, 0, rRadiusX, 0, Math.PI * 2);
             ctx.stroke();
@@ -1349,7 +1563,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.stroke();
 
             const coneGrad = ctx.createRadialGradient(0, 0, 10, 0, 0, rRadiusX);
-            coneGrad.addColorStop(0, "rgba(16, 185, 129, 0.2)");
+            coneGrad.addColorStop(0, "rgba(16, 185, 129, 0.24)");
             coneGrad.addColorStop(1, "rgba(16, 185, 129, 0.0)");
             ctx.fillStyle = coneGrad;
             ctx.beginPath();
@@ -1391,11 +1605,19 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               .map((sr) => ({ route: sr, rawP: sr.simProgress })),
           ];
 
-          // Helper to project any (lat, lon, altitudePx) to current 2D / 3D / Globe screen coordinates
           const projectGeoPoint = (lat: number, lon: number, altitudePx: number = 0) => {
             if (is3DGlobe) {
-              const globeRadius = Math.min(W, H) * 0.42;
-              const gp = latLonToGlobe3D(lat, lon, centerLat, centerLon, globeRadius, W / 2, H * 0.53, altitudePx * 0.55);
+              const globeRadius = Math.min(W, H) * 0.42 * globeScale;
+              const gp = latLonToGlobe3D(
+                lat,
+                lon,
+                centerLat,
+                centerLon,
+                globeRadius,
+                W / 2,
+                H * 0.52,
+                altitudePx * 0.55
+              );
               return { x: gp.x, y: gp.y, scale: 1 };
             }
             const raw2D = latLonToCanvasXY(lat, lon, centerLat, centerLon, zInt, W, H);
@@ -1412,10 +1634,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               (route.assetType === "airliner"
                 ? "landing"
                 : route.assetType === "warship" || route.assetType === "cargo-ship"
-                ? "naval-cruise"
-                : route.showImpactShockwave === false
-                ? "none"
-                : "explosion");
+                  ? "naval-cruise"
+                  : route.showImpactShockwave === false
+                    ? "none"
+                    : "explosion");
 
             const isSeaRoute =
               effect === "naval-cruise" ||
@@ -1433,25 +1655,36 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             const rawArc =
               curveDir === "straight" ? 0 : route.arcHeight ?? (isSeaRoute ? 0 : 0.34);
 
-            // Compute 3D Point along trajectory at parameter t (0..1)
-            const getRoutePoint3D = (t: number, customStart?: TacticalMapPoint, customEnd?: TacticalMapPoint, customArc?: number) => {
+            const getRoutePoint3D = (
+              t: number,
+              customStart?: TacticalMapPoint,
+              customEnd?: TacticalMapPoint,
+              customArc?: number
+            ) => {
               const sPt = customStart || route.from;
               const ePt = customEnd || route.to;
               const lat = sPt.lat + (ePt.lat - sPt.lat) * t;
               const lon = sPt.lon + (ePt.lon - sPt.lon) * t;
               const arcVal = customArc !== undefined ? customArc : rawArc;
 
-              // Parabolic ballistic/flight altitude in pixels: peaks at t = 0.5
-              const maxAltPx = isSeaRoute ? 0 : Math.min(260, Math.max(45, rawDistPx * arcVal * altScale));
+              const maxAltPx = isSeaRoute
+                ? 0
+                : Math.min(260, Math.max(45, rawDistPx * arcVal * altScale));
               const altPx = Math.sin(t * Math.PI) * maxAltPx;
 
               const groundPt = projectGeoPoint(lat, lon, 0);
               if (is3DPersp || is3DGlobe) {
                 const airPt = projectGeoPoint(lat, lon, altPx);
-                return { x: airPt.x, y: airPt.y, groundX: groundPt.x, groundY: groundPt.y, altPx };
+                return {
+                  x: airPt.x,
+                  y: airPt.y,
+                  groundX: groundPt.x,
+                  groundY: groundPt.y,
+                  altPx,
+                };
               } else {
-                // In 2D mode, apply classic 2D curve offset
-                const signedArc = rawDistPx * arcVal * (curveDir === "down" ? 1 : -1) * Math.sin(t * Math.PI);
+                const signedArc =
+                  rawDistPx * arcVal * (curveDir === "down" ? 1 : -1) * Math.sin(t * Math.PI);
                 return {
                   x: groundPt.x,
                   y: groundPt.y + signedArc,
@@ -1462,7 +1695,12 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               }
             };
 
-            const getRouteAngle3D = (t: number, customStart?: TacticalMapPoint, customEnd?: TacticalMapPoint, customArc?: number) => {
+            const getRouteAngle3D = (
+              t: number,
+              customStart?: TacticalMapPoint,
+              customEnd?: TacticalMapPoint,
+              customArc?: number
+            ) => {
               const dtStep = 0.02;
               const tA = Math.max(0, t - dtStep);
               const tB = Math.min(1, t + dtStep);
@@ -1471,7 +1709,6 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               return Math.atan2(ptB.y - ptA.y, ptB.x - ptA.x);
             };
 
-            // 5A. Draw Ground Shadow Path (in 3D Perspective Mode) & Dashed Forecast Arc
             if ((is3DPersp || is3DGlobe) && !isSeaRoute) {
               ctx.save();
               ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
@@ -1487,7 +1724,6 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.restore();
             }
 
-            // Dashed 3D Forecast Trajectory Arc
             ctx.save();
             ctx.strokeStyle = `${route.color || "#ef4444"}55`;
             ctx.lineWidth = 2.2;
@@ -1502,13 +1738,11 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.stroke();
             ctx.restore();
 
-            // 5B. Static Destination Object at Point B
             const effectiveTargetMarker: TacticalTargetMarkerType =
               route.targetMarkerType ||
               (effect === "ship-launch-missile" ? "warship" : "default");
             drawDestinationTargetObject(ctx, effectiveTargetMarker, p2Ground.x, p2Ground.y, now);
 
-            // 5C. Origin & Target Markers + City/Port Labels
             [
               { pt: p1Ground, info: route.from, isTarget: false },
               { pt: p2Ground, info: route.to, isTarget: true },
@@ -1523,8 +1757,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               const markerColor = !isTarget
                 ? "#38bdf8"
                 : isPeacefulTarget
-                ? "#10b981"
-                : "#ef4444";
+                  ? "#10b981"
+                  : "#ef4444";
 
               ctx.save();
               const pulseR = 10 + ((now / 45) % 18);
@@ -1564,13 +1798,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.restore();
             });
 
-            // 5D. Distance & Live 3D Altitude Telemetry Badge at Apex
             if (route.showDistanceKm !== false) {
               const apexPt = getRoutePoint3D(0.5);
               const coveredKm = Math.round(totalKm * flightT);
               const currentAltKm = isSeaRoute
                 ? 0
-                : Math.round(Math.sin(flightT * Math.PI) * Math.min(480, Math.max(12, totalKm * 0.14)));
+                : Math.round(
+                  Math.sin(flightT * Math.PI) * Math.min(480, Math.max(12, totalKm * 0.14))
+                );
               const distLabel =
                 currentAltKm > 0 && (is3DPersp || is3DGlobe)
                   ? `${coveredKm}/${totalKm} KM • ALT ${currentAltKm} KM`
@@ -1593,17 +1828,17 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.restore();
             }
 
-            // Helper to draw 3D Vertical Altitude Drop-Line + Ground Shadow under airborne asset
-            const draw3DAltitudeDropLine = (pt: { x: number; y: number; groundX: number; groundY: number; altPx: number }, color: string) => {
+            const draw3DAltitudeDropLine = (
+              pt: { x: number; y: number; groundX: number; groundY: number; altPx: number },
+              color: string
+            ) => {
               if ((!is3DPersp && !is3DGlobe) || pt.altPx < 6) return;
               ctx.save();
-              // Ground shadow ellipse
               ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
               ctx.beginPath();
               ctx.ellipse(pt.groundX, pt.groundY, 10, 4.5, 0, 0, Math.PI * 2);
               ctx.fill();
 
-              // Glowing vertical drop-pillar from 3D vehicle down to surface
               ctx.strokeStyle = `${color}88`;
               ctx.lineWidth = 1.5;
               ctx.setLineDash([3, 3]);
@@ -1614,7 +1849,6 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               ctx.restore();
             };
 
-            // 5E. Scenario-Specific Animation
             if (effect === "ship-launch-missile" || effect === "jet-airstrike") {
               const launchSplitP = 0.4;
               const carrierStopT = 0.36;
@@ -1644,8 +1878,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                     ? "cargo-ship"
                     : "warship"
                   : route.assetType === "helicopter"
-                  ? "helicopter"
-                  : "fighter-jet";
+                    ? "helicopter"
+                    : "fighter-jet";
 
               drawTacticalAssetIcon(
                 ctx,
@@ -1738,7 +1972,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 const defT = Math.min(1, (flightT - 0.15) / (interceptT - 0.15));
                 const defX = p2Ground.x + (interceptPoint.x - p2Ground.x) * defT;
                 const defY = p2Ground.y + (interceptPoint.y - p2Ground.y) * defT;
-                const defAng = Math.atan2(interceptPoint.y - p2Ground.y, interceptPoint.x - p2Ground.x);
+                const defAng = Math.atan2(
+                  interceptPoint.y - p2Ground.y,
+                  interceptPoint.x - p2Ground.x
+                );
 
                 ctx.save();
                 ctx.strokeStyle = "#38bdf8";
@@ -1753,7 +1990,17 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.restore();
 
                 if (flightT < interceptT) {
-                  drawTacticalAssetIcon(ctx, "missile", defX, defY, defAng, "#38bdf8", now, undefined, 0.85);
+                  drawTacticalAssetIcon(
+                    ctx,
+                    "missile",
+                    defX,
+                    defY,
+                    defAng,
+                    "#38bdf8",
+                    now,
+                    undefined,
+                    0.85
+                  );
                 }
               }
 
@@ -1761,7 +2008,16 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 const tPos = getRoutePoint3D(threatT);
                 const tAng = getRouteAngle3D(threatT);
                 draw3DAltitudeDropLine(tPos, "#ef4444");
-                drawTacticalAssetIcon(ctx, route.assetType, tPos.x, tPos.y, tAng, "#ef4444", now, route.customIconUrl);
+                drawTacticalAssetIcon(
+                  ctx,
+                  route.assetType,
+                  tPos.x,
+                  tPos.y,
+                  tAng,
+                  "#ef4444",
+                  now,
+                  route.customIconUrl
+                );
               } else {
                 const blastP = Math.min(1, (rawP - interceptT) / 0.45);
                 drawExplosionShockwave(ctx, interceptPoint.x, interceptPoint.y, blastP, true);
@@ -1823,7 +2079,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 const orbitAngle = ((rawP - 0.85) * 9) % (Math.PI * 2);
                 const orbitRadius = 28;
                 const ox = p2Ground.x + Math.cos(orbitAngle) * orbitRadius;
-                const oy = p2Ground.y - (is3DPersp ? 28 : 0) + Math.sin(orbitAngle) * orbitRadius * 0.7;
+                const oy =
+                  p2Ground.y - (is3DPersp ? 28 : 0) + Math.sin(orbitAngle) * orbitRadius * 0.7;
                 const tangentAngle = orbitAngle + Math.PI / 2;
 
                 ctx.save();
@@ -1831,7 +2088,15 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                 ctx.setLineDash([4, 4]);
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.ellipse(p2Ground.x, p2Ground.y - (is3DPersp ? 28 : 0), orbitRadius, orbitRadius * 0.7, 0, 0, Math.PI * 2);
+                ctx.ellipse(
+                  p2Ground.x,
+                  p2Ground.y - (is3DPersp ? 28 : 0),
+                  orbitRadius,
+                  orbitRadius * 0.7,
+                  0,
+                  0,
+                  Math.PI * 2
+                );
                 ctx.stroke();
                 ctx.restore();
 
@@ -1845,7 +2110,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   now,
                   route.customIconUrl
                 );
-                drawStatusPill(ctx, p2Ground.x, p2Ground.y - 46, "🔄 ON PATROL / LOITERING", "#10b981", "#a7f3d0");
+                drawStatusPill(
+                  ctx,
+                  p2Ground.x,
+                  p2Ground.y - 46,
+                  "🔄 ON PATROL / LOITERING",
+                  "#10b981",
+                  "#a7f3d0"
+                );
               } else if (flightT < 1 || effect === "landing" || effect === "naval-cruise") {
                 const curPos = getRoutePoint3D(effectiveT);
                 const curAngle = getRouteAngle3D(Math.min(0.99, effectiveT));
@@ -1879,7 +2151,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   ctx.arc(p2Ground.x, p2Ground.y, 14 + phase * 28, 0, Math.PI * 2);
                   ctx.stroke();
                   ctx.restore();
-                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 42, "🛬 SAFE LANDING • ARRIVED", "#10b981", "#a7f3d0");
+                  drawStatusPill(
+                    ctx,
+                    p2Ground.x,
+                    p2Ground.y - 42,
+                    "🛬 SAFE LANDING • ARRIVED",
+                    "#10b981",
+                    "#a7f3d0"
+                  );
                 } else if (effect === "naval-cruise") {
                   ctx.save();
                   ctx.strokeStyle = `rgba(6, 182, 212, ${1 - phase * 0.5})`;
@@ -1888,7 +2167,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   ctx.arc(p2Ground.x, p2Ground.y, 16 + phase * 32, 0, Math.PI * 2);
                   ctx.stroke();
                   ctx.restore();
-                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 42, "⚓ NAVAL PATROL / DOCKED", "#06b6d4", "#a5f3fc");
+                  drawStatusPill(
+                    ctx,
+                    p2Ground.x,
+                    p2Ground.y - 42,
+                    "⚓ NAVAL PATROL / DOCKED",
+                    "#06b6d4",
+                    "#a5f3fc"
+                  );
                 } else if (effect === "airdrop") {
                   [-18, 0, 18].forEach((offsetX, pIdx) => {
                     const dropY = p2Ground.y - 38 + phase * 36 + pIdx * 4;
@@ -1910,7 +2196,14 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                     ctx.fillRect(dropX - 3.5, dropY + 10, 7, 6);
                     ctx.restore();
                   });
-                  drawStatusPill(ctx, p2Ground.x, p2Ground.y - 54, "🪂 AIRDROP DELIVERED", "#38bdf8", "#bae6fd");
+                  drawStatusPill(
+                    ctx,
+                    p2Ground.x,
+                    p2Ground.y - 54,
+                    "🪂 AIRDROP DELIVERED",
+                    "#38bdf8",
+                    "#bae6fd"
+                  );
                 }
               }
             }
@@ -1955,10 +2248,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.restore();
           }
 
-          // Top-Right Live 3D & Simulator Telemetry HUD (Visible to Viewers on Stream!)
           if (config.showTelemetryHud !== false) {
             ctx.save();
-            const hudW = 248;
+            const hudW = 258;
             const hudH = simulatorActive ? 88 : 68;
             const hudX = W - hudW - 22;
             const hudY = 20;
@@ -1966,7 +2258,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.beginPath();
             ctx.roundRect(hudX, hudY, hudW, hudH, 10);
             ctx.fill();
-            ctx.strokeStyle = simulatorActive ? "rgba(16, 185, 129, 0.65)" : "rgba(56, 189, 248, 0.45)";
+            ctx.strokeStyle = simulatorActive
+              ? "rgba(16, 185, 129, 0.65)"
+              : "rgba(56, 189, 248, 0.45)";
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
@@ -1976,7 +2270,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ctx.fillText(
               simulatorActive
                 ? `🎮 LIVE SIMULATOR • ${allRoutesToRender.length} TRACKS`
-                : `🛰️ ${viewMode.toUpperCase()} • PITCH ${effPitch}°`,
+                : `🛰️ ${viewMode.toUpperCase()} • PITCH ${effPitch}° • RADAR ${showRadarSweep ? "ON" : "OFF"}`,
               hudX + 12,
               hudY + 20
             );
@@ -1990,7 +2284,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             );
             ctx.fillStyle = "#facc15";
             ctx.fillText(
-              `SPEED: ${(speedMultiplier * 3.2).toFixed(1)} MACH • YAW: ${effYaw}°`,
+              `SPEED: ${(speedMultiplier * 3.2).toFixed(1)} MACH • YAW: ${Math.round(effYaw)}°`,
               hudX + 12,
               hudY + 58
             );
@@ -2004,59 +2298,6 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             }
             ctx.restore();
           }
-
-          // Top-Right 3D Rotating Compass Rose Gizmo
-          ctx.save();
-          const compassR = 24;
-          const compassX = W - compassR - 22;
-          const compassY = (config.showTelemetryHud !== false ? (simulatorActive ? 122 : 102) : 22) + compassR;
-
-          // Outer dial plate
-          ctx.fillStyle = "rgba(6, 10, 22, 0.9)";
-          ctx.beginPath();
-          ctx.arc(compassX, compassY, compassR, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "rgba(56, 189, 248, 0.55)";
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-
-          // Rotating needle
-          ctx.save();
-          ctx.translate(compassX, compassY);
-          ctx.rotate((effYaw * Math.PI) / 180);
-
-          // North Pointer (Red)
-          ctx.fillStyle = "#ef4444";
-          ctx.beginPath();
-          ctx.moveTo(0, -compassR + 5);
-          ctx.lineTo(4.5, -2);
-          ctx.lineTo(-4.5, -2);
-          ctx.closePath();
-          ctx.fill();
-
-          // South Pointer (Slate)
-          ctx.fillStyle = "#94a3b8";
-          ctx.beginPath();
-          ctx.moveTo(0, compassR - 5);
-          ctx.lineTo(4.5, 2);
-          ctx.lineTo(-4.5, 2);
-          ctx.closePath();
-          ctx.fill();
-
-          // Center Pin
-          ctx.fillStyle = "#38bdf8";
-          ctx.beginPath();
-          ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-
-          // Cardinal N label
-          ctx.font = "bold 9px monospace";
-          ctx.fillStyle = "#ef4444";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("N", compassX, compassY - compassR + 7);
-          ctx.restore();
         }
       }
 
@@ -2076,9 +2317,12 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
     centerLat,
     centerLon,
     zoom,
+    globeScale,
+    showRadarSweep,
+    autoOrbit3D,
+    isDraggingMap,
     simulatorActive,
     simTool,
-    isAutoOrbiting,
   ]);
 
   return (
@@ -2102,8 +2346,8 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           simulatorActive
             ? "cursor-crosshair"
             : isDraggingMap
-            ? "cursor-grabbing"
-            : "cursor-grab"
+              ? "cursor-grabbing"
+              : "cursor-grab"
         )}
       />
 
@@ -2112,7 +2356,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
         <div
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
-          className="absolute top-14 left-1/2 -translate-x-1/2 z-30 bg-[#070b18]/95 backdrop-blur-md border border-emerald-500/60 rounded-xl px-3 py-1.5 flex flex-wrap items-center gap-1.5 shadow-2xl pointer-events-auto"
+          className="absolute top-14 left-1/2 -translate-x-1/2 z-30 bg-[#070b18]/95 backdrop-blur-md border border-emerald-500/60 rounded-xl px-3 py-1.5 flex flex-wrap items-center gap-1.5 shadow-2xl pointer-events-auto max-w-[95%]"
         >
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 flex items-center gap-1 pr-1 border-r border-white/15">
             <Gamepad2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -2129,9 +2373,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             <button
               key={tool.id}
               type="button"
-              onClick={() => setSimTool(tool.id as SimulatorCommandTool)}
+              onClick={() => updateSimTool(tool.id as SimulatorCommandTool)}
               className={cn(
-                "px-2 py-1 rounded-lg text-[10.5px] font-bold border transition-all",
+                "px-2 py-1 rounded-lg text-[10.5px] font-bold border transition-all cursor-pointer",
                 simTool === tool.id
                   ? "bg-emerald-600 text-white border-emerald-300 shadow"
                   : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
@@ -2144,7 +2388,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           <button
             type="button"
             onClick={handleTriggerSalvoBarrage}
-            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-extrabold flex items-center gap-1 shadow-lg animate-pulse"
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-extrabold flex items-center gap-1 shadow-lg animate-pulse cursor-pointer"
             title="Launch 5x Simultaneous Multi-Target Missile Barrage!"
           >
             <Flame className="w-3.5 h-3.5" />
@@ -2157,8 +2401,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               onClick={() => {
                 simRoutesRef.current = [];
                 setSimRoutes([]);
+                syncCameraToParent({ simRoutes: [] });
               }}
-              className="px-2 py-1 rounded-lg bg-white/10 hover:bg-rose-500/30 text-slate-200 hover:text-rose-200 text-[10px] font-semibold"
+              className="px-2 py-1 rounded-lg bg-white/10 hover:bg-rose-500/30 text-slate-200 hover:text-rose-200 text-[10px] font-semibold cursor-pointer"
               title="Clear Simulator Units"
             >
               Clear ({simRoutes.length})
@@ -2167,20 +2412,24 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
         </div>
       )}
 
-      {/* On-Stage Broadcast 3D / 2D / Simulator Control Dock (Bottom) */}
+      {/* On-Stage Broadcast 3D / 2D / Globe / Radar / Simulator Control Dock (Bottom) */}
       {isInteractive && (
         <div
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
-          className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-30 bg-[#080a16]/95 backdrop-blur-md border border-cyan-500/45 rounded-xl px-3 py-1.5 flex flex-wrap items-center gap-2 shadow-2xl opacity-95 group-hover/map:opacity-100 transition-opacity pointer-events-auto max-w-[96%]"
+          className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-30 bg-[#080a16]/95 backdrop-blur-md border border-cyan-500/45 rounded-xl px-3 py-1.5 flex flex-wrap items-center justify-center gap-1.5 shadow-2xl opacity-95 group-hover/map:opacity-100 transition-opacity pointer-events-auto max-w-[98%]"
         >
           {/* Play / Pause */}
           <button
             type="button"
             onClick={() => setIsPlaying(!isPlaying)}
-            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold flex items-center gap-1 shadow"
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-bold flex items-center gap-1 shadow cursor-pointer"
           >
-            {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+            {isPlaying ? (
+              <Pause className="w-3 h-3 fill-current" />
+            ) : (
+              <Play className="w-3 h-3 fill-current" />
+            )}
             <span>{isPlaying ? "Pause" : "Animate"}</span>
           </button>
 
@@ -2188,10 +2437,10 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           <button
             type="button"
             onClick={handleReplay}
-            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1 shadow"
+            className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10.5px] font-bold flex items-center gap-1 shadow cursor-pointer"
             title="Restart Animation from Origin"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <RotateCcw className="w-3 h-3" />
             <span>Replay</span>
           </button>
 
@@ -2217,7 +2466,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   }
                 }}
                 className={cn(
-                  "px-2 py-0.5 rounded-md text-[10.5px] font-bold transition-all",
+                  "px-2 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer",
                   viewMode === m.id
                     ? "bg-cyan-600 text-white shadow"
                     : "text-slate-300 hover:text-white"
@@ -2228,55 +2477,51 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             ))}
           </div>
 
-          {/* Mouse Mode: 🔄 3D Rotate & Tilt vs ✋ Pan Map */}
-          <button
-            type="button"
-            onClick={() => setMouseDragMode(mouseDragMode === "rotate-tilt" ? "pan" : "rotate-tilt")}
-            className={cn(
-              "px-2 py-0.5 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
-              mouseDragMode === "rotate-tilt"
-                ? "bg-amber-500/25 text-amber-300 border-amber-500/60 shadow"
-                : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
-            )}
-            title="Toggle Left-Click Drag: 🔄 3D Rotate & Tilt vs ✋ Pan Map"
-          >
-            {mouseDragMode === "rotate-tilt" ? (
-              <>
-                <RotateCw className="w-3.5 h-3.5" />
-                <span>🔄 3D Rotate & Tilt</span>
-              </>
-            ) : (
-              <>
-                <Move className="w-3.5 h-3.5" />
-                <span>✋ Pan Map</span>
-              </>
-            )}
-          </button>
+          {/* 3D Rotate & Tilt vs Pan Mode + Auto-Orbit Toggle */}
+          {viewMode !== "2d" && (
+            <>
+              {viewMode === "3d-perspective" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMouseControlMode((m) => (m === "orbit" ? "pan" : "orbit"))
+                  }
+                  className={cn(
+                    "px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer",
+                    mouseControlMode === "orbit"
+                      ? "bg-amber-500/25 text-amber-200 border-amber-400/50"
+                      : "bg-white/5 text-slate-300 border-white/15 hover:text-white"
+                  )}
+                  title="Switch Left-Click Drag between 3D Rotate/Tilt and 2D Map Pan"
+                >
+                  {mouseControlMode === "orbit" ? "🔄 3D Rotate & Tilt" : "✋ Pan Map"}
+                </button>
+              )}
 
-          {/* 🔄 Auto-Orbit 3D Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsAutoOrbiting(!isAutoOrbiting)}
-            className={cn(
-              "px-2 py-0.5 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
-              isAutoOrbiting
-                ? "bg-cyan-500/30 text-cyan-300 border-cyan-400 shadow-lg shadow-cyan-500/20 animate-pulse"
-                : "bg-white/5 text-slate-300 border-white/10 hover:text-white"
-            )}
-            title="Auto-rotate 3D camera 360° continuously"
-          >
-            <RotateCw className={cn("w-3.5 h-3.5", isAutoOrbiting && "animate-spin")} />
-            <span>Auto-Orbit {isAutoOrbiting ? "ON" : "OFF"}</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => setAutoOrbit3D((v) => !v)}
+                className={cn(
+                  "px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer",
+                  autoOrbit3D
+                    ? "bg-cyan-500/30 text-cyan-200 border-cyan-400"
+                    : "bg-white/5 text-slate-300 border-white/15 hover:text-white"
+                )}
+                title="Automatically orbit the 3D camera or spin the 3D Globe live"
+              >
+                🔄 Auto-Orbit {autoOrbit3D ? "ON" : "OFF"}
+              </button>
+            </>
+          )}
 
           {/* 3D Pitch Slider (Visible when in 3D Tilt mode) */}
           {viewMode === "3d-perspective" && (
-            <div className="flex items-center gap-1.5 bg-white/5 px-2 py-0.5 rounded-lg border border-white/10">
-              <span className="text-[10px] text-cyan-300 font-semibold">3D Tilt:</span>
+            <div className="flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded-lg border border-white/10">
+              <span className="text-[9.5px] text-cyan-300 font-semibold">3D Tilt:</span>
               <input
                 type="range"
                 min={0}
-                max={60}
+                max={62}
                 step={2}
                 value={pitchDeg}
                 onChange={(e) => {
@@ -2284,24 +2529,87 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
                   setPitchDeg(val);
                   syncCameraToParent({ pitchDeg: val });
                 }}
-                className="w-16 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
-                title="Adjust 3D Camera Tilt Angle (or Right-Click + Drag on Map)"
+                className="w-14 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                title="Adjust 3D Camera Tilt Angle"
               />
-              <span className="text-[10px] font-mono text-white min-w-[26px]">{pitchDeg}°</span>
+              <span className="text-[9.5px] font-mono text-white min-w-[24px]">{pitchDeg}°</span>
             </div>
           )}
+
+          {/* 3D Globe Size & Fullscreen Control (Visible when in 3D Globe mode) */}
+          {viewMode === "3d-globe" && (
+            <div className="flex items-center gap-1.5 bg-indigo-950/60 px-2 py-0.5 rounded-lg border border-indigo-400/40">
+              <span className="text-[9.5px] text-indigo-200 font-bold">Globe Size:</span>
+              <input
+                type="range"
+                min={70}
+                max={185}
+                step={5}
+                value={Math.round(globeScale * 100)}
+                onChange={(e) => {
+                  const nextS = Number((Number(e.target.value) / 100).toFixed(2));
+                  setGlobeScale(nextS);
+                  syncCameraToParent({ globeScale: nextS });
+                }}
+                className="w-16 h-1.5 accent-indigo-400 bg-white/20 rounded cursor-pointer"
+                title="Resize 3D Globe from Compact (70%) up to Fullscreen (185%)"
+              />
+              <span className="text-[9.5px] font-mono text-indigo-200 min-w-[32px]">
+                {Math.round(globeScale * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextS = globeScale >= 1.55 ? 1.15 : 1.72;
+                  setGlobeScale(nextS);
+                  syncCameraToParent({ globeScale: nextS });
+                }}
+                className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-bold flex items-center gap-0.5 cursor-pointer"
+                title="Toggle Fullscreen 3D Globe"
+              >
+                <Maximize2 className="w-2.5 h-2.5" />
+                <span>{globeScale >= 1.55 ? "Fit" : "Full"}</span>
+              </button>
+            </div>
+          )}
+
+          {/* Explicit RADAR ON / OFF Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const nextR = !showRadarSweep;
+              setShowRadarSweep(nextR);
+              syncCameraToParent({ showRadarSweep: nextR });
+            }}
+            className={cn(
+              "px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
+              showRadarSweep
+                ? "bg-emerald-500/25 text-emerald-200 border-emerald-400/60 shadow-sm"
+                : "bg-white/5 text-slate-400 border-white/15 hover:text-white"
+            )}
+            title="Toggle Tactical Radar Sweep Circle ON or OFF"
+          >
+            <Radio className="w-3 h-3 text-emerald-400" />
+            <span>Radar {showRadarSweep ? "ON" : "OFF"}</span>
+          </button>
 
           {/* Zoom In / Out Buttons */}
           <div className="flex items-center gap-1 bg-white/5 px-1.5 py-0.5 rounded-lg border border-white/10">
             <button
               type="button"
               onClick={() => {
-                const nz = Math.max(2, zoom - 1);
-                setZoom(nz);
-                syncCameraToParent({ zoom: nz });
+                if (viewMode === "3d-globe") {
+                  const nextS = Number(Math.max(0.7, globeScale - 0.15).toFixed(2));
+                  setGlobeScale(nextS);
+                  syncCameraToParent({ globeScale: nextS });
+                } else {
+                  const nz = Math.max(2, zoom - 1);
+                  setZoom(nz);
+                  syncCameraToParent({ zoom: nz });
+                }
               }}
-              className="p-0.5 text-slate-300 hover:text-white"
-              title="Zoom Out Map"
+              className="p-0.5 text-slate-300 hover:text-white cursor-pointer"
+              title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
@@ -2309,12 +2617,18 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             <button
               type="button"
               onClick={() => {
-                const nz = Math.min(10, zoom + 1);
-                setZoom(nz);
-                syncCameraToParent({ zoom: nz });
+                if (viewMode === "3d-globe") {
+                  const nextS = Number(Math.min(1.85, globeScale + 0.15).toFixed(2));
+                  setGlobeScale(nextS);
+                  syncCameraToParent({ globeScale: nextS });
+                } else {
+                  const nz = Math.min(10, zoom + 1);
+                  setZoom(nz);
+                  syncCameraToParent({ zoom: nz });
+                }
               }}
-              className="p-0.5 text-slate-300 hover:text-white"
-              title="Zoom In Map"
+              className="p-0.5 text-slate-300 hover:text-white cursor-pointer"
+              title="Zoom In"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
@@ -2329,7 +2643,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               syncCameraToParent({ simulatorEnabled: nextSim });
             }}
             className={cn(
-              "px-2.5 py-1 rounded-lg text-[10.5px] font-bold flex items-center gap-1 border transition-all",
+              "px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 border transition-all cursor-pointer",
               simulatorActive
                 ? "bg-emerald-600 text-white border-emerald-300 shadow-lg shadow-emerald-600/30"
                 : "bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25"
@@ -2344,7 +2658,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
           <select
             value={String(speedMultiplier)}
             onChange={(e) => setSpeedMultiplier(Number(e.target.value))}
-            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10.5px] font-mono text-cyan-300 focus:outline-none"
+            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10px] font-mono text-cyan-300 focus:outline-none"
             title="Animation Speed"
           >
             <option value="0.5">0.5x Slow</option>
@@ -2361,7 +2675,7 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
               setLocalStyle(st);
               syncCameraToParent({ mapStyle: st });
             }}
-            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10.5px] text-slate-200 focus:outline-none"
+            className="bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-[10px] text-slate-200 focus:outline-none"
             title="Switch Broadcast Map Theme (100% Free Esri ArcGIS)"
           >
             <option value="satellite">🛰️ Satellite</option>
@@ -2375,9 +2689,9 @@ export const TacticalMapStageCanvas: React.FC<TacticalMapStageCanvasProps> = ({
             <button
               type="button"
               onClick={onOpenEditorModal}
-              className="px-2.5 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-400/50 text-[10.5px] font-bold flex items-center gap-1"
+              className="px-2 py-1 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-400/50 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
             >
-              <Edit2 className="w-3.5 h-3.5" />
+              <Edit2 className="w-3 h-3" />
               <span>Edit Map</span>
             </button>
           )}
@@ -2427,6 +2741,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     viewMode: "3d-perspective",
     pitchDeg: 45,
     yawDeg: 0,
+    globeScale: 1.18,
     simulatorEnabled: false,
     showTelemetryHud: true,
     altitudeScale: 1.25,
@@ -2436,6 +2751,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     loopAnimation: true,
     showRadarSweep: true,
     showGridLines: true,
+    simRoutes: [],
     routes: [
       {
         id: "route-1",
@@ -2457,7 +2773,10 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
   const [mapConfig, setMapConfig] = useState<TacticalMapConfig>(
     initialItem?.mapConfig || defaultConfig
   );
-  const [activeModalTab, setActiveModalTab] = useState<"builder" | "simulator" | "library">("builder");
+  const [activeModalTab, setActiveModalTab] = useState<"builder" | "simulator" | "library">(
+    "builder"
+  );
+  const [modalSimTool, setModalSimTool] = useState<SimulatorCommandTool>("launch-missile");
   const [activeRouteIdx, setActiveRouteIdx] = useState(0);
   const [clickPlacementMode, setClickPlacementMode] = useState<"from" | "to" | null>(null);
   const [fromSearchQuery, setFromSearchQuery] = useState("");
@@ -2514,14 +2833,18 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
         }));
         const combined = [...localMatches];
         remotePoints.forEach((rp) => {
-          if (!combined.some((c) => Math.abs(c.lat - rp.lat) < 0.1 && Math.abs(c.lon - rp.lon) < 0.1)) {
+          if (
+            !combined.some(
+              (c) => Math.abs(c.lat - rp.lat) < 0.1 && Math.abs(c.lon - rp.lon) < 0.1
+            )
+          ) {
             combined.push(rp);
           }
         });
         if (side === "from") setFromResults(combined.slice(0, 8));
         else setToResults(combined.slice(0, 8));
       }
-    } catch {}
+    } catch { }
   }, []);
 
   if (!isOpen || !isMounted) return null;
@@ -2667,6 +2990,49 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     e.target.value = "";
   };
 
+  // Launch a 1-click Live Simulator Mission Preset directly from the Simulator Command Center
+  const handleLaunchSimulatorPreset = (preset: {
+    title: string;
+    from: TacticalMapPoint;
+    to: TacticalMapPoint;
+    assetType: TacticalRouteAssetType;
+    targetEffect: TacticalTargetEffect;
+    targetMarkerType: TacticalTargetMarkerType;
+    color: string;
+    arcHeight: number;
+  }) => {
+    const newRoute: TacticalMapRoute = {
+      id: `sim-preset-${Date.now()}`,
+      from: preset.from,
+      to: preset.to,
+      assetType: preset.assetType,
+      targetEffect: preset.targetEffect,
+      targetMarkerType: preset.targetMarkerType,
+      curveDirection: preset.arcHeight === 0 ? "straight" : "up",
+      color: preset.color,
+      arcHeight: preset.arcHeight,
+      speed: 1.25,
+      showImpactShockwave: true,
+      showDistanceKm: true,
+    };
+    const midLat = Number(((preset.from.lat + preset.to.lat) / 2).toFixed(4));
+    const midLon = Number(((preset.from.lon + preset.to.lon) / 2).toFixed(4));
+    const distKm = computeGreatCircleDistanceKm(preset.from, preset.to);
+    const autoZoom =
+      distKm > 6000 ? 3 : distKm > 2800 ? 4 : distKm > 1100 ? 5 : distKm > 450 ? 6 : 7;
+
+    setMapConfig((prev) => ({
+      ...prev,
+      title: preset.title,
+      centerLat: midLat,
+      centerLon: midLon,
+      zoom: autoZoom,
+      simulatorEnabled: true,
+      routes: [newRoute, ...prev.routes.slice(1)],
+    }));
+    setActiveRouteIdx(0);
+  };
+
   const handleSaveTacticalMap = (attachAndPresentNow: boolean) => {
     const firstRoute = mapConfig.routes[0];
     const routeSummary = firstRoute
@@ -2675,7 +3041,6 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
     const cleanName = mapConfig.title.trim() || `Map: ${routeSummary}`;
 
-    // Check if an identical map already exists so we update it rather than creating duplicates
     const existingIdToUpdate =
       editingMapId ||
       savedMaps.find(
@@ -2742,8 +3107,8 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     (activeRoute?.assetType === "airliner"
       ? "landing"
       : activeRoute?.assetType === "warship" || activeRoute?.assetType === "cargo-ship"
-      ? "naval-cruise"
-      : "explosion");
+        ? "naval-cruise"
+        : "explosion");
 
   return createPortal(
     <div
@@ -2764,11 +3129,11 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
               <h3 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2.5 flex-wrap">
                 <span>Broadcast News Tactical Map — 3D/2D Air, Land & Naval Simulator</span>
                 <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono">
-                  3D Tilt & Globe • Live Mouse Control • Interactive Simulator
+                  3D Sky Horizon • Fullscreen 3D Globe • Radar ON/OFF • Live Simulator
                 </span>
               </h3>
               <p className="text-xs text-slate-300 mt-0.5">
-                Drag map with mouse to pan, scroll to zoom, right-click drag to tilt 3D angle, or enable Simulator Mode to launch live missiles on stage
+                Drag map with mouse to pan/rotate, scroll to zoom, toggle Radar ON/OFF, or enable Simulator Mode to launch live missiles on stage
               </p>
             </div>
           </div>
@@ -2791,7 +3156,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                     }
                   }}
                   className={cn(
-                    "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all",
+                    "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
                     activeModalTab === tab.id
                       ? "bg-cyan-600 text-white shadow-md"
                       : "text-slate-300 hover:text-white hover:bg-white/5"
@@ -2815,7 +3180,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
         {/* Main Body (12-Column Responsive Split) */}
         <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
-          {/* Left Column (5 Cols): Builder / Simulator / Library Controls */}
+          {/* Left Column (5 Cols): Builder / Simulator Command Center / Library Controls */}
           <div className="lg:col-span-5 p-5 space-y-4 overflow-y-auto custom-scrollbar">
             {activeModalTab === "library" ? (
               <div className="space-y-3">
@@ -2919,14 +3284,271 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                   </div>
                 )}
               </div>
+            ) : activeModalTab === "simulator" ? (
+              /* ─── DEDICATED LIVE WAR & FLIGHT SIMULATOR COMMAND CENTER ─── */
+              <div className="space-y-4">
+                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/45 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                      <Gamepad2 className="w-4 h-4 text-emerald-400" />
+                      <span>Live War & Flight Simulator Command Center</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMapConfig((prev) => ({
+                          ...prev,
+                          simulatorEnabled: !prev.simulatorEnabled,
+                        }))
+                      }
+                      className={cn(
+                        "px-3 py-1 rounded-lg text-xs font-extrabold border transition-all cursor-pointer",
+                        mapConfig.simulatorEnabled
+                          ? "bg-emerald-600 text-white border-emerald-300 shadow"
+                          : "bg-white/10 text-slate-300 border-white/15"
+                      )}
+                    >
+                      {mapConfig.simulatorEnabled ? "🎮 SIMULATOR ACTIVE" : "Enable Simulator"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Select any weapon or aircraft below and <strong>click anywhere on the map on the right</strong> (in 2D, 3D Tilt, or 3D Globe mode) to launch live strikes & flights from your Origin Base!
+                  </p>
+                </div>
+
+                {/* 1. Active Click-to-Spawn Weapon / Aircraft Tool */}
+                <div className="p-3.5 rounded-xl bg-cyan-950/20 border border-cyan-500/35 space-y-2.5">
+                  <span className="text-xs font-bold uppercase text-cyan-300 block">
+                    1. Select Active Click-to-Spawn Weapon / Aircraft:
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {[
+                      {
+                        id: "launch-missile" as const,
+                        title: "🚀 Ballistic Missile",
+                        desc: "High-arc strike + blast",
+                      },
+                      {
+                        id: "air-defense-intercept" as const,
+                        title: "🛡️ Air Defense Intercept",
+                        desc: "Mid-air SAM counter-hit",
+                      },
+                      {
+                        id: "fighter-airstrike" as const,
+                        title: "✈️ Fighter Jet Strike",
+                        desc: "Jet launches standoff missile",
+                      },
+                      {
+                        id: "naval-strike" as const,
+                        title: "🚢 Warship Sea Strike",
+                        desc: "Naval cruiser fires missile",
+                      },
+                      {
+                        id: "airliner-flight" as const,
+                        title: "🛫 Safe Flight / VIP",
+                        desc: "Peaceful flight & landing",
+                      },
+                    ].map((w) => (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => {
+                          setModalSimTool(w.id);
+                          setMapConfig((prev) => ({ ...prev, simulatorEnabled: true }));
+                        }}
+                        className={cn(
+                          "p-2.5 rounded-xl border text-left transition-all cursor-pointer",
+                          modalSimTool === w.id
+                            ? "bg-emerald-600/35 border-emerald-400 text-white shadow-md"
+                            : "bg-black/40 border-white/10 text-slate-300 hover:text-white"
+                        )}
+                      >
+                        <div className="text-xs font-bold">{w.title}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{w.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Quick 1-Click Live Conflict & Flight Theater Presets */}
+                <div className="p-3.5 rounded-xl bg-indigo-950/25 border border-indigo-500/35 space-y-2.5">
+                  <span className="text-xs font-bold uppercase text-indigo-300 block">
+                    2. 1-Click Live Broadcast Theater Scenarios:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      {
+                        title: "BREAKING: TEHRAN ➔ TEL AVIV BALLISTIC SALVO",
+                        label: "🚀 Iran ➔ Israel Ballistic Strike",
+                        from: { name: "Tehran, Iran", lat: 35.6892, lon: 51.389 },
+                        to: { name: "Tel Aviv, Israel", lat: 32.0853, lon: 34.7818 },
+                        assetType: "salvo" as TacticalRouteAssetType,
+                        targetEffect: "explosion" as TacticalTargetEffect,
+                        targetMarkerType: "radar-site" as TacticalTargetMarkerType,
+                        color: "#ef4444",
+                        arcHeight: 0.36,
+                      },
+                      {
+                        title: "AIR DEFENSE: IRON DOME / S-400 MID-AIR INTERCEPT",
+                        label: "🛡️ Air Defense Mid-Air Intercept",
+                        from: { name: "Sanaa / Hodeidah, Yemen", lat: 15.3694, lon: 44.191 },
+                        to: { name: "Eilat Port, Israel", lat: 29.5577, lon: 34.9519 },
+                        assetType: "missile" as TacticalRouteAssetType,
+                        targetEffect: "intercept" as TacticalTargetEffect,
+                        targetMarkerType: "radar-site" as TacticalTargetMarkerType,
+                        color: "#38bdf8",
+                        arcHeight: 0.35,
+                      },
+                      {
+                        title: "INDIAN NAVY: ARABIAN SEA WARSHIP MISSILE STRIKE",
+                        label: "🚢 Mumbai Navy ➔ Arabian Sea Strike",
+                        from: {
+                          name: "Mumbai / Western Naval Command, India",
+                          lat: 19.076,
+                          lon: 72.8777,
+                        },
+                        to: { name: "Arabian Sea (Central)", lat: 16.5, lon: 64.5 },
+                        assetType: "warship" as TacticalRouteAssetType,
+                        targetEffect: "ship-launch-missile" as TacticalTargetEffect,
+                        targetMarkerType: "warship" as TacticalTargetMarkerType,
+                        color: "#06b6d4",
+                        arcHeight: 0,
+                      },
+                      {
+                        title: "IAF SORTIE: AMBALA AIRBASE ➔ LADAKH PATROL",
+                        label: "✈️ Ambala Airbase ➔ Ladakh Jet Sortie",
+                        from: { name: "Ambala Airbase, India", lat: 30.3782, lon: 76.7767 },
+                        to: { name: "Leh / Ladakh, India", lat: 34.1526, lon: 77.5771 },
+                        assetType: "fighter-jet" as TacticalRouteAssetType,
+                        targetEffect: "hover-patrol" as TacticalTargetEffect,
+                        targetMarkerType: "airbase" as TacticalTargetMarkerType,
+                        color: "#f97316",
+                        arcHeight: 0.24,
+                      },
+                      {
+                        title: "VIP FLIGHT TRACKER: NEW DELHI ➔ LONDON",
+                        label: "🛫 New Delhi ➔ London Safe Flight",
+                        from: { name: "New Delhi, India", lat: 28.6139, lon: 77.209 },
+                        to: { name: "London, UK", lat: 51.5074, lon: -0.1278 },
+                        assetType: "airliner" as TacticalRouteAssetType,
+                        targetEffect: "landing" as TacticalTargetEffect,
+                        targetMarkerType: "airbase" as TacticalTargetMarkerType,
+                        color: "#10b981",
+                        arcHeight: 0.22,
+                      },
+                      {
+                        title: "RED SEA MARITIME ALERT: BAB EL-MANDEB DRONE STRIKE",
+                        label: "🛸 Red Sea / Houthi Drone Strike",
+                        from: { name: "Sanaa / Hodeidah, Yemen", lat: 15.3694, lon: 44.191 },
+                        to: { name: "Red Sea / Bab el-Mandeb", lat: 14.5, lon: 41.8 },
+                        assetType: "drone" as TacticalRouteAssetType,
+                        targetEffect: "explosion" as TacticalTargetEffect,
+                        targetMarkerType: "cargo-ship" as TacticalTargetMarkerType,
+                        color: "#eab308",
+                        arcHeight: 0.25,
+                      },
+                    ].map((preset, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleLaunchSimulatorPreset(preset)}
+                        className="p-2.5 rounded-xl bg-black/50 hover:bg-indigo-600/30 border border-white/10 hover:border-indigo-400 text-left text-xs font-bold text-slate-200 hover:text-white transition-all cursor-pointer"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. View Mode, Globe Scale & Radar Quick Controls inside Simulator Tab */}
+                <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase text-slate-300">
+                      3. 3D View Mode, Globe Size & Radar Sweep
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMapConfig((prev) => ({
+                          ...prev,
+                          showRadarSweep: !(prev.showRadarSweep !== false),
+                        }))
+                      }
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1 cursor-pointer",
+                        mapConfig.showRadarSweep !== false
+                          ? "bg-emerald-500/25 text-emerald-300 border-emerald-400/50"
+                          : "bg-white/5 text-slate-400 border-white/15"
+                      )}
+                    >
+                      <Radio className="w-3.5 h-3.5" />
+                      <span>Radar Sweep: {mapConfig.showRadarSweep !== false ? "ON" : "OFF"}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: "3d-perspective" as const, label: "🏔️ 3D Terrain Tilt" },
+                      { id: "3d-globe" as const, label: "🌍 3D Earth Globe" },
+                      { id: "2d" as const, label: "🗺️ 2D Flat Map" },
+                    ].map((vm) => (
+                      <button
+                        key={vm.id}
+                        type="button"
+                        onClick={() =>
+                          setMapConfig((prev) => ({
+                            ...prev,
+                            viewMode: vm.id,
+                          }))
+                        }
+                        className={cn(
+                          "py-2 px-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer",
+                          mapConfig.viewMode === vm.id
+                            ? "bg-cyan-600 text-white border-cyan-400"
+                            : "bg-white/5 text-slate-300 border-white/10"
+                        )}
+                      >
+                        {vm.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {mapConfig.viewMode === "3d-globe" && (
+                    <div className="pt-1">
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-indigo-200 font-bold">
+                          🌍 3D Globe Size (Compact to Fullscreen)
+                        </span>
+                        <span className="font-mono text-indigo-300 font-bold">
+                          {Math.round((mapConfig.globeScale ?? 1.18) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.7}
+                        max={1.85}
+                        step={0.05}
+                        value={mapConfig.globeScale ?? 1.18}
+                        onChange={(e) =>
+                          setMapConfig((prev) => ({
+                            ...prev,
+                            globeScale: Number(e.target.value),
+                          }))
+                        }
+                        className="w-full h-1.5 accent-indigo-400 bg-white/15 rounded-lg cursor-pointer"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
             ) : (
               <>
-                {/* 3D / 2D Camera & Perspective Control Card */}
+                {/* 3D / 2D Camera, Globe Size, Radar & Perspective Control Card */}
                 <div className="p-3.5 rounded-xl bg-cyan-950/25 border border-cyan-500/35 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
                       <Box className="w-4 h-4 text-cyan-400" />
-                      <span>3D View Mode, Camera Tilt & Live Simulator</span>
+                      <span>3D View Mode, Camera Tilt, Globe Size & Radar</span>
                     </span>
                     <button
                       type="button"
@@ -2935,6 +3557,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                           ...prev,
                           pitchDeg: 45,
                           yawDeg: 0,
+                          globeScale: 1.18,
                           viewMode: "3d-perspective",
                         }))
                       }
@@ -2946,9 +3569,21 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
 
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { id: "3d-perspective" as const, label: "🏔️ 3D Terrain Tilt", sub: "Elevated 3D Arcs" },
-                      { id: "3d-globe" as const, label: "🌍 3D Earth Globe", sub: "Spherical Orbit" },
-                      { id: "2d" as const, label: "🗺️ 2D Flat Map", sub: "Classic Top-Down" },
+                      {
+                        id: "3d-perspective" as const,
+                        label: "🏔️ 3D Terrain Tilt",
+                        sub: "Sky Horizon + 3D Arcs",
+                      },
+                      {
+                        id: "3d-globe" as const,
+                        label: "🌍 3D Earth Globe",
+                        sub: "Starry Space + Orbit",
+                      },
+                      {
+                        id: "2d" as const,
+                        label: "🗺️ 2D Flat Map",
+                        sub: "Classic Top-Down",
+                      },
                     ].map((vm) => (
                       <button
                         key={vm.id}
@@ -2957,11 +3592,14 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                           setMapConfig((prev) => ({
                             ...prev,
                             viewMode: vm.id,
-                            pitchDeg: vm.id === "3d-perspective" ? Math.max(35, prev.pitchDeg || 45) : prev.pitchDeg,
+                            pitchDeg:
+                              vm.id === "3d-perspective"
+                                ? Math.max(35, prev.pitchDeg || 45)
+                                : prev.pitchDeg,
                           }))
                         }
                         className={cn(
-                          "p-2 rounded-xl border text-left transition-all",
+                          "p-2 rounded-xl border text-left transition-all cursor-pointer",
                           (mapConfig.viewMode || "3d-perspective") === vm.id
                             ? "bg-cyan-600/35 border-cyan-400 text-white shadow"
                             : "bg-black/40 border-white/10 text-slate-300 hover:text-white"
@@ -2977,16 +3615,22 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-slate-300 font-medium">3D Tilt Pitch</span>
-                        <span className="font-mono text-cyan-300 font-bold">{mapConfig.pitchDeg ?? 45}°</span>
+                        <span className="font-mono text-cyan-300 font-bold">
+                          {mapConfig.pitchDeg ?? 45}°
+                        </span>
                       </div>
                       <input
                         type="range"
                         min={0}
-                        max={60}
+                        max={62}
                         step={2}
                         value={mapConfig.pitchDeg ?? 45}
                         onChange={(e) =>
-                          setMapConfig({ ...mapConfig, pitchDeg: Number(e.target.value), viewMode: "3d-perspective" })
+                          setMapConfig({
+                            ...mapConfig,
+                            pitchDeg: Number(e.target.value),
+                            viewMode: "3d-perspective",
+                          })
                         }
                         className="w-full h-1.5 accent-cyan-400 bg-white/15 rounded-lg cursor-pointer"
                       />
@@ -2995,7 +3639,9 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-slate-300 font-medium">3D Compass Yaw</span>
-                        <span className="font-mono text-amber-300 font-bold">{mapConfig.yawDeg ?? 0}°</span>
+                        <span className="font-mono text-amber-300 font-bold">
+                          {mapConfig.yawDeg ?? 0}°
+                        </span>
                       </div>
                       <input
                         type="range"
@@ -3003,7 +3649,9 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                         max={180}
                         step={5}
                         value={mapConfig.yawDeg ?? 0}
-                        onChange={(e) => setMapConfig({ ...mapConfig, yawDeg: Number(e.target.value) })}
+                        onChange={(e) =>
+                          setMapConfig({ ...mapConfig, yawDeg: Number(e.target.value) })
+                        }
                         className="w-full h-1.5 accent-amber-400 bg-white/15 rounded-lg cursor-pointer"
                       />
                     </div>
@@ -3021,23 +3669,76 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                         max={2.2}
                         step={0.1}
                         value={mapConfig.altitudeScale ?? 1.25}
-                        onChange={(e) => setMapConfig({ ...mapConfig, altitudeScale: Number(e.target.value) })}
+                        onChange={(e) =>
+                          setMapConfig({ ...mapConfig, altitudeScale: Number(e.target.value) })
+                        }
                         className="w-full h-1.5 accent-emerald-400 bg-white/15 rounded-lg cursor-pointer"
                       />
                     </div>
                   </div>
 
-                  {/* Interactive Simulator Mode Toggle */}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                    <div>
-                      <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                        <Gamepad2 className="w-4 h-4 text-emerald-400" />
-                        <span>Interactive Stage Simulator Mode</span>
+                  {/* 3D Globe Size Slider & Fullscreen Button */}
+                  {mapConfig.viewMode === "3d-globe" && (
+                    <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex justify-between text-[11px] mb-1">
+                          <span className="text-indigo-200 font-bold">
+                            🌍 3D Globe Size (Starry Space Background)
+                          </span>
+                          <span className="font-mono text-indigo-300 font-bold">
+                            {Math.round((mapConfig.globeScale ?? 1.18) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0.7}
+                          max={1.85}
+                          step={0.05}
+                          value={mapConfig.globeScale ?? 1.18}
+                          onChange={(e) =>
+                            setMapConfig({ ...mapConfig, globeScale: Number(e.target.value) })
+                          }
+                          className="w-full h-1.5 accent-indigo-400 bg-white/15 rounded-lg cursor-pointer"
+                        />
                       </div>
-                      <p className="text-[11px] text-slate-400">
-                        Click anywhere on stage map live during broadcast to launch missiles, jets & interceptors
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMapConfig((prev) => ({
+                            ...prev,
+                            globeScale: (prev.globeScale ?? 1.18) >= 1.55 ? 1.15 : 1.72,
+                          }))
+                        }
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shrink-0 cursor-pointer"
+                      >
+                        {(mapConfig.globeScale ?? 1.18) >= 1.55
+                          ? "Standard Globe"
+                          : "Full Screen Globe"}
+                      </button>
                     </div>
+                  )}
+
+                  {/* Radar Sweep ON/OFF & Simulator Toggle Row */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMapConfig((prev) => ({
+                          ...prev,
+                          showRadarSweep: !(prev.showRadarSweep !== false),
+                        }))
+                      }
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all cursor-pointer",
+                        mapConfig.showRadarSweep !== false
+                          ? "bg-emerald-500/25 text-emerald-200 border-emerald-400/60"
+                          : "bg-white/10 text-slate-300 border-white/15"
+                      )}
+                    >
+                      <Radio className="w-4 h-4 text-emerald-400" />
+                      <span>Radar Sweep: {mapConfig.showRadarSweep !== false ? "ON" : "OFF"}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() =>
@@ -3047,7 +3748,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                         }))
                       }
                       className={cn(
-                        "px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0",
+                        "px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0 cursor-pointer",
                         mapConfig.simulatorEnabled
                           ? "bg-emerald-600 text-white border-emerald-300 shadow-lg"
                           : "bg-white/10 text-slate-300 border-white/15 hover:text-white"
@@ -3314,8 +4015,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                       {[
                         { id: "landing", label: "🛬 Safe Landing", desc: "Plane/Heli lands safely" },
                         { id: "naval-cruise", label: "⚓ Sea Cruise", desc: "Ship sails & docks" },
-                        { id: "ship-launch-missile", label: "🚢🚀 Ship Strike", desc: "Ship fires missile!" },
-                        { id: "jet-airstrike", label: "✈️🚀 Jet Strike", desc: "Jet fires missile!" },
+                        {
+                          id: "ship-launch-missile",
+                          label: "🚢🚀 Ship Strike",
+                          desc: "Ship fires missile!",
+                        },
+                        {
+                          id: "jet-airstrike",
+                          label: "✈️🚀 Jet Strike",
+                          desc: "Jet fires missile!",
+                        },
                         { id: "explosion", label: "💥 Direct Hit", desc: "Blast shockwave" },
                         { id: "intercept", label: "🛡️ Intercept", desc: "Mid-air defense hit" },
                         { id: "hover-patrol", label: "🔄 Orbit Patrol", desc: "Circles over target" },
@@ -3336,7 +4045,8 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                                 ? { arcHeight: 0, curveDirection: "straight" }
                                 : {}),
                               ...(eff === "ship-launch-missile" &&
-                              (!activeRoute.targetMarkerType || activeRoute.targetMarkerType === "default")
+                                (!activeRoute.targetMarkerType ||
+                                  activeRoute.targetMarkerType === "default")
                                 ? { targetMarkerType: "warship" }
                                 : {}),
                             });
@@ -3354,10 +4064,9 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                       ))}
                     </div>
 
-                    {/* Target Marker Object at Point B + Curve Direction */}
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                    <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/10">
                       <div>
-                        <label className="text-[11px] font-bold uppercase text-slate-300 block mb-1">
+                        <label className="text-[11px] text-slate-300 font-semibold block mb-1">
                           Target Object at Point B:
                         </label>
                         <select
@@ -3378,111 +4087,25 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                       </div>
 
                       <div>
-                        <label className="text-[11px] font-bold uppercase text-slate-300 block mb-1">
-                          Path Curve Direction:
+                        <label className="text-[11px] text-slate-300 font-semibold block mb-1">
+                          Map Theme (Zero API Key):
                         </label>
                         <select
-                          value={activeRoute.curveDirection || (activeRoute.arcHeight === 0 ? "straight" : "up")}
-                          onChange={(e) => {
-                            const dir = e.target.value as "up" | "straight" | "down";
-                            updateActiveRoute({
-                              curveDirection: dir,
-                              arcHeight: dir === "straight" ? 0 : Math.max(0.18, activeRoute.arcHeight || 0.28),
-                            });
-                          }}
+                          value={mapConfig.mapStyle}
+                          onChange={(e) =>
+                            setMapConfig({
+                              ...mapConfig,
+                              mapStyle: e.target.value as TacticalMapConfig["mapStyle"],
+                            })
+                          }
                           className="w-full bg-slate-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white"
                         >
-                          <option value="up">⤴️ Curve Up (Ballistic / Air)</option>
-                          <option value="straight">➡️ Straight Line (Sea / Direct)</option>
-                          <option value="down">⤵️ Curve Down (Coastal Route)</option>
+                          <option value="satellite">🛰️ Satellite + Country Borders</option>
+                          <option value="dark-radar">🌑 Dark Tactical Night-Vision</option>
+                          <option value="political">🗺️ Clean Political / Street Map</option>
+                          <option value="ocean">🌊 Maritime / Naval Ocean Map</option>
+                          <option value="vector-grid">🎯 Tactical Radar Grid Only</option>
                         </select>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Map Camera Zoom, Arc Height, Theme & Color */}
-                {activeRoute && (
-                  <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-black/40 border border-white/10">
-                    <div>
-                      <div className="flex justify-between text-xs mb-1 font-semibold">
-                        <span className="text-slate-300">Map Zoom Level</span>
-                        <span className="font-mono text-cyan-300">{mapConfig.zoom}x</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={2}
-                        max={10}
-                        step={1}
-                        value={mapConfig.zoom}
-                        onChange={(e) => setMapConfig({ ...mapConfig, zoom: Number(e.target.value) })}
-                        className="w-full h-1.5 accent-cyan-400 bg-white/15 rounded-lg cursor-pointer"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-1 font-semibold">
-                        <span className="text-slate-300">Arc Curvature</span>
-                        <span className="font-mono text-amber-300">
-                          {Math.round((activeRoute.arcHeight ?? 0.32) * 100)}%
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={0.6}
-                        step={0.04}
-                        value={activeRoute.arcHeight ?? 0.32}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          updateActiveRoute({
-                            arcHeight: val,
-                            curveDirection: val === 0 ? "straight" : activeRoute.curveDirection === "straight" ? "up" : activeRoute.curveDirection,
-                          });
-                        }}
-                        className="w-full h-1.5 accent-amber-400 bg-white/15 rounded-lg cursor-pointer"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-1 font-semibold">
-                        <span className="text-slate-300">Map Theme (100% Free)</span>
-                      </div>
-                      <select
-                        value={mapConfig.mapStyle}
-                        onChange={(e) =>
-                          setMapConfig({
-                            ...mapConfig,
-                            mapStyle: e.target.value as TacticalMapConfig["mapStyle"],
-                          })
-                        }
-                        className="w-full bg-slate-900 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white"
-                      >
-                        <option value="satellite">🛰️ Satellite + Borders</option>
-                        <option value="dark-radar">🌑 Dark Night-Vision</option>
-                        <option value="political">🗺️ Political / Street</option>
-                        <option value="ocean">🌊 Maritime / Ocean</option>
-                        <option value="vector-grid">🎯 Radar Grid Only</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-1 font-semibold">
-                        <span className="text-slate-300">Trajectory Color</span>
-                      </div>
-                      <div className="flex items-center gap-2 pt-1">
-                        {["#ef4444", "#38bdf8", "#facc15", "#10b981", "#a855f7"].map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => updateActiveRoute({ color: c })}
-                            style={{ backgroundColor: c }}
-                            className={cn(
-                              "w-6 h-6 rounded-full border transition-transform",
-                              activeRoute.color === c ? "ring-2 ring-white scale-110" : "border-white/20 hover:scale-105"
-                            )}
-                          />
-                        ))}
                       </div>
                     </div>
                   </div>
@@ -3491,62 +4114,86 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
             )}
           </div>
 
-          {/* Right Column (7 Cols): Live Interactive 3D Canvas Preview */}
-          <div className="lg:col-span-7 flex flex-col p-4 bg-black/40 min-h-[420px] relative">
-            <div className="flex-1 rounded-2xl overflow-hidden border border-white/15 relative shadow-2xl bg-[#030712]">
+          {/* Right Column (7 Cols): Huge Interactive 3D/2D Broadcast Map Canvas */}
+          <div className="lg:col-span-7 p-5 bg-[#060811] flex flex-col justify-between gap-3 min-h-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                  <Move className="w-4 h-4 text-cyan-400" />
+                  <span>
+                    Interactive 60FPS 3D/2D Stage Preview (Drag to Rotate/Pan • Wheel: Zoom • Click in Simulator to Fire)
+                  </span>
+                </span>
+              </div>
+              {clickPlacementMode && (
+                <span className="text-xs px-3 py-1 rounded-lg bg-rose-500 text-white font-bold animate-pulse">
+                  Click anywhere on map to set{" "}
+                  {clickPlacementMode === "from" ? "Origin (Point A)" : "Target (Point B)"}
+                </span>
+              )}
+            </div>
+
+            <div className="flex-1 w-full rounded-2xl overflow-hidden border border-cyan-500/40 shadow-2xl relative bg-black flex items-center justify-center min-h-[360px]">
               <TacticalMapStageCanvas
                 config={mapConfig}
                 isInteractive={true}
-                onConfigChange={(updates) => setMapConfig((prev) => ({ ...prev, ...updates }))}
+                simToolOverride={modalSimTool}
+                onSimToolChange={setModalSimTool}
+                onConfigChange={(updates) =>
+                  setMapConfig((prev) => ({ ...prev, ...updates }))
+                }
                 onMapClickLatLon={(lat, lon) => {
                   if (clickPlacementMode === "from") {
                     handleSelectPoint("from", {
-                      name: `Point (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
+                      name: `Origin (${lat.toFixed(1)}°N, ${lon.toFixed(1)}°E)`,
                       lat,
                       lon,
                     });
                     setClickPlacementMode(null);
                   } else if (clickPlacementMode === "to") {
                     handleSelectPoint("to", {
-                      name: `Target (${lat.toFixed(1)}°, ${lon.toFixed(1)}°)`,
+                      name: `Target (${lat.toFixed(1)}°N, ${lon.toFixed(1)}°E)`,
                       lat,
                       lon,
                     });
                     setClickPlacementMode(null);
-                  } else {
-                    setMapConfig((prev) => ({ ...prev, centerLat: lat, centerLon: lon }));
                   }
                 }}
               />
             </div>
-          </div>
-        </div>
 
-        {/* Footer Save and Attach Buttons */}
-        <div className="px-6 py-3.5 border-t border-white/10 bg-[#111426] flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <span className="text-xs text-slate-300">
-            💡 All 5 Map Themes use 100% Free Esri ArcGIS tiles (zero API key watermarks) & record at 60FPS!
-          </span>
+            {/* Footer Action Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10 shrink-0">
+              <div className="text-xs text-slate-300 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>
+                  <strong>Real-Time Viewer Sync:</strong> Everything you pan, zoom, tilt in 3D, or fire in Simulator Mode on Stage is broadcast live to viewers!
+                </span>
+              </div>
 
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => handleSaveTacticalMap(false)}
-              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Check className="w-4 h-4 text-cyan-400" />
-              <span>Save to Map Library</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSaveTacticalMap(true)}
-              className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-cyan-600/25 transition-all"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>
-                {targetScene ? `Save & Attach to "${targetScene.name}"` : "Save & Present Map on Stage"}
-              </span>
-            </button>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleSaveTacticalMap(false)}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4 text-cyan-400" />
+                  <span>{editingMapId ? "Update in Map Library" : "Save to Map Library"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveTacticalMap(true)}
+                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-lg shadow-cyan-600/30 cursor-pointer"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    {targetScene
+                      ? `Save & Attach to "${targetScene.name}"`
+                      : "Save & Present 3D Map on Stage"}
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

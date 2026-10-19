@@ -13,12 +13,7 @@ import {
   Maximize2,
   Crop,
   Layers,
-  Lock,
-  Unlock,
   RotateCcw,
-  ChevronUp,
-  ChevronDown,
-  Crosshair,
   Repeat,
   Sparkles,
   UserPlus,
@@ -29,9 +24,6 @@ import {
   Globe,
   ZoomIn,
   ZoomOut,
-  Hand,
-  ArrowUp,
-  ArrowDown,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -41,21 +33,32 @@ import {
   Play,
   Pause,
   RotateCw,
+  Scissors,
   Clipboard,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem, TacticalMapConfig, FairUseConfig } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
 import { getDefaultSlotBounds, getLayoutExpectedSlots, calculateStageLayout } from "@/lib/layoutBounds";
 import { stageBroadcaster } from "@/lib/stageBroadcaster";
 import { StageTelestrator } from "./StageTelestrator";
+import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
 import { TacticalMapStageCanvas, TacticalMapModal } from "./TacticalMapModal";
-import { YouTubeLibraryModal, extractYouTubeVideoId } from "./YouTubeLibraryModal";
 import { InteractiveWebsiteStageView, WebsiteLibraryModal } from "./WebsiteLibraryModal";
 
-const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) => {
+/**
+ * Dedicated 60FPS HTML5 Canvas Overlay for Fair-Use Film Grain, Refined 35mm Cinema Hairlines,
+ * Traveling Scanlines & Dynamic Vignette on Stage Preview
+ */
+const FairUseCanvasOverlay: React.FC<{
+  grainEnabled: boolean;
+  grainIntensity: "light" | "medium" | "strong" | "random";
+  linesEnabled: boolean;
+  linesIntensity: "light" | "medium" | "strong";
+}> = ({ grainEnabled, grainIntensity, linesEnabled, linesIntensity }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -65,170 +68,133 @@ const FairUseCanvasOverlay: React.FC<{ config: FairUseConfig }> = ({ config }) =
     if (!ctx) return;
 
     let animId: number;
-    let frameCount = 0;
+    let lastDraw = 0;
 
-    const grainCanvas = document.createElement("canvas");
-    grainCanvas.width = 160;
-    grainCanvas.height = 160;
-    const gctx = grainCanvas.getContext("2d");
+    const renderLoop = (now: number) => {
+      if (now - lastDraw >= 42) {
+        lastDraw = now;
+        const W = canvas.width;
+        const H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
 
-    const refreshGrainTile = () => {
-      if (!gctx) return;
-      const idata = gctx.createImageData(160, 160);
-      const d = idata.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const luma = (Math.random() * 255) | 0;
-        const rJitter = ((Math.random() - 0.5) * 40) | 0;
-        const gJitter = ((Math.random() - 0.5) * 40) | 0;
-        const bJitter = ((Math.random() - 0.5) * 40) | 0;
-        d[i] = Math.max(0, Math.min(255, luma + rJitter));
-        d[i + 1] = Math.max(0, Math.min(255, luma + gJitter));
-        d[i + 2] = Math.max(0, Math.min(255, luma + bJitter));
-        d[i + 3] = (Math.random() * 95 + 45) | 0;
-      }
-      gctx.putImageData(idata, 0, 0);
-    };
+        // 1. Dynamic Multi-Scale Film Grain & Specular Dust Particles
+        if (grainEnabled) {
+          const isRandom = grainIntensity === "random";
+          const particleCount =
+            grainIntensity === "light"
+              ? 360
+              : grainIntensity === "medium"
+                ? 680
+                : grainIntensity === "strong"
+                  ? 1100
+                  : 540 + ((Math.sin(now / 380) + 1) * 280) | 0;
 
-    refreshGrainTile();
+          const baseAlpha =
+            grainIntensity === "light"
+              ? 0.16
+              : grainIntensity === "medium"
+                ? 0.25
+                : grainIntensity === "strong"
+                  ? 0.36
+                  : 0.2 + ((Math.cos(now / 520) + 1) * 0.08);
 
-    const render = () => {
-      frameCount++;
-      const rect = canvas.getBoundingClientRect();
-      const w = Math.round(rect.width);
-      const h = Math.round(rect.height);
+          for (let i = 0; i < particleCount; i++) {
+            const gx = (Math.random() * W) | 0;
+            const gy = (Math.random() * H) | 0;
+            const sz = Math.random() < 0.78 ? 1.5 : 2.3;
+            const isBright = Math.random() > 0.45;
+            if (isRandom && i % 5 === 0) {
+              const r = isBright ? 255 : 35;
+              const g = isBright ? 235 : 45;
+              const b = isBright ? 190 : 75;
+              ctx.fillStyle = `rgba(${r},${g},${b},${(baseAlpha * (0.45 + Math.random() * 0.55)).toFixed(2)})`;
+            } else {
+              ctx.fillStyle = isBright
+                ? `rgba(255,252,240,${(baseAlpha * (0.45 + Math.random() * 0.55)).toFixed(2)})`
+                : `rgba(12,14,22,${(baseAlpha * 0.65).toFixed(2)})`;
+            }
+            ctx.fillRect(gx, gy, sz, sz);
+          }
 
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-
-      ctx.clearRect(0, 0, w, h);
-
-      if (w <= 0 || h <= 0) {
-        animId = requestAnimationFrame(render);
-        return;
-      }
-
-      const showGrain = config?.filmGrainOverlay ?? true;
-      const showLines = config?.vintageLinesOverlay ?? true;
-      const showVignette = config?.vignetteOverlay ?? true;
-
-      // 1. Dynamic Corner Vignette
-      if (showVignette) {
-        ctx.save();
-        const cx = w / 2;
-        const cy = h / 2;
-        const rMin = Math.min(w, h) * 0.38;
-        const rMax = Math.max(w, h) * 0.72;
-        const vigGrad = ctx.createRadialGradient(cx, cy, rMin, cx, cy, rMax);
-        vigGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
-        vigGrad.addColorStop(0.65, "rgba(0, 0, 0, 0.08)");
-        vigGrad.addColorStop(1, "rgba(0, 0, 0, 0.42)");
-        ctx.fillStyle = vigGrad;
-        ctx.fillRect(0, 0, w, h);
-        ctx.restore();
-      }
-
-      // 2. Film Grain Overlay
-      if (showGrain) {
-        const grainIntensity = config?.grainIntensity || "random";
-        if (grainIntensity === "random" && frameCount % 10 === 0) {
-          refreshGrainTile();
-        }
-
-        ctx.save();
-        let alpha = 0.28;
-        if (grainIntensity === "light") alpha = 0.18;
-        else if (grainIntensity === "medium") alpha = 0.28;
-        else if (grainIntensity === "strong") alpha = 0.44;
-        else if (grainIntensity === "random") {
-          alpha = 0.24 + Math.sin(frameCount / 14) * 0.14; // 10% to 38%
-        }
-
-        ctx.globalAlpha = alpha;
-        ctx.globalCompositeOperation = "source-over";
-
-        const jitterX = (Math.random() * 160) | 0;
-        const jitterY = (Math.random() * 160) | 0;
-        for (let px = -jitterX; px < w; px += 160) {
-          for (let py = -jitterY; py < h; py += 160) {
-            ctx.drawImage(grainCanvas, px, py);
+          // Subtle 35mm cinema dust flecks
+          const fleckCount = grainIntensity === "light" ? 2 : grainIntensity === "strong" ? 6 : 4;
+          for (let f = 0; f < fleckCount; f++) {
+            const fx = Math.random() * W;
+            const fy = Math.random() * H;
+            ctx.fillStyle = `rgba(255,250,230,${(baseAlpha * 0.85).toFixed(2)})`;
+            ctx.beginPath();
+            ctx.arc(fx, fy, 0.9 + Math.random() * 1.1, 0, Math.PI * 2);
+            ctx.fill();
           }
         }
 
-        // High-contrast Specular Flecks
-        const fleckCount = grainIntensity === "strong" ? 14 : grainIntensity === "light" ? 6 : 10;
-        for (let f = 0; f < fleckCount; f++) {
-          const fx = Math.random() * w;
-          const fy = Math.random() * h;
-          const size = 2.0 + Math.random() * 2.2;
-          const fleckAlpha = Math.min(0.92, 0.40 + Math.random() * 0.50);
-          ctx.fillStyle = `rgba(255, 255, 255, ${fleckAlpha})`;
-          ctx.fillRect(fx, fy, size, size);
+        // 2. Refined 35mm Vintage Projector Scratches (Crisp Hairlines that NEVER block faces!)
+        if (linesEnabled) {
+          const lineCount =
+            linesIntensity === "light" ? 2 : linesIntensity === "strong" ? 5 : 3;
+          const lineThick =
+            linesIntensity === "light" ? 0.8 : linesIntensity === "strong" ? 2.1 : 1.35;
+          const baseLineAlpha =
+            linesIntensity === "light" ? 0.22 : linesIntensity === "strong" ? 0.42 : 0.32;
+
+          for (let i = 0; i < lineCount; i++) {
+            const seed = (i * 157 + Math.floor(now / 110)) % 1000;
+            const lx = ((seed * 73) % 94 + 3) * (W / 100) + (Math.random() - 0.5) * 6;
+            const tilt = (Math.random() - 0.5) * 5;
+            const isGlowing = i % 2 === 0;
+            const alpha = baseLineAlpha * (0.6 + Math.random() * 0.4);
+
+            ctx.save();
+            ctx.lineWidth = lineThick;
+            ctx.strokeStyle = isGlowing
+              ? `rgba(255, 248, 225, ${alpha.toFixed(2)})`
+              : `rgba(15, 18, 26, ${(alpha * 0.85).toFixed(2)})`;
+
+            ctx.beginPath();
+            const startY = Math.random() < 0.5 ? 0 : Math.random() * H * 0.3;
+            const endY = Math.random() < 0.5 ? H : startY + H * (0.4 + Math.random() * 0.45);
+            ctx.moveTo(lx, startY);
+            ctx.lineTo(lx + tilt, Math.min(H, endY));
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Traveling horizontal VHS/35mm micro-scanline bar
+          const scanY = ((now * 0.11) % (H + 60)) - 30;
+          const scanGrad = ctx.createLinearGradient(0, scanY - 8, 0, scanY + 8);
+          scanGrad.addColorStop(0, "rgba(255,255,255,0)");
+          scanGrad.addColorStop(0.5, `rgba(255,248,230,${(baseLineAlpha * 0.22).toFixed(2)})`);
+          scanGrad.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = scanGrad;
+          ctx.fillRect(0, scanY - 8, W, 16);
         }
-        ctx.restore();
+
+        // 3. Subtle Dynamic Corner Vignette (shifts edge macroblock luminance)
+        const vigGrad = ctx.createRadialGradient(
+          W / 2,
+          H / 2,
+          Math.min(W, H) * 0.36,
+          W / 2,
+          H / 2,
+          Math.max(W, H) * 0.72
+        );
+        vigGrad.addColorStop(0, "rgba(0,0,0,0)");
+        vigGrad.addColorStop(1, "rgba(0,0,0,0.2)");
+        ctx.fillStyle = vigGrad;
+        ctx.fillRect(0, 0, W, H);
       }
-
-      // 3. Dual-Core Bold Vintage Projector Lines (Video-Compression Proof)
-      if (showLines) {
-        const linesIntensity = config?.vintageLinesIntensity || "medium";
-        const lineCount = linesIntensity === "light" ? 5 : linesIntensity === "strong" ? 11 : 8;
-        const baseAlpha = linesIntensity === "light" ? 0.65 : linesIntensity === "strong" ? 0.95 : 0.82;
-        const targetWidth = linesIntensity === "light" ? 2.8 : linesIntensity === "strong" ? 5.2 : 3.8;
-
-        ctx.save();
-        for (let i = 0; i < lineCount; i++) {
-          const lx = Math.random() * w;
-          const tilt = (Math.random() - 0.5) * 6;
-          const isDarkLine = Math.random() > 0.5;
-          const alpha = Math.min(1.0, baseAlpha * (0.8 + Math.random() * 0.4));
-
-          const startY = Math.random() < 0.6 ? 0 : Math.random() * (h * 0.4);
-          const endY = Math.random() < 0.6 ? h : startY + h * (0.4 + Math.random() * 0.5);
-
-          // Outer contrast boundary (thick outer stroke ensures encoder preserves the line edge)
-          ctx.beginPath();
-          ctx.lineWidth = targetWidth + 2.0;
-          ctx.strokeStyle = isDarkLine
-            ? `rgba(255, 255, 255, ${Math.min(1.0, alpha * 0.85)})`
-            : `rgba(0, 0, 0, ${Math.min(1.0, alpha * 0.90)})`;
-          ctx.moveTo(lx, startY);
-          ctx.lineTo(lx + tilt, Math.min(h, endY));
-          ctx.stroke();
-
-          // Inner sharp core line
-          ctx.beginPath();
-          ctx.lineWidth = targetWidth;
-          ctx.strokeStyle = isDarkLine
-            ? `rgba(10, 10, 15, ${alpha})`
-            : `rgba(255, 250, 230, ${alpha})`;
-          ctx.moveTo(lx, startY);
-          ctx.lineTo(lx + tilt, Math.min(h, endY));
-          ctx.stroke();
-        }
-
-        // Reel dust flecks
-        const speckCount = linesIntensity === "strong" ? 8 : linesIntensity === "light" ? 3 : 5;
-        for (let s = 0; s < speckCount; s++) {
-          const sx = Math.random() * w;
-          const sy = Math.random() * h;
-          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1.0, baseAlpha * 0.9)})`;
-          ctx.fillRect(sx, sy, 3.2, 2.4);
-        }
-        ctx.restore();
-      }
-
-      animId = requestAnimationFrame(render);
+      animId = requestAnimationFrame(renderLoop);
     };
 
-    animId = requestAnimationFrame(render);
+    animId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [config]);
+  }, [grainEnabled, grainIntensity, linesEnabled, linesIntensity]);
 
   return (
     <canvas
-      id="livestudio-fairuse-overlay-canvas"
       ref={canvasRef}
+      width={640}
+      height={360}
       className="absolute inset-0 w-full h-full pointer-events-none z-[25] select-none"
     />
   );
@@ -263,19 +229,17 @@ export const StagePreview: React.FC = () => {
     setActiveMedia,
     layoutSplitRatio,
     setLayoutSplitRatio,
-    // Freeform window bounds & Selection Tool
     participantBounds,
     setParticipantBounds,
     resetParticipantBounds,
     resetAllParticipantBounds,
     selectedParticipantId,
     setSelectedParticipantId,
-    bringToFront,
-    sendToBack,
     tileTransforms,
     setTileTransform,
     isDrawingMode,
     toggleMediaMute,
+    setMediaMuted,
     setMediaVolume,
     toggleParticipantMic,
     mediaSlotIndex,
@@ -285,9 +249,7 @@ export const StagePreview: React.FC = () => {
     toggleSoloParticipant,
     scenes,
     activeSceneId,
-    switchScene,
     isStageCropped,
-    setIsStageCropped,
     fairUseConfig,
     setFairUseConfig,
     activeTextCard,
@@ -295,7 +257,9 @@ export const StagePreview: React.FC = () => {
     prevSlide,
     isSceneTransitioning,
     isMediaTransitioning,
+    newlyAddedParticipantIds,
     addMediaLibraryItem,
+    updateMediaLibraryItem,
     updateScene,
   } = useStudioStore();
 
@@ -311,157 +275,533 @@ export const StagePreview: React.FC = () => {
   };
   const mediaFitMode = (mediaTransform.fitMode as "contain" | "cover") || defaultMediaFit;
   const mediaZoom = Math.max(1, mediaTransform.zoom || 1);
-  const mediaPanX = mediaTransform.panX || 0;
-  const mediaPanY = mediaTransform.panY || 0;
-  const [isMediaToolbarCollapsed, setIsMediaToolbarCollapsed] = useState<boolean>(false);
+  const mediaPanX = Math.max(-50, Math.min(50, mediaTransform.panX || 0));
+  const mediaPanY = Math.max(-50, Math.min(50, mediaTransform.panY || 0));
+  const mediaRotation = mediaTransform.rotation || 0;
 
-  // Real-time 60FPS 2D Pan + Zoom + Micro-Tilt Breathing LFO
-  const [breathScale, setBreathScale] = useState<number>(1.0);
-  const [breathPan, setBreathPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [breathTilt, setBreathTilt] = useState<number>(0);
-  const isBreathingActive = Boolean(
-    fairUseConfig?.enabled &&
-      (fairUseConfig?.zoomBreathing ?? fairUseConfig?.isBreathingEnabled ?? true)
+  const isMediaMirrored = Boolean(
+    (fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo) || mediaTransform.flipH
   );
-  const breathIntensity = fairUseConfig?.breathIntensity || fairUseConfig?.breathingIntensity || "medium";
 
-  useEffect(() => {
-    if (!isBreathingActive) {
-      setBreathScale(1.0);
-      setBreathPan({ x: 0, y: 0 });
-      setBreathTilt(0);
-      return;
-    }
-    let animId: number;
-    const maxDelta = breathIntensity === "subtle" ? 0.06 : breathIntensity === "strong" ? 0.18 : 0.11;
-    const animate = (time: number) => {
-      const breathWave = (1 + Math.sin(time / 520)) / 2;
-      setBreathScale(1.0 + breathWave * maxDelta);
-      setBreathPan({
-        x: Math.sin(time / 780) * 0.85,
-        y: Math.cos(time / 920) * 0.65,
-      });
-      setBreathTilt(Math.sin(time / 1100) * 0.35);
-      animId = requestAnimationFrame(animate);
-    };
-    animId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animId);
-  }, [isBreathingActive, breathIntensity]);
-
-  // Convert pan coordinates (-50 to +50) to CSS object-position (0% to 100%)
-  // panY = -50 => objectPosY = 0%   (TOP / Header / Letterhead)
-  // panY = 0   => objectPosY = 50%  (CENTER / Body)
-  // panY = +50 => objectPosY = 100% (BOTTOM / Footer / Signatures)
-  const objectPosX = Math.max(0, Math.min(100, 50 + mediaPanX + (isBreathingActive ? breathPan.x : 0)));
-  const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY + (isBreathingActive ? breathPan.y : 0)));
-  const effectiveObjectPosX = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosX;
-  const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom === 1 ? 50 : objectPosY;
-  const effectiveTransformOriginX = effectiveObjectPosX;
-  const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
-  const normalizedMediaVolumePct = Math.max(0, Math.min(100, activeMedia?.volume ?? 100));
-  const [isMediaHovered, setIsMediaHovered] = useState(false);
-
-  const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(null);
-  const [isDraggingToolbar, setIsDraggingToolbar] = useState<boolean>(false);
-  const dragToolbarStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number }>({
-    mouseX: 0,
-    mouseY: 0,
-    startX: 0,
-    startY: 0,
-  });
-
-  const handleStartDragToolbar = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const stageEl = document.getElementById("livestudio-stage-container");
-    if (!stageEl) return;
-    const stageRect = stageEl.getBoundingClientRect();
-    const currentX = mediaToolbarPos?.x ?? Math.max(10, Math.round(stageRect.width / 2 - 200));
-    const currentY = mediaToolbarPos?.y ?? (activeMedia?.type === "website" ? 48 : 12);
-
-    dragToolbarStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      startX: currentX,
-      startY: currentY,
-    };
-    setIsDraggingToolbar(true);
-
-    const handleMouseMove = (moveEv: MouseEvent) => {
-      const deltaX = moveEv.clientX - dragToolbarStartRef.current.mouseX;
-      const deltaY = moveEv.clientY - dragToolbarStartRef.current.mouseY;
-      const nextX = Math.max(4, Math.min(stageRect.width - 140, dragToolbarStartRef.current.startX + deltaX));
-      const nextY = Math.max(4, Math.min(stageRect.height - 48, dragToolbarStartRef.current.startY + deltaY));
-      setMediaToolbarPos({ x: Math.round(nextX), y: Math.round(nextY) });
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingToolbar(false);
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-  };
-
-  // Active real-time Audio Speed & Pitch adjustment (audible immediately in local preview + recording + stream)
-  const handleChangeMediaPitch = (rate: number, enablePitchShift: boolean) => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (videoEl) {
-      videoEl.playbackRate = rate;
-      (videoEl as any).preservesPitch = !enablePitchShift;
-      (videoEl as any).mozPreservesPitch = !enablePitchShift;
-      (videoEl as any).webkitPreservesPitch = !enablePitchShift;
-    }
-    if (audioEl) {
-      audioEl.playbackRate = rate;
-      (audioEl as any).preservesPitch = !enablePitchShift;
-      (audioEl as any).mozPreservesPitch = !enablePitchShift;
-      (audioEl as any).webkitPreservesPitch = !enablePitchShift;
-    }
-    setFairUseConfig({
-      playbackRate: rate,
-      enableAudioFairUse: enablePitchShift,
-    });
-    stageBroadcaster.refreshAudioConnections();
-  };
-
-  // Local preview dynamic tempo variance LFO loop (audible modulation when broadcaster composite is idle)
-  useEffect(() => {
-    if (!fairUseConfig?.enabled || !fairUseConfig?.dynamicTempoVariance) return;
-    const interval = setInterval(() => {
-      if (stageBroadcaster.isCompositeRunning()) return;
-      const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-      const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-      const isPitchActive = fairUseConfig.enableAudioFairUse !== false;
-      const baseRate = fairUseConfig.playbackRate || 1.04;
-      const now = performance.now();
-      const irrationalMod = isPitchActive ? (Math.sin(now / 1650) + Math.cos(now / 2900)) * 0.018 : 0;
-      const currentRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
-      if (videoEl && !videoEl.paused) {
-        (videoEl as any).preservesPitch = !isPitchActive;
-        (videoEl as any).mozPreservesPitch = !isPitchActive;
-        (videoEl as any).webkitPreservesPitch = !isPitchActive;
-        videoEl.playbackRate = currentRate;
-      }
-      if (audioEl && !audioEl.paused) {
-        (audioEl as any).preservesPitch = !isPitchActive;
-        (audioEl as any).mozPreservesPitch = !isPitchActive;
-        (audioEl as any).webkitPreservesPitch = !isPitchActive;
-        audioEl.playbackRate = currentRate;
-      }
-    }, 250);
-    return () => clearInterval(interval);
-  }, [fairUseConfig?.enabled, fairUseConfig?.dynamicTempoVariance, fairUseConfig?.playbackRate, fairUseConfig?.enableAudioFairUse]);
+  // Convert pan coordinates (-50 to +50) to CSS object-position & transform-origin (0% to 100%)
+  const objectPosX = Math.max(0, Math.min(100, 50 + mediaPanX));
+  const objectPosY = Math.max(0, Math.min(100, 50 + mediaPanY));
+  const hasActivePanOffset = Math.abs(mediaPanX) > 0.5 || Math.abs(mediaPanY) > 0.5;
+  const effectiveObjectPosX = mediaFitMode === "contain" && mediaZoom <= 1 && !hasActivePanOffset ? 50 : objectPosX;
+  const effectiveObjectPosY = mediaFitMode === "contain" && mediaZoom <= 1 && !hasActivePanOffset ? 50 : objectPosY;
+  const effectiveTransformOriginX = isMediaMirrored ? 100 - effectiveObjectPosX : effectiveObjectPosX;
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
+  const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
+  const [mediaLoadError, setMediaLoadError] = useState(false);
+  const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
+
+  // Live Media Transport State (for Video, YouTube, and Audio on stage)
+  const [isMediaPaused, setIsMediaPaused] = useState(false);
+  const [mediaCurrentTime, setMediaCurrentTime] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState(0);
+  const [breathState, setBreathState] = useState({ scale: 1, tx: 0, ty: 0, rot: 0 });
+  const [isYtJerking, setIsYtJerking] = useState(false);
   const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
   const [useYtIframeFallback, setUseYtIframeFallback] = useState(false);
   const [mediaBoundsHistory, setMediaBoundsHistory] = useState<Array<ParticipantBounds | null>>([]);
-  const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
-  const [mediaLoadError, setMediaLoadError] = useState(false);
+  const [isMediaHovered, setIsMediaHovered] = useState(false);
+  const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
+  const [isTacticalMapModalOpen, setIsTacticalMapModalOpen] = useState(false);
+  const [isWebsiteModalOpen, setIsWebsiteModalOpen] = useState(false);
+  const [pastedToastMsg, setPastedToastMsg] = useState<string | null>(null);
+  const [clipSavedToast, setClipSavedToast] = useState<string | null>(null);
+
+  const mediaCurrentTimeRef = useRef<number>(0);
+  const mediaDurationRef = useRef<number>(0);
+  const isMediaPausedRef = useRef<boolean>(false);
+  const ytTelemetryActiveRef = useRef<boolean>(false);
+  const ytReadyConfirmedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    mediaCurrentTimeRef.current = mediaCurrentTime;
+  }, [mediaCurrentTime]);
+  useEffect(() => {
+    mediaDurationRef.current = mediaDuration;
+  }, [mediaDuration]);
+  useEffect(() => {
+    isMediaPausedRef.current = isMediaPaused;
+  }, [isMediaPaused]);
+
+  // Live 2D Pan + Zoom + Micro-Tilt Breathing Animation Loop for Stage Preview
+  useEffect(() => {
+    if (!fairUseConfig?.enabled || !(fairUseConfig?.zoomBreathing ?? true)) {
+      setBreathState({ scale: 1, tx: 0, ty: 0, rot: 0 });
+      return;
+    }
+    const intensity = fairUseConfig?.breathIntensity || "medium";
+    const maxDelta = intensity === "subtle" ? 0.06 : intensity === "strong" ? 0.18 : 0.11;
+    let rafId: number;
+    let lastUpdate = 0;
+    const tick = (now: number) => {
+      if (now - lastUpdate > 45) {
+        lastUpdate = now;
+        const wave = (1 + Math.sin(now / 520)) / 2;
+        const scale = Number((1 + wave * maxDelta).toFixed(4));
+        const tx = Number((Math.sin(now / 730) * (maxDelta * 12)).toFixed(2));
+        const ty = Number((Math.cos(now / 890) * (maxDelta * 9)).toFixed(2));
+        const rot = Number((Math.sin(now / 1150) * 0.32).toFixed(3));
+        setBreathState({ scale, tx, ty, rot });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [fairUseConfig?.enabled, fairUseConfig?.zoomBreathing, fairUseConfig?.breathIntensity]);
+
+  const breathScale = breathState.scale;
+
+  // Global Clipboard Screenshot Paste (Ctrl+V / Cmd+V)
+  const handleSaveClipboardBlobToStage = React.useCallback(
+    (blob: Blob) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (!dataUrl) return;
+        const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const screenshotItem = {
+          id: `screenshot-${Date.now()}`,
+          name: `Screenshot ${timeStr}`,
+          type: "image" as const,
+          url: dataUrl,
+          thumbnail: dataUrl,
+          duration: "Pasted Image",
+          isUploaded: true,
+        };
+        addMediaLibraryItem(screenshotItem);
+        if (activeSceneId) {
+          updateScene(activeSceneId, { activeMedia: screenshotItem });
+        }
+        setActiveMedia(screenshotItem);
+        setPastedToastMsg(`📸 ${screenshotItem.name} pasted to Stage & Library!`);
+        setTimeout(() => setPastedToastMsg(null), 3200);
+      };
+      reader.readAsDataURL(blob);
+    },
+    [addMediaLibraryItem, activeSceneId, updateScene, setActiveMedia]
+  );
+
+  useEffect(() => {
+    const onGlobalPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const blob = items[i].getAsFile();
+          if (blob) {
+            e.preventDefault();
+            handleSaveClipboardBlobToStage(blob);
+            break;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onGlobalPaste);
+    return () => window.removeEventListener("paste", onGlobalPaste);
+  }, [handleSaveClipboardBlobToStage]);
+
+  const handleTriggerClipboardPasteButton = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        const clipItems = await navigator.clipboard.read();
+        for (const clipItem of clipItems) {
+          const imgType = clipItem.types.find((t) => t.startsWith("image/"));
+          if (imgType) {
+            const blob = await clipItem.getBlob(imgType);
+            handleSaveClipboardBlobToStage(blob);
+            return;
+          }
+        }
+      }
+      setPastedToastMsg("💡 Press Ctrl+V (or Cmd+V) anywhere to paste your screenshot!");
+      setTimeout(() => setPastedToastMsg(null), 3200);
+    } catch {
+      setPastedToastMsg("💡 Press Ctrl+V (or Cmd+V) anywhere to paste your screenshot!");
+      setTimeout(() => setPastedToastMsg(null), 3200);
+    }
+  };
+
+  const sendYouTubeIframeCommand = React.useCallback((func: string, args: any[] = []) => {
+    if (typeof document === "undefined") return;
+    const iframe = document.getElementById("livestudio-active-youtube-iframe") as HTMLIFrameElement | null;
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: "command", func, args }),
+        "*"
+      );
+    }
+  }, []);
+
+  // Fast YouTube Scene Switch & Pre-Warm + Default Unmuted Audible Volume Enforcement
+  React.useEffect(() => {
+    setMediaLoadError(false);
+    setYtStreamAttempt(0);
+    setUseYtIframeFallback(false);
+    ytTelemetryActiveRef.current = false;
+    ytReadyConfirmedRef.current = false;
+
+    const initStart = activeMedia?.startTimeSec || 0;
+    setMediaCurrentTime(initStart);
+    mediaCurrentTimeRef.current = initStart;
+
+    const knownDur =
+      activeMedia?.endTimeSec && activeMedia.endTimeSec > 0
+        ? activeMedia.endTimeSec
+        : activeMedia?.durationSeconds && activeMedia.durationSeconds > 0
+          ? activeMedia.durationSeconds
+          : 0;
+    setMediaDuration(knownDur);
+    mediaDurationRef.current = knownDur;
+
+    setIsMediaPaused(false);
+    isMediaPausedRef.current = false;
+
+    if (!activeMedia) return;
+
+    // Ensure YouTube / Video plays UNMUTED at full audible volume by default upon scene switch!
+    if (
+      (activeMedia.type === "youtube" || activeMedia.type === "video" || activeMedia.type === "audio") &&
+      (activeMedia.isMuted === undefined || activeMedia.volume === undefined || activeMedia.volume === 0)
+    ) {
+      setMediaMuted(false);
+      if (!activeMedia.volume || activeMedia.volume <= 0) {
+        setMediaVolume(100);
+      }
+    }
+
+    // Fetch YouTube duration metadata + pre-warm stream cache in parallel, and set a fast 2.4s watchdog
+    // so switching to a YouTube scene NEVER stalls for 10+ seconds!
+    if (activeMedia.type === "youtube" && activeMedia.youtubeId) {
+      let cancelled = false;
+      fetch(`/api/media/youtube/info?url=${encodeURIComponent(activeMedia.youtubeId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (cancelled || !json?.success || !json?.data) return;
+          const durSec = Number(json.data.durationSeconds || 0);
+          if (durSec > 0 && Number.isFinite(durSec)) {
+            setMediaDuration((prev) => (prev > 0 && Number.isFinite(prev) ? prev : durSec));
+            mediaDurationRef.current = durSec;
+            if (!activeMedia.durationSeconds) {
+              updateMediaLibraryItem(activeMedia.id, { durationSeconds: durSec });
+            }
+          }
+          // If backend confirms no direct MP4 stream is available, switch to instant IFrame player immediately!
+          if (json.data.hasDirectStream === false && !ytReadyConfirmedRef.current) {
+            setUseYtIframeFallback(true);
+          }
+        })
+        .catch(() => { });
+
+      // Fast 2.5s watchdog: if direct MP4 stream hasn't loaded frames within 2.5s, switch to Next.js proxy or instant IFrame player
+      const fastWatchdog = setTimeout(() => {
+        if (cancelled || ytReadyConfirmedRef.current) return;
+        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+        if (!v || v.readyState < 2) {
+          setYtStreamAttempt((prev) => {
+            if (prev === 0) return 1;
+            setUseYtIframeFallback(true);
+            return prev;
+          });
+        }
+      }, 2400);
+
+      const fallbackWatchdog = setTimeout(() => {
+        if (cancelled || ytReadyConfirmedRef.current) return;
+        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+        if (!v || v.readyState < 2) {
+          setUseYtIframeFallback(true);
+        }
+      }, 4200);
+
+      return () => {
+        cancelled = true;
+        clearTimeout(fastWatchdog);
+        clearTimeout(fallbackWatchdog);
+      };
+    }
+  }, [activeMedia?.id, activeMedia?.url, activeMedia?.youtubeId]);
+
+  // Listen to YouTube IFrame PostMessage telemetry + continuous handshake + caption killer + wall-clock timer
+  useEffect(() => {
+    if (activeMedia?.type !== "youtube" || !useYtIframeFallback) return;
+
+    const syncYouTubePlayerState = () => {
+      const iframe = document.getElementById("livestudio-active-youtube-iframe") as HTMLIFrameElement | null;
+      if (!iframe || !iframe.contentWindow) return;
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: "listening", id: 1, channel: "widget" }),
+        "*"
+      );
+      sendYouTubeIframeCommand("unloadModule", ["captions"]);
+      sendYouTubeIframeCommand("unloadModule", ["cc"]);
+      sendYouTubeIframeCommand("setOption", ["captions", "track", {}]);
+      sendYouTubeIframeCommand("setOption", ["cc", "track", {}]);
+    };
+
+    const handleYtMessage = (e: MessageEvent) => {
+      if (typeof e.data !== "string") return;
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.event === "onReady") {
+          syncYouTubePlayerState();
+          if (!activeMedia?.isMuted) {
+            sendYouTubeIframeCommand("unMute", []);
+            sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct || 100)]);
+            sendYouTubeIframeCommand("playVideo", []);
+          }
+        }
+        if (data?.event === "infoDelivery" && data?.info) {
+          ytTelemetryActiveRef.current = true;
+          if (typeof data.info.currentTime === "number" && data.info.currentTime >= 0) {
+            const ct = data.info.currentTime;
+            mediaCurrentTimeRef.current = ct;
+            setMediaCurrentTime(ct);
+            const endSec = activeMedia?.endTimeSec;
+            if (endSec && endSec > 0 && ct >= endSec) {
+              if (activeMedia.loop !== false) {
+                const startTarget = activeMedia.startTimeSec || 0;
+                mediaCurrentTimeRef.current = startTarget;
+                setMediaCurrentTime(startTarget);
+                sendYouTubeIframeCommand("seekTo", [startTarget, true]);
+                sendYouTubeIframeCommand("playVideo", []);
+              } else {
+                sendYouTubeIframeCommand("pauseVideo", []);
+                setIsMediaPaused(true);
+                isMediaPausedRef.current = true;
+                useStudioStore.getState().triggerMediaEnded();
+              }
+            }
+          }
+          if (
+            typeof data.info.duration === "number" &&
+            Number.isFinite(data.info.duration) &&
+            data.info.duration > 0
+          ) {
+            mediaDurationRef.current = data.info.duration;
+            setMediaDuration(data.info.duration);
+          }
+          if (typeof data.info.playerState === "number") {
+            if (data.info.playerState === 1) {
+              setIsMediaPaused(false);
+              isMediaPausedRef.current = false;
+              sendYouTubeIframeCommand("unloadModule", ["captions"]);
+              sendYouTubeIframeCommand("unloadModule", ["cc"]);
+            }
+            if (data.info.playerState === 2) {
+              setIsMediaPaused(true);
+              isMediaPausedRef.current = true;
+            }
+            if (data.info.playerState === 0) {
+              if (activeMedia.loop !== false) {
+                const startTarget = activeMedia.startTimeSec || 0;
+                mediaCurrentTimeRef.current = startTarget;
+                setMediaCurrentTime(startTarget);
+                sendYouTubeIframeCommand("seekTo", [startTarget, true]);
+                sendYouTubeIframeCommand("playVideo", []);
+              } else {
+                useStudioStore.getState().triggerMediaEnded();
+              }
+            }
+          }
+        }
+      } catch { }
+    };
+
+    window.addEventListener("message", handleYtMessage);
+
+    const handshakeIv = setInterval(() => {
+      syncYouTubePlayerState();
+      if (!ytTelemetryActiveRef.current && !isMediaPausedRef.current) {
+        const rate = activeMedia?.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1.0);
+        const nextT = mediaCurrentTimeRef.current + 0.5 * rate;
+        mediaCurrentTimeRef.current = nextT;
+        setMediaCurrentTime(nextT);
+        const endSec = activeMedia?.endTimeSec;
+        if (endSec && endSec > 0 && nextT >= endSec) {
+          if (activeMedia.loop !== false) {
+            const startTarget = activeMedia.startTimeSec || 0;
+            mediaCurrentTimeRef.current = startTarget;
+            setMediaCurrentTime(startTarget);
+            sendYouTubeIframeCommand("seekTo", [startTarget, true]);
+          } else {
+            sendYouTubeIframeCommand("pauseVideo", []);
+            setIsMediaPaused(true);
+            isMediaPausedRef.current = true;
+          }
+        }
+      }
+    }, 500);
+
+    return () => {
+      window.removeEventListener("message", handleYtMessage);
+      clearInterval(handshakeIv);
+    };
+  }, [
+    activeMedia?.id,
+    activeMedia?.type,
+    activeMedia?.startTimeSec,
+    activeMedia?.endTimeSec,
+    activeMedia?.loop,
+    activeMedia?.playbackRate,
+    activeMedia?.isMuted,
+    fairUseConfig?.enabled,
+    fairUseConfig?.playbackRate,
+    useYtIframeFallback,
+    sendYouTubeIframeCommand,
+  ]);
+
+  // Normalized volume percentage (0 to 200%, default 100%)
+  const normalizedMediaVolumePct = React.useMemo(() => {
+    const raw = activeMedia?.volume;
+    if (typeof raw !== "number" || Number.isNaN(raw)) return 100;
+    if (raw > 0 && raw <= 1 && !Number.isInteger(raw)) return Math.round(raw * 100);
+    return Math.max(0, Math.min(200, Math.round(raw)));
+  }, [activeMedia?.volume]);
+
+  // Sanitizes non-finite durations so "Infinity:NaN" NEVER appears in the transport bar!
+  const formatMediaTime = (sec: number) => {
+    if (
+      typeof sec !== "number" ||
+      !Number.isFinite(sec) ||
+      Number.isNaN(sec) ||
+      sec <= 0 ||
+      sec > 86400 * 3
+    ) {
+      return "0:00";
+    }
+    const hrs = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    if (hrs > 0) {
+      return `${hrs}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    }
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const formattedTotalDuration = React.useMemo(() => {
+    const candidate =
+      Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
+        ? mediaDuration
+        : activeMedia?.endTimeSec && activeMedia.endTimeSec > 0
+          ? activeMedia.endTimeSec
+          : activeMedia?.durationSeconds && activeMedia.durationSeconds > 0
+            ? activeMedia.durationSeconds
+            : 0;
+    if (candidate > 0) return formatMediaTime(candidate);
+    if (
+      activeMedia?.duration &&
+      !activeMedia.duration.includes("NaN") &&
+      !activeMedia.duration.includes("Infinity") &&
+      activeMedia.duration !== "Full Video"
+    ) {
+      return activeMedia.duration;
+    }
+    return "LIVE";
+  }, [mediaDuration, activeMedia?.endTimeSec, activeMedia?.durationSeconds, activeMedia?.duration]);
+
+  const getActiveHtmlMediaElement = (): HTMLMediaElement | null => {
+    if (typeof document === "undefined") return null;
+    return (
+      (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
+      (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null)
+    );
+  };
+
+  const handleToggleMediaPlayPause = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (activeMedia?.type === "youtube" && useYtIframeFallback) {
+      if (isMediaPaused) {
+        sendYouTubeIframeCommand("playVideo", []);
+        setIsMediaPaused(false);
+      } else {
+        sendYouTubeIframeCommand("pauseVideo", []);
+        setIsMediaPaused(true);
+      }
+      return;
+    }
+    const el = getActiveHtmlMediaElement();
+    if (!el) return;
+    if (el.paused) {
+      el.play().catch(() => { });
+      setIsMediaPaused(false);
+    } else {
+      el.pause();
+      setIsMediaPaused(true);
+    }
+  };
+
+  const handleSeekMedia = (targetSeconds: number) => {
+    const minSec = activeMedia?.startTimeSec || 0;
+    const finiteDur = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : activeMedia?.durationSeconds || 0;
+    const maxDur =
+      activeMedia?.endTimeSec && activeMedia.endTimeSec > 0
+        ? activeMedia.endTimeSec
+        : finiteDur;
+    const clamped = Math.max(minSec, maxDur > 0 ? Math.min(maxDur, targetSeconds) : targetSeconds);
+
+    if (activeMedia?.type === "youtube" && useYtIframeFallback) {
+      mediaCurrentTimeRef.current = clamped;
+      sendYouTubeIframeCommand("seekTo", [clamped, true]);
+      setMediaCurrentTime(clamped);
+      return;
+    }
+    const el = getActiveHtmlMediaElement();
+    if (!el) return;
+    try {
+      el.currentTime = clamped;
+    } catch { }
+    setMediaCurrentTime(clamped);
+  };
+
+  const handleSkipMediaSeconds = (deltaSec: number, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (activeMedia?.type === "youtube" && useYtIframeFallback) {
+      handleSeekMedia((mediaCurrentTimeRef.current || mediaCurrentTime || 0) + deltaSec);
+      return;
+    }
+    const el = getActiveHtmlMediaElement();
+    if (!el) return;
+    handleSeekMedia((el.currentTime || 0) + deltaSec);
+  };
+
+  // Instant 30s Clip Extractor directly from Live Stage Video / YouTube Transport Bar
+  const handleQuickClipFromTransport = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!activeMedia) return;
+    const curSec = Math.max(0, Math.floor(mediaCurrentTimeRef.current || mediaCurrentTime || 0));
+    const clipStart = Math.max(0, curSec - 15);
+    const finiteDur = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : activeMedia?.durationSeconds || 0;
+    const clipEnd = finiteDur > 0 ? Math.min(Math.floor(finiteDur), clipStart + 30) : clipStart + 30;
+    const clipItem = {
+      ...activeMedia,
+      id: `clip-${Date.now()}`,
+      name: `✂️ Clip (${formatMediaTime(clipStart)}–${formatMediaTime(clipEnd)}) • ${activeMedia.name}`,
+      startTimeSec: clipStart,
+      endTimeSec: clipEnd,
+      duration: `${formatMediaTime(clipStart)} → ${formatMediaTime(clipEnd)}`,
+      isMuted: false,
+      volume: 100,
+    };
+    addMediaLibraryItem(clipItem);
+    setClipSavedToast(`✂️ Saved 30s Clip (${formatMediaTime(clipStart)}–${formatMediaTime(clipEnd)}) to Media Library!`);
+    setTimeout(() => setClipSavedToast(null), 3200);
+  };
+
   const pushMediaBoundsUndoState = React.useCallback(() => {
     const currentCustom = useStudioStore.getState().participantBounds["active-media"] || null;
     setMediaBoundsHistory((prev) => [...prev.slice(-14), currentCustom ? { ...currentCustom } : null]);
@@ -505,394 +845,18 @@ export const StagePreview: React.FC = () => {
     [pushMediaBoundsUndoState, resetParticipantBounds]
   );
 
-  const [showSpeakerNotes, setShowSpeakerNotes] = useState(false);
-  const [isTacticalMapModalOpen, setIsTacticalMapModalOpen] = useState(false);
-  const [isYouTubeLibraryModalOpen, setIsYouTubeLibraryModalOpen] = useState(false);
-  const [isWebsiteLibraryModalOpen, setIsWebsiteLibraryModalOpen] = useState(false);
-
-  React.useEffect(() => {
-    setMediaLoadError(false);
-    setYtStreamAttempt(0);
-    setUseYtIframeFallback(false);
-  }, [activeMedia?.id, activeMedia?.url]);
-
-  // Media Transport state for active stage video
-  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
-  const [videoDuration, setVideoDuration] = useState(0);
-  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
-  const [videoSpeed, setVideoSpeed] = useState(1.0);
-  const mediaCurrentTimeRef = useRef<number>(0);
-  const mediaDurationRef = useRef<number>(0);
-  const isMediaPausedRef = useRef<boolean>(false);
-  const ytTelemetryActiveRef = useRef<boolean>(false);
-  const [isYtJerking, setIsYtJerking] = useState<boolean>(false);
-
-  // Media Transport state for active background audio
-  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
-  const [audioDuration, setAudioDuration] = useState(0);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(true);
-  const [audioSpeed, setAudioSpeed] = useState(1.0);
-
-  const formatMediaTime = (sec: number): string => {
-    if (isNaN(sec) || sec < 0) return "0:00";
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const sendYouTubeCommand = (func: string, args: any[] = []) => {
-    // 1. Send to fallback iframe if active
-    const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
-    if (iframe && iframe.contentWindow) {
-      iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*");
-    }
-
-    // 2. Also control active HTML5 video element (YouTube direct backend stream or local video)
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      if (func === "playVideo") {
-        videoEl.play().catch(() => {});
-        isMediaPausedRef.current = false;
-        setIsVideoPlaying(true);
-      } else if (func === "pauseVideo") {
-        videoEl.pause();
-        isMediaPausedRef.current = true;
-        setIsVideoPlaying(false);
-      } else if (func === "seekTo") {
-        const sec = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
-        if (!isNaN(sec)) {
-          const dur = videoEl.duration || videoDuration || 0;
-          const target = dur > 0 && isFinite(dur) ? Math.max(0, Math.min(dur, sec)) : Math.max(0, sec);
-          videoEl.currentTime = target;
-          mediaCurrentTimeRef.current = target;
-          setVideoCurrentTime(target);
-        }
-      } else if (func === "setPlaybackRate") {
-        const rate = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
-        if (!isNaN(rate)) {
-          videoEl.playbackRate = rate;
-          setVideoSpeed(rate);
-        }
-      } else if (func === "setVolume") {
-        const vol = typeof args[0] === "number" ? args[0] : parseFloat(args[0]);
-        if (!isNaN(vol)) {
-          videoEl.volume = Math.max(0, Math.min(1, vol / 100));
-        }
-      } else if (func === "mute") {
-        videoEl.muted = true;
-      } else if (func === "unMute") {
-        videoEl.muted = false;
-      }
-    }
-  };
-  const sendYouTubeIframeCommand = sendYouTubeCommand;
-
-  const getActiveHtmlMediaElement = (): HTMLVideoElement | HTMLAudioElement | null => {
-    return (
-      (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
-      (document.getElementById("livestudio-background-audio") as HTMLAudioElement | null)
-    );
-  };
-
-  useEffect(() => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (!videoEl) return;
-
-    if (activeMedia?.startTimeSec && activeMedia.startTimeSec > 0) {
-      videoEl.currentTime = activeMedia.startTimeSec;
-    }
-
-    const updateTime = () => {
-      mediaCurrentTimeRef.current = videoEl.currentTime;
-      setVideoCurrentTime(videoEl.currentTime);
-      if (activeMedia?.endTimeSec && activeMedia.endTimeSec > 0 && videoEl.currentTime >= activeMedia.endTimeSec) {
-        if (activeMedia.loop ?? true) {
-          videoEl.currentTime = activeMedia.startTimeSec || 0;
-          mediaCurrentTimeRef.current = videoEl.currentTime;
-          videoEl.play().catch(() => {});
-        } else {
-          videoEl.pause();
-          isMediaPausedRef.current = true;
-          setIsVideoPlaying(false);
-          const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
-          if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
-            switchScene(scenes[currentIdx + 1].id);
-          }
-        }
-      }
-    };
-    const updateDuration = () => setVideoDuration(videoEl.duration || 0);
-    const onPlay = () => {
-      isMediaPausedRef.current = false;
-      setIsVideoPlaying(true);
-    };
-    const onPause = () => {
-      isMediaPausedRef.current = true;
-      setIsVideoPlaying(false);
-    };
-    const onRate = () => setVideoSpeed(videoEl.playbackRate);
-
-    videoEl.addEventListener("timeupdate", updateTime);
-    videoEl.addEventListener("durationchange", updateDuration);
-    videoEl.addEventListener("loadedmetadata", updateDuration);
-    videoEl.addEventListener("play", onPlay);
-    videoEl.addEventListener("pause", onPause);
-    videoEl.addEventListener("ratechange", onRate);
-
-    isMediaPausedRef.current = videoEl.paused;
-    mediaCurrentTimeRef.current = videoEl.currentTime || 0;
-    setIsVideoPlaying(!videoEl.paused);
-    setVideoCurrentTime(videoEl.currentTime || 0);
-    setVideoDuration(videoEl.duration || 0);
-    setVideoSpeed(videoEl.playbackRate || 1.0);
-
-    return () => {
-      videoEl.removeEventListener("timeupdate", updateTime);
-      videoEl.removeEventListener("durationchange", updateDuration);
-      videoEl.removeEventListener("loadedmetadata", updateDuration);
-      videoEl.removeEventListener("play", onPlay);
-      videoEl.removeEventListener("pause", onPause);
-      videoEl.removeEventListener("ratechange", onRate);
-    };
-  }, [activeMedia?.id, activeMedia?.url, activeMedia?.startTimeSec, activeMedia?.endTimeSec, activeMedia?.loop, scenes, activeSceneId, switchScene]);
-
-  // YouTube IFrame PostMessage Telemetry & Loop / Advance
-  useEffect(() => {
-    if (activeMedia?.type !== "youtube") return;
-
-    mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
-    isMediaPausedRef.current = false;
-    ytTelemetryActiveRef.current = false;
-
-    const onWindowMessage = (event: MessageEvent) => {
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (!data) return;
-
-        if (data.event === "infoDelivery" && data.info) {
-          if (typeof data.info.currentTime === "number") {
-            mediaCurrentTimeRef.current = data.info.currentTime;
-            ytTelemetryActiveRef.current = true;
-            setVideoCurrentTime(data.info.currentTime);
-            if (activeMedia.endTimeSec && data.info.currentTime >= activeMedia.endTimeSec) {
-              if (activeMedia.loop ?? true) {
-                mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
-                sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
-                sendYouTubeCommand("playVideo");
-              } else {
-                sendYouTubeCommand("pauseVideo");
-                isMediaPausedRef.current = true;
-                setIsVideoPlaying(false);
-                const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
-                if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
-                  switchScene(scenes[currentIdx + 1].id);
-                }
-              }
-            }
-          }
-          if (typeof data.info.duration === "number" && data.info.duration > 0) {
-            setVideoDuration(data.info.duration);
-          }
-          if (typeof data.info.playerState === "number") {
-            const isPlaying = data.info.playerState === 1;
-            isMediaPausedRef.current = !isPlaying;
-            setIsVideoPlaying(isPlaying);
-            if (data.info.playerState === 0) { // ENDED
-              if (activeMedia.loop ?? true) {
-                mediaCurrentTimeRef.current = activeMedia.startTimeSec || 0;
-                sendYouTubeCommand("seekTo", [activeMedia.startTimeSec || 0, true]);
-                sendYouTubeCommand("playVideo");
-              } else {
-                const currentIdx = scenes.findIndex((s) => s.id === activeSceneId);
-                if (currentIdx !== -1 && currentIdx < scenes.length - 1) {
-                  switchScene(scenes[currentIdx + 1].id);
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-    };
-
-    window.addEventListener("message", onWindowMessage);
-
-    const interval = setInterval(() => {
-      const iframe = document.getElementById("livestudio-youtube-iframe") as HTMLIFrameElement | null;
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage(JSON.stringify({ event: "listening" }), "*");
-        // Unload closed captions and subtitles
-        iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unloadModule", args: ["captions"] }), "*");
-        iframe.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unloadModule", args: ["cc"] }), "*");
-      }
-    }, 500);
-
-    return () => {
-      window.removeEventListener("message", onWindowMessage);
-      clearInterval(interval);
-    };
-  }, [activeMedia?.id, activeMedia?.youtubeId, activeMedia?.startTimeSec, activeMedia?.endTimeSec, activeMedia?.loop, scenes, activeSceneId, switchScene]);
-
-  // YouTube Volume Sync
-  useEffect(() => {
-    if (activeMedia?.type !== "youtube") return;
-    const vol = activeMedia.isMuted ? 0 : Math.min(100, Math.round((activeMedia.volume ?? 100)));
-    sendYouTubeCommand("setVolume", [vol]);
-    if (activeMedia.isMuted) {
-      sendYouTubeCommand("mute");
-    } else {
-      sendYouTubeCommand("unMute");
-    }
-  }, [activeMedia?.type, activeMedia?.isMuted, activeMedia?.volume]);
-
-  useEffect(() => {
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (!audioEl) return;
-    const updateTime = () => setAudioCurrentTime(audioEl.currentTime);
-    const updateDuration = () => setAudioDuration(audioEl.duration || 0);
-    const onPlay = () => setIsAudioPlaying(true);
-    const onPause = () => setIsAudioPlaying(false);
-    const onRate = () => setAudioSpeed(audioEl.playbackRate);
-
-    audioEl.addEventListener("timeupdate", updateTime);
-    audioEl.addEventListener("durationchange", updateDuration);
-    audioEl.addEventListener("loadedmetadata", updateDuration);
-    audioEl.addEventListener("play", onPlay);
-    audioEl.addEventListener("pause", onPause);
-    audioEl.addEventListener("ratechange", onRate);
-
-    setIsAudioPlaying(!audioEl.paused);
-    setAudioCurrentTime(audioEl.currentTime || 0);
-    setAudioDuration(audioEl.duration || 0);
-    setAudioSpeed(audioEl.playbackRate || 1.0);
-
-    return () => {
-      audioEl.removeEventListener("timeupdate", updateTime);
-      audioEl.removeEventListener("durationchange", updateDuration);
-      audioEl.removeEventListener("loadedmetadata", updateDuration);
-      audioEl.removeEventListener("play", onPlay);
-      audioEl.removeEventListener("pause", onPause);
-      audioEl.removeEventListener("ratechange", onRate);
-    };
-  }, [activeMedia?.id, activeMedia?.url]);
-
-  const handleTogglePlayVideo = () => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      if (videoEl.paused) {
-        videoEl.play().catch(() => {});
-        isMediaPausedRef.current = false;
-        setIsVideoPlaying(true);
-      } else {
-        videoEl.pause();
-        isMediaPausedRef.current = true;
-        setIsVideoPlaying(false);
-      }
-    }
-    if (activeMedia?.type === "youtube") {
-      if (isVideoPlaying) {
-        sendYouTubeCommand("pauseVideo");
-        isMediaPausedRef.current = true;
-        setIsVideoPlaying(false);
-      } else {
-        sendYouTubeCommand("playVideo");
-        isMediaPausedRef.current = false;
-        setIsVideoPlaying(true);
-      }
-    }
-  };
-
-  const handleSeekVideo = (time: number) => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      const dur = videoEl.duration || videoDuration || 0;
-      const targetTime = dur > 0 && isFinite(dur) ? Math.max(0, Math.min(dur, time)) : Math.max(0, time);
-      videoEl.currentTime = targetTime;
-      mediaCurrentTimeRef.current = targetTime;
-      setVideoCurrentTime(targetTime);
-    }
-    if (activeMedia?.type === "youtube") {
-      mediaCurrentTimeRef.current = time;
-      sendYouTubeCommand("seekTo", [time, true]);
-      setVideoCurrentTime(time);
-    }
-  };
-
-  const handleSkipVideo = (deltaSec: number) => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      const cur = videoEl.currentTime || mediaCurrentTimeRef.current || videoCurrentTime || 0;
-      const dur = videoEl.duration || videoDuration || 0;
-      const targetTime =
-        dur > 0 && isFinite(dur)
-          ? Math.max(0, Math.min(dur, cur + deltaSec))
-          : Math.max(0, cur + deltaSec);
-      videoEl.currentTime = targetTime;
-      mediaCurrentTimeRef.current = targetTime;
-      setVideoCurrentTime(targetTime);
-    }
-    if (activeMedia?.type === "youtube") {
-      const cur = mediaCurrentTimeRef.current || videoCurrentTime || 0;
-      const dur = videoDuration || 0;
-      const nextTime =
-        dur > 0 && isFinite(dur)
-          ? Math.max(0, Math.min(dur, cur + deltaSec))
-          : Math.max(0, cur + deltaSec);
-      mediaCurrentTimeRef.current = nextTime;
-      sendYouTubeCommand("seekTo", [nextTime, true]);
-      setVideoCurrentTime(nextTime);
-    }
-  };
-
-  const handleChangeVideoSpeed = (rate: number) => {
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      videoEl.playbackRate = rate;
-    }
-    if (activeMedia?.type === "youtube") {
-      sendYouTubeCommand("setPlaybackRate", [rate]);
-    }
-    setVideoSpeed(rate);
-  };
-
-  const handleTogglePlayAudio = () => {
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (!audioEl) return;
-    if (audioEl.paused) {
-      audioEl.play().catch(() => {});
-      setIsAudioPlaying(true);
-    } else {
-      audioEl.pause();
-      setIsAudioPlaying(false);
-    }
-  };
-
-  const handleSeekAudio = (time: number) => {
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (!audioEl) return;
-    audioEl.currentTime = Math.max(0, Math.min(audioEl.duration || 0, time));
-    setAudioCurrentTime(audioEl.currentTime);
-  };
-
-  const handleSkipAudio = (deltaSec: number) => {
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (!audioEl) return;
-    audioEl.currentTime = Math.max(0, Math.min(audioEl.duration || 0, audioEl.currentTime + deltaSec));
-    setAudioCurrentTime(audioEl.currentTime);
-  };
-
-  const handleChangeAudioSpeed = (rate: number) => {
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (!audioEl) return;
-    audioEl.playbackRate = rate;
-    setAudioSpeed(rate);
-  };
-
   const handleToggleMediaCrop = () => {
     if (mediaFitMode === "contain") {
-      // Switching to Crop (Fill) mode: default to center
       setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: 0 });
+      const customB = participantBounds["active-media"];
+      if (customB && customB.height > 45 && (customB.y > 0 || customB.height < 100)) {
+        setParticipantBounds("active-media", {
+          ...customB,
+          y: 0,
+          height: 100,
+        });
+      }
     } else {
-      // Switching to Fit mode:
       setTileTransform("active-media", { fitMode: "contain", panX: 0, panY: 0, zoom: 1 });
     }
   };
@@ -911,19 +875,19 @@ export const StagePreview: React.FC = () => {
     });
   };
 
-  const isMediaMirrored = Boolean(fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo);
-
+  // Left / Center / Right / Top / Bottom Pan Presets — Always active for YouTube & Video!
   const handleMediaCropPreset = (preset: "top" | "center" | "bottom" | "left" | "right") => {
+    const targetFit = mediaZoom > 1 ? mediaFitMode : "cover";
     if (preset === "top") {
-      setTileTransform("active-media", { fitMode: "cover", panY: -50 });
+      setTileTransform("active-media", { fitMode: targetFit, panY: -50 });
     } else if (preset === "bottom") {
-      setTileTransform("active-media", { fitMode: "cover", panY: 50 });
+      setTileTransform("active-media", { fitMode: targetFit, panY: 50 });
     } else if (preset === "left") {
-      setTileTransform("active-media", { fitMode: "cover", panX: -50 });
+      setTileTransform("active-media", { fitMode: targetFit, panX: -50 });
     } else if (preset === "right") {
-      setTileTransform("active-media", { fitMode: "cover", panX: 50 });
+      setTileTransform("active-media", { fitMode: targetFit, panX: 50 });
     } else if (preset === "center") {
-      setTileTransform("active-media", { fitMode: "cover", panY: 0, panX: 0 });
+      setTileTransform("active-media", { fitMode: targetFit, panY: 0, panX: 0 });
     }
   };
 
@@ -933,12 +897,18 @@ export const StagePreview: React.FC = () => {
       zoom: 1,
       panX: 0,
       panY: 0,
+      rotation: 0,
     });
   };
 
   const handleMediaPanMouseDown = (e: React.MouseEvent) => {
-    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
-    if ((e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("input") || (e.target as HTMLElement).closest("select")) return;
+    if (mediaFitMode !== "cover" && mediaZoom <= 1 && !hasActivePanOffset) return;
+    if (
+      (e.target as HTMLElement).closest("button") ||
+      (e.target as HTMLElement).closest("input") ||
+      (e.target as HTMLElement).closest("select")
+    )
+      return;
     e.stopPropagation();
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -960,19 +930,16 @@ export const StagePreview: React.FC = () => {
       const deltaPixelX = e.clientX - startX;
       const deltaPixelY = e.clientY - startY;
 
-      // When dragging mouse RIGHT (deltaPixelX > 0), user pulls image right to reveal left portion -> panX should decrease
-      // If mirrored (scaleX(-1)), horizontal visual motion is inverted, so direction flips
-      const xDirection = isMediaMirrored ? 1 : -1;
-      const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * 100 * xDirection;
-      const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * 100 * -1;
+      const sensitivity = mediaZoom > 1 ? 100 / Math.max(1, mediaZoom * 0.75) : 100;
+      const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * sensitivity * -1;
+      const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * sensitivity * -1;
 
-      const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
       setTileTransform("active-media", {
-        panX: Math.max(-maxPan, Math.min(maxPan, Number((initialPanX + deltaXPercent).toFixed(1)))),
-        panY: Math.max(-maxPan, Math.min(maxPan, Number((initialPanY + deltaYPercent).toFixed(1)))),
+        panX: Math.max(-50, Math.min(50, Number((initialPanX + deltaXPercent).toFixed(1)))),
+        panY: Math.max(-50, Math.min(50, Number((initialPanY + deltaYPercent).toFixed(1)))),
       });
     },
-    [isDraggingMediaPan, mediaZoom, isMediaMirrored, setTileTransform]
+    [isDraggingMediaPan, mediaZoom, setTileTransform]
   );
 
   const handleMediaPanMouseUp = React.useCallback(() => {
@@ -991,7 +958,7 @@ export const StagePreview: React.FC = () => {
   }, [isDraggingMediaPan, handleMediaPanMouseMove, handleMediaPanMouseUp]);
 
   const handleMediaPanTouchStart = (e: React.TouchEvent) => {
-    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
+    if (mediaFitMode !== "cover" && mediaZoom <= 1 && !hasActivePanOffset) return;
     if (e.touches.length !== 1) return;
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1012,14 +979,13 @@ export const StagePreview: React.FC = () => {
     const deltaPixelX = e.touches[0].clientX - startX;
     const deltaPixelY = e.touches[0].clientY - startY;
 
-    const xDirection = isMediaMirrored ? 1 : -1;
-    const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * 100 * xDirection;
-    const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * 100 * -1;
+    const sensitivity = mediaZoom > 1 ? 100 / Math.max(1, mediaZoom * 0.75) : 100;
+    const deltaXPercent = (deltaPixelX / (rectWidth || 400)) * sensitivity * -1;
+    const deltaYPercent = (deltaPixelY / (rectHeight || 300)) * sensitivity * -1;
 
-    const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
     setTileTransform("active-media", {
-      panX: Math.max(-maxPan, Math.min(maxPan, Number((initialPanX + deltaXPercent).toFixed(1)))),
-      panY: Math.max(-maxPan, Math.min(maxPan, Number((initialPanY + deltaYPercent).toFixed(1)))),
+      panX: Math.max(-50, Math.min(50, Number((initialPanX + deltaXPercent).toFixed(1)))),
+      panY: Math.max(-50, Math.min(50, Number((initialPanY + deltaYPercent).toFixed(1)))),
     });
   };
 
@@ -1028,231 +994,193 @@ export const StagePreview: React.FC = () => {
   };
 
   const handleMediaWheel = (e: React.WheelEvent) => {
-    if (mediaFitMode !== "cover" && mediaZoom <= 1) return;
+    if (mediaFitMode !== "cover" && mediaZoom <= 1 && !hasActivePanOffset) return;
     e.stopPropagation();
-    const step = e.deltaY > 0 ? 5 : -5;
-    const maxPan = mediaZoom > 1 ? 50 * mediaZoom : 50;
-    const nextPanY = Math.max(-maxPan, Math.min(maxPan, Number((mediaPanY + step).toFixed(1))));
-    setTileTransform("active-media", { panY: nextPanY });
+    if (e.shiftKey) {
+      const stepX = e.deltaY > 0 ? 5 : -5;
+      const nextPanX = Math.max(-50, Math.min(50, Number((mediaPanX + stepX).toFixed(1))));
+      setTileTransform("active-media", { panX: nextPanX });
+    } else {
+      const stepY = e.deltaY > 0 ? 5 : -5;
+      const nextPanY = Math.max(-50, Math.min(50, Number((mediaPanY + stepY).toFixed(1))));
+      setTileTransform("active-media", { panY: nextPanY });
+    }
   };
 
-  // Sync active media video & audio elements with store isMuted and volume (clamped to 0.0-1.0 for HTML elements)
+  // Sync active media video, YouTube IFrame & audio elements with store isMuted, volume, and Auto-Ducking
   React.useEffect(() => {
+    const isAnySpeakerSpeaking = participants.some(
+      (p) => (p.status === "ON_STAGE" || p.isLocal) && p.micOn !== false && p.isSpeaking
+    );
+    const shouldDuck = Boolean(
+      fairUseConfig?.enabled && fairUseConfig?.autoAudioDucking && isAnySpeakerSpeaking
+    );
+    const effectiveVolPct = shouldDuck
+      ? Math.min(normalizedMediaVolumePct, fairUseConfig?.duckingVolumePct ?? 25)
+      : normalizedMediaVolumePct;
+
+    const htmlVol = Math.max(0, Math.min(1, effectiveVolPct / 100));
     const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
     if (videoEl && activeMedia) {
-      videoEl.muted = Boolean(activeMedia.isMuted);
-      if (typeof activeMedia.volume === "number") {
-        videoEl.volume = Math.min(1, Math.max(0, activeMedia.volume > 1 ? activeMedia.volume / 100 : activeMedia.volume));
-      }
+      videoEl.muted = Boolean(activeMedia.isMuted || effectiveVolPct === 0);
+      try {
+        videoEl.volume = htmlVol;
+      } catch { }
     }
     const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
     if (audioEl && activeMedia) {
-      audioEl.muted = Boolean(activeMedia.isMuted);
-      if (typeof activeMedia.volume === "number") {
-        audioEl.volume = Math.min(1, Math.max(0, activeMedia.volume > 1 ? activeMedia.volume / 100 : activeMedia.volume));
+      audioEl.muted = Boolean(activeMedia.isMuted || effectiveVolPct === 0);
+      try {
+        audioEl.volume = htmlVol;
+      } catch { }
+    }
+    if (activeMedia?.type === "youtube" && useYtIframeFallback) {
+      if (activeMedia.isMuted || effectiveVolPct === 0) {
+        sendYouTubeIframeCommand("mute", []);
+      } else {
+        sendYouTubeIframeCommand("unMute", []);
+        sendYouTubeIframeCommand("setVolume", [Math.min(100, effectiveVolPct)]);
       }
     }
-  }, [activeMedia?.isMuted, activeMedia?.volume]);
+  }, [
+    activeMedia?.isMuted,
+    normalizedMediaVolumePct,
+    activeMedia?.id,
+    activeMedia?.type,
+    useYtIframeFallback,
+    participants,
+    fairUseConfig?.enabled,
+    fairUseConfig?.autoAudioDucking,
+    fairUseConfig?.duckingVolumePct,
+    sendYouTubeIframeCommand,
+  ]);
 
-  // Enforce Fair-Use Speed, Unlinked Pitch & 8-12s Random Jerk/Pause even during local Studio Preview
+  // Enforce Playback Speed, Pitch Shift & 8-12s Random Jerk/Pause on Video, YouTube, and Audio during Studio Preview
   useEffect(() => {
-    if (!activeMedia || !fairUseConfig?.enabled) return;
-    const videoEl = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-    if (videoEl) {
-      videoEl.playbackRate = fairUseConfig.playbackRate || 1.04;
-      (videoEl as any).preservesPitch = false;
-      (videoEl as any).mozPreservesPitch = false;
-      (videoEl as any).webkitPreservesPitch = false;
+    if (
+      !activeMedia ||
+      (activeMedia.type !== "video" && activeMedia.type !== "youtube" && activeMedia.type !== "audio")
+    )
+      return;
+    const baseRate = activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig.playbackRate || 1.04) : 1.0);
+    if (activeMedia.type === "youtube" && useYtIframeFallback) {
+      sendYouTubeIframeCommand("setPlaybackRate", [baseRate]);
     }
-    const audioEl = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-    if (audioEl) {
-      audioEl.playbackRate = fairUseConfig.playbackRate || 1.04;
-      (audioEl as any).preservesPitch = false;
-      (audioEl as any).mozPreservesPitch = false;
-      (audioEl as any).webkitPreservesPitch = false;
+    const mediaEl = getActiveHtmlMediaElement();
+    if (mediaEl) {
+      mediaEl.playbackRate = baseRate;
+      const shouldShiftPitch = Boolean(fairUseConfig?.enabled && (fairUseConfig?.audioEqProtection ?? true));
+      try {
+        (mediaEl as any).preservesPitch = !shouldShiftPitch;
+        (mediaEl as any).mozPreservesPitch = !shouldShiftPitch;
+        (mediaEl as any).webkitPreservesPitch = !shouldShiftPitch;
+      } catch { }
     }
-    if (activeMedia.type !== "video" && activeMedia.type !== "youtube") return;
-    if (!fairUseConfig?.enabled || !fairUseConfig.autoPauseIntervalSec || fairUseConfig.autoPauseIntervalSec <= 0) return;
+
+    if (!fairUseConfig?.enabled) return;
+
+    // Gentle Dual-Wave Irrational Tempo LFO (Clean audio without warble)
+    let lfoInterval: NodeJS.Timeout | null = null;
+    if (fairUseConfig.dynamicTempoVariance ?? true) {
+      let ytTempoStep = false;
+      lfoInterval = setInterval(() => {
+        const el = getActiveHtmlMediaElement();
+        if (el && !el.paused && !stageBroadcaster.isStreaming()) {
+          const centerRate = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
+          const nowT = performance.now();
+          const jitter = Math.sin(nowT / 2200) * 0.012 + Math.cos(nowT / 3700) * 0.008;
+          el.playbackRate = Number(Math.max(0.5, Math.min(2.0, centerRate + jitter)).toFixed(3));
+        } else if (activeMedia.type === "youtube" && useYtIframeFallback && !isMediaPausedRef.current) {
+          ytTempoStep = !ytTempoStep;
+          const baseR = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
+          const modRate = ytTempoStep ? baseR : (baseR <= 1.05 ? 1.05 : 1.0);
+          sendYouTubeIframeCommand("setPlaybackRate", [modRate]);
+        }
+      }, 1500);
+    }
+
+    if (
+      !fairUseConfig.autoPauseIntervalSec ||
+      fairUseConfig.autoPauseIntervalSec <= 0 ||
+      (activeMedia.type !== "video" && activeMedia.type !== "youtube")
+    ) {
+      return () => {
+        if (lfoInterval) clearInterval(lfoInterval);
+      };
+    }
 
     let timer: NodeJS.Timeout;
     const runCycle = () => {
       const delayMs =
         fairUseConfig.autoPauseIntervalSec === 8
-          ? Math.floor(8000 + Math.random() * 4000) // Random 8s to 12s
+          ? Math.floor(8000 + Math.random() * 4000)
           : fairUseConfig.autoPauseIntervalSec * 1000;
 
       timer = setTimeout(() => {
-        const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
         const mode = fairUseConfig.antiMatchMode || "jerk-skip";
+        const pauseMs = mode === "jerk-skip" ? 150 : mode === "micro-pause" ? 340 : 1500;
 
-        if (isMediaPausedRef.current || (v && v.paused)) {
-          runCycle();
-          return;
-        }
-
-        // If broadcaster is actively running composite loop, stageBroadcaster handles it; otherwise preview handles it
-        if (!stageBroadcaster.isCompositeRunning()) {
-          if (v && !v.paused) {
+        if (activeMedia.type === "youtube" && useYtIframeFallback) {
+          if (!isMediaPausedRef.current) {
+            if (mode === "jerk-skip") {
+              setIsYtJerking(true);
+              setTimeout(() => setIsYtJerking(false), 240);
+            }
+            sendYouTubeIframeCommand("pauseVideo", []);
+            setTimeout(() => {
+              if (mode === "jerk-skip" && ytTelemetryActiveRef.current && mediaCurrentTimeRef.current > 2) {
+                const nextSec = mediaCurrentTimeRef.current + 0.25;
+                mediaCurrentTimeRef.current = nextSec;
+                sendYouTubeIframeCommand("seekTo", [nextSec, true]);
+              }
+              sendYouTubeIframeCommand("playVideo", []);
+              sendYouTubeIframeCommand("unloadModule", ["captions"]);
+              sendYouTubeIframeCommand("unloadModule", ["cc"]);
+            }, pauseMs);
+          }
+        } else {
+          const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+          if (v && !v.paused && !stageBroadcaster.isStreaming()) {
+            if (mode === "jerk-skip") {
+              setIsYtJerking(true);
+              setTimeout(() => setIsYtJerking(false), 220);
+            }
             v.pause();
             setTimeout(() => {
-              const dur = v.duration || videoDuration || 0;
-              const isNearEnd = dur > 0 && isFinite(dur) && v.currentTime + 0.5 >= dur;
-              if (mode === "jerk-skip" && !isNearEnd) {
-                v.currentTime += 0.25 + Math.random() * 0.15;
-                mediaCurrentTimeRef.current = v.currentTime;
-                setVideoCurrentTime(v.currentTime);
+              if (
+                mode === "jerk-skip" &&
+                v.currentTime > 0.5 &&
+                (!Number.isFinite(v.duration) || v.currentTime + 0.4 < v.duration)
+              ) {
+                try {
+                  v.currentTime += 0.22;
+                } catch { }
               }
-              v.play().catch(() => {});
-            }, mode === "jerk-skip" ? 180 : mode === "micro-pause" ? 380 : 1800);
-          }
-
-          if (activeMedia.type === "youtube" && useYtIframeFallback) {
-            setIsYtJerking(true);
-            sendYouTubeCommand("pauseVideo");
-
-            setTimeout(() => {
-              const currentSec = mediaCurrentTimeRef.current;
-              if (mode === "jerk-skip" && currentSec > 2) {
-                const nextSec = currentSec + 0.3;
-                mediaCurrentTimeRef.current = nextSec;
-                sendYouTubeCommand("seekTo", [nextSec, true]);
-              }
-              sendYouTubeCommand("playVideo");
-              setTimeout(() => {
-                setIsYtJerking(false);
-              }, 100);
-            }, 160);
+              v.play().catch(() => { });
+            }, pauseMs);
           }
         }
         runCycle();
       }, delayMs);
     };
     runCycle();
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (lfoInterval) clearInterval(lfoInterval);
+    };
   }, [
     activeMedia?.id,
     activeMedia?.type,
-    useYtIframeFallback,
+    activeMedia?.playbackRate,
     fairUseConfig?.enabled,
     fairUseConfig?.autoPauseIntervalSec,
     fairUseConfig?.antiMatchMode,
     fairUseConfig?.playbackRate,
+    fairUseConfig?.audioEqProtection,
+    fairUseConfig?.dynamicTempoVariance,
+    useYtIframeFallback,
+    sendYouTubeIframeCommand,
   ]);
-
-  // YouTube IFrame LFO Dynamic Tempo & Volume Envelope Modulation (Anti-Audio Fingerprinting)
-  useEffect(() => {
-    if (activeMedia?.type !== "youtube" || !fairUseConfig?.enabled || !fairUseConfig?.enableAudioFairUse) return;
-
-    let lfoStep = 0;
-    const lfoInterval = setInterval(() => {
-      if (isMediaPausedRef.current) return;
-      lfoStep++;
-      // 1.02x to 1.06x dynamic tempo LFO wave (~1.1s period)
-      const baseRate = fairUseConfig.playbackRate || 1.04;
-      const rateMod = Number((baseRate + Math.sin(lfoStep * 0.35) * 0.02).toFixed(3));
-      sendYouTubeCommand("setPlaybackRate", [rateMod]);
-
-      // Subtle +/- 3% acoustic volume envelope wave
-      if (!activeMedia.isMuted) {
-        const baseVol = Math.min(100, Math.max(0, activeMedia.volume ?? 100));
-        const volMod = Math.round(Math.max(1, Math.min(100, baseVol + Math.sin(lfoStep * 0.28) * 3)));
-        sendYouTubeCommand("setVolume", [volMod]);
-      }
-    }, 1100);
-
-    return () => {
-      clearInterval(lfoInterval);
-      if (activeMedia?.type === "youtube") {
-        sendYouTubeCommand("setPlaybackRate", [fairUseConfig.playbackRate || 1.04]);
-        const vol = activeMedia.isMuted ? 0 : Math.min(100, Math.round(activeMedia.volume ?? 100));
-        sendYouTubeCommand("setVolume", [vol]);
-      }
-    };
-  }, [
-    activeMedia?.id,
-    activeMedia?.type,
-    fairUseConfig?.enabled,
-    fairUseConfig?.enableAudioFairUse,
-    fairUseConfig?.playbackRate,
-    activeMedia?.volume,
-    activeMedia?.isMuted,
-  ]);
-
-
-  // Global Clipboard Screenshot Paste (Ctrl+V / Cmd+V) & 📋 Paste Button
-  const handlePasteBlob = React.useCallback(
-    (blob: Blob) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        const newItem: MediaFileItem = {
-          id: `media-screenshot-${Date.now()}`,
-          name: `Screenshot_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
-          type: "image",
-          url: dataUrl,
-          thumbnail: dataUrl,
-          duration: "Image",
-          isUploaded: true,
-        };
-        addMediaLibraryItem(newItem);
-        if (activeSceneId) {
-          updateScene(activeSceneId, { activeMedia: newItem });
-        }
-        setActiveMedia(newItem);
-      };
-      reader.readAsDataURL(blob);
-    },
-    [addMediaLibraryItem, activeSceneId, updateScene, setActiveMedia]
-  );
-
-  useEffect(() => {
-    const onPaste = async (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        target &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-      ) {
-        return;
-      }
-      if (e.clipboardData) {
-        const items = e.clipboardData.items;
-        for (let i = 0; i < items.length; i++) {
-          if (items[i].type.startsWith("image/")) {
-            const file = items[i].getAsFile();
-            if (file) {
-              e.preventDefault();
-              handlePasteBlob(file);
-              return;
-            }
-          }
-        }
-      }
-    };
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  }, [handlePasteBlob]);
-
-  const handleClipboardButtonClick = async () => {
-    try {
-      if (!navigator.clipboard?.read) {
-        alert("Clipboard read not supported or permission denied. Please press Ctrl+V directly to paste screenshot.");
-        return;
-      }
-      const clipboardItems = await navigator.clipboard.read();
-      for (const item of clipboardItems) {
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          handlePasteBlob(blob);
-          return;
-        }
-      }
-      alert("No image found in clipboard! Press Win+Shift+S (or Cmd+Shift+4) to copy a screenshot, then click Paste.");
-    } catch (err) {
-      console.warn("Clipboard read error:", err);
-      alert("Clipboard access error. Please use Ctrl+V / Cmd+V directly to paste screenshot.");
-    }
-  };
 
   const params = useParams();
   const [copiedSlotIndex, setCopiedSlotIndex] = useState<number | null>(null);
@@ -1265,9 +1193,7 @@ export const StagePreview: React.FC = () => {
       navigator.clipboard.writeText(inviteUrl);
       setCopiedSlotIndex(slotIdx);
       setTimeout(() => setCopiedSlotIndex(null), 2500);
-    } catch {
-      // fallback
-    }
+    } catch { }
   };
 
   const onStageParticipants = participants.filter((p) => p.status === "ON_STAGE");
@@ -1296,13 +1222,34 @@ export const StagePreview: React.FC = () => {
 
   const hasVisualMedia = Boolean(
     activeMedia &&
-      (activeMedia.type === "video" ||
-        activeMedia.type === "image" ||
-        activeMedia.type === "pdf" ||
-        activeMedia.type === "youtube" ||
-        activeMedia.type === "map" ||
-        activeMedia.type === "website")
+    (activeMedia.type === "video" ||
+      activeMedia.type === "youtube" ||
+      activeMedia.type === "map" ||
+      activeMedia.type === "website" ||
+      activeMedia.type === "image" ||
+      activeMedia.type === "pdf")
   );
+
+  // Helper to swap Media and Host/Participant between Left and Right sides with 1 click!
+  const handleSwapMediaAndHostPosition = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const totalSlots = Math.max(2, totalPlannedSlots + 1);
+    if (
+      activeLayout === "cropped" ||
+      activeLayout === "podcast" ||
+      activeLayout === "side-by-side" ||
+      activeLayout === "fit" ||
+      activeLayout === "interview" ||
+      activeLayout === "stacked" ||
+      activeLayout === "presentation" ||
+      activeLayout === "speaker-large" ||
+      activeLayout === "screen-speaker"
+    ) {
+      setMediaSlotIndex(mediaSlotIndex >= 1 ? 0 : 1);
+    } else {
+      setMediaSlotIndex((mediaSlotIndex + 1) % totalSlots);
+    }
+  };
 
   const isFullBleedLayout =
     isStageCropped ||
@@ -1326,7 +1273,6 @@ export const StagePreview: React.FC = () => {
     (activeLayout === "custom" &&
       (customLayoutConfig?.mode === "solo" || customLayoutConfig?.mode === "cinema"));
 
-  // Ghost slots should be allowed in all multi-person layouts (cropped, side-by-side, 3-equal, 4-grid, presentation, etc.)
   const allowGhostSlots = !isSoloOrCinema;
 
   const effectiveExpectedSlots = hasVisualMedia
@@ -1342,8 +1288,8 @@ export const StagePreview: React.FC = () => {
     ? effectiveRemainingGuestSlots > 0
       ? effectiveRemainingGuestSlots
       : orderedParticipants.length >= 1 && orderedParticipants.length < effectiveExpectedSlots
-      ? effectiveExpectedSlots - orderedParticipants.length
-      : 0
+        ? effectiveExpectedSlots - orderedParticipants.length
+        : 0
     : 0;
 
   const totalPlannedSlots = totalGhostSlots > 0
@@ -1390,11 +1336,9 @@ export const StagePreview: React.FC = () => {
   const isDraggingOverlayRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
-  // Stage Window Resizing Split Divider (when side-by-side and no custom bounds)
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const isDraggingSplitRef = useRef(false);
 
-  // Active Participant Window Drag & Resize Session State
   const [activeDragState, setActiveDragState] = useState<{
     type: "move" | "resize";
     handle?: "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w";
@@ -1412,7 +1356,6 @@ export const StagePreview: React.FC = () => {
     hasMoved: boolean;
   } | null>(null);
 
-  // Split Divider Drag Handlers (60fps requestAnimationFrame) - Supports both vertical & horizontal dividers
   const handleSplitDividerMouseDown = (e: React.MouseEvent, orientation: "vertical" | "horizontal" = "vertical") => {
     e.preventDefault();
     e.stopPropagation();
@@ -1496,7 +1439,6 @@ export const StagePreview: React.FC = () => {
     window.addEventListener("touchend", handleTouchEnd);
   };
 
-  // Participant Tile Move Handlers (60fps, no jitter, boundary clamped)
   const handleTileMouseDown = (e: React.MouseEvent, p: Participant, currentBounds: ParticipantBounds) => {
     if (e.button !== 0 || isDrawingMode) return;
     const target = e.target as HTMLElement;
@@ -1507,12 +1449,13 @@ export const StagePreview: React.FC = () => {
 
     setSelectedParticipantId(p.id);
 
-    // StreamYard standard: in grid/column layouts, clicking selects the tile without displacing it.
-    // Floating PiP windows and Stage Media can be freely dragged/repositioned.
     const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
-    const isMedia = String(p.id) === "active-media";
-    if ((!isPipMode && !isMedia) || !stageContainerRef.current) return;
+    const hasCustomBounds = Boolean(participantBounds[String(p.id)]);
+    if ((!isPipMode && !hasCustomBounds) || !stageContainerRef.current) return;
 
+    if (String(p.id) === "active-media") {
+      pushMediaBoundsUndoState();
+    }
     const startClientX = e.clientX;
     const startClientY = e.clientY;
     const isLocked = currentBounds.isLockedRatio !== false;
@@ -1562,102 +1505,6 @@ export const StagePreview: React.FC = () => {
           width: startBounds.width,
           height: startBounds.height,
           isLockedRatio: dragSessionRef.current.isLockedRatio,
-        });
-      });
-    };
-
-    const onMouseUp = () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      dragSessionRef.current = null;
-      setActiveDragState(null);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-
-    window.addEventListener("mousemove", onMouseMove, { passive: false });
-    window.addEventListener("mouseup", onMouseUp);
-  };
-
-  // 8-Way Interactive Mouse Resize Handler for Active Media Window
-  const handleMediaResizeMouseDown = (
-    e: React.MouseEvent,
-    handle: "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w",
-    currentBounds: ParticipantBounds
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!stageContainerRef.current) return;
-
-    setSelectedParticipantId("active-media");
-    pushMediaBoundsUndoState();
-
-    const startClientX = e.clientX;
-    const startClientY = e.clientY;
-
-    dragSessionRef.current = {
-      type: "resize",
-      handle,
-      participantId: "active-media",
-      startClientX,
-      startClientY,
-      startBounds: { ...currentBounds },
-      isLockedRatio: false,
-      hasMoved: false,
-    };
-
-    setActiveDragState({ type: "resize", handle, participantId: "active-media" });
-
-    let rafId: number | null = null;
-
-    const onMouseMove = (moveEvt: MouseEvent) => {
-      if (!dragSessionRef.current || !stageContainerRef.current) return;
-      const deltaPixelX = moveEvt.clientX - startClientX;
-      const deltaPixelY = moveEvt.clientY - startClientY;
-
-      if (!dragSessionRef.current.hasMoved) {
-        if (Math.hypot(deltaPixelX, deltaPixelY) < 3) return;
-        dragSessionRef.current.hasMoved = true;
-      }
-
-      if (rafId !== null) cancelAnimationFrame(rafId);
-
-      rafId = requestAnimationFrame(() => {
-        if (!dragSessionRef.current || !stageContainerRef.current) return;
-        const rect = stageContainerRef.current.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return;
-
-        const deltaXPercent = (deltaPixelX / rect.width) * 100;
-        const deltaYPercent = (deltaPixelY / rect.height) * 100;
-        const { startBounds } = dragSessionRef.current;
-
-        let newX = startBounds.x;
-        let newY = startBounds.y;
-        let newW = startBounds.width;
-        let newH = startBounds.height;
-
-        if (handle.includes("e")) {
-          newW = Math.max(18, Math.min(100 - startBounds.x, startBounds.width + deltaXPercent));
-        }
-        if (handle.includes("s")) {
-          newH = Math.max(18, Math.min(100 - startBounds.y, startBounds.height + deltaYPercent));
-        }
-        if (handle.includes("w")) {
-          const clampedDelta = Math.max(-startBounds.x, Math.min(startBounds.width - 18, deltaXPercent));
-          newX = startBounds.x + clampedDelta;
-          newW = startBounds.width - clampedDelta;
-        }
-        if (handle.includes("n")) {
-          const clampedDelta = Math.max(-startBounds.y, Math.min(startBounds.height - 18, deltaYPercent));
-          newY = startBounds.y + clampedDelta;
-          newH = startBounds.height - clampedDelta;
-        }
-
-        setParticipantBounds("active-media", {
-          x: Number(newX.toFixed(1)),
-          y: Number(newY.toFixed(1)),
-          width: Number(newW.toFixed(1)),
-          height: Number(newH.toFixed(1)),
-          isLockedRatio: false,
         });
       });
     };
@@ -1750,7 +1597,86 @@ export const StagePreview: React.FC = () => {
     window.addEventListener("touchend", onTouchEnd);
   };
 
-  // Overlay Dragging Handlers
+  const handleTileResizeMouseDown = (
+    e: React.MouseEvent,
+    targetId: string | number,
+    handle: "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w",
+    currentBounds: ParticipantBounds
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!stageContainerRef.current) return;
+
+    if (String(targetId) === "active-media") {
+      pushMediaBoundsUndoState();
+    }
+    setSelectedParticipantId(targetId);
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startB = { ...currentBounds };
+
+    setActiveDragState({ type: "resize", handle, participantId: targetId });
+
+    let rafId: number | null = null;
+    const onMouseMove = (moveEvt: MouseEvent) => {
+      if (!stageContainerRef.current) return;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (!stageContainerRef.current) return;
+        const rect = stageContainerRef.current.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+
+        const dxPct = ((moveEvt.clientX - startClientX) / rect.width) * 100;
+        const dyPct = ((moveEvt.clientY - startClientY) / rect.height) * 100;
+
+        let nextX = startB.x;
+        let nextY = startB.y;
+        let nextW = startB.width;
+        let nextH = startB.height;
+        const minW = 18;
+        const minH = 18;
+
+        if (handle.includes("e")) {
+          nextW = Math.max(minW, Math.min(100 - startB.x, startB.width + dxPct));
+        }
+        if (handle.includes("s")) {
+          nextH = Math.max(minH, Math.min(100 - startB.y, startB.height + dyPct));
+        }
+        if (handle.includes("w")) {
+          const maxDeltaLeft = startB.width - minW;
+          const clampedDx = Math.max(-startB.x, Math.min(maxDeltaLeft, dxPct));
+          nextX = startB.x + clampedDx;
+          nextW = startB.width - clampedDx;
+        }
+        if (handle.includes("n")) {
+          const maxDeltaTop = startB.height - minH;
+          const clampedDy = Math.max(-startB.y, Math.min(maxDeltaTop, dyPct));
+          nextY = startB.y + clampedDy;
+          nextH = startB.height - clampedDy;
+        }
+
+        setParticipantBounds(targetId, {
+          x: Number(nextX.toFixed(1)),
+          y: Number(nextY.toFixed(1)),
+          width: Number(nextW.toFixed(1)),
+          height: Number(nextH.toFixed(1)),
+          zIndex: startB.zIndex || 25,
+          isLockedRatio: false,
+        });
+      });
+    };
+
+    const onMouseUp = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      setActiveDragState(null);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove, { passive: false });
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
   const handleOverlayMouseDown = (e: React.MouseEvent) => {
     if (!stageContainerRef.current || !activeStageOverlay) return;
     const stageRect = stageContainerRef.current.getBoundingClientRect();
@@ -1908,7 +1834,6 @@ export const StagePreview: React.FC = () => {
     }
   };
 
-  // Helper to render individual participant tile using real WebRTC VideoTrackView
   const renderTile = (p?: Participant | null, index: number = 0, extraClasses = "") => {
     if (!p) return null;
     const isScreen = p.role === "screen" || p.isScreen === true;
@@ -1922,13 +1847,13 @@ export const StagePreview: React.FC = () => {
         data-participant-initials={
           p.name
             ? p.name
-                .trim()
-                .split(" ")
-                .map((n) => (n ? n[0] : ""))
-                .filter(Boolean)
-                .join("")
-                .toUpperCase()
-                .slice(0, 2) || "G"
+              .trim()
+              .split(" ")
+              .map((n) => (n ? n[0] : ""))
+              .filter(Boolean)
+              .join("")
+              .toUpperCase()
+              .slice(0, 2) || "G"
             : "G"
         }
         data-participant-cam={p.camOn ? "on" : "off"}
@@ -1956,15 +1881,13 @@ export const StagePreview: React.FC = () => {
     );
   };
 
-  // Helper to render active stage media (video/slides/image)
+  // Helper to render active stage media (video/slides/image/youtube/map/website)
   const renderMediaTile = (currentMediaBounds?: ParticipantBounds) => {
     if (!activeMedia) return null;
     const isTransparentCard = Boolean(mediaTransform.isTransparentBg);
     const isMediaFullBleed = isFullBleedLayout || mediaFitMode === "cover";
     const effBounds = currentMediaBounds || { x: 0, y: 0, width: 100, height: 100 };
     const touchesBottomTicker = Boolean(showTicker && effBounds.y + effBounds.height > 88);
-    const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
-
     return (
       <div
         data-stage-tile="true"
@@ -1974,14 +1897,13 @@ export const StagePreview: React.FC = () => {
         data-participant-fit={mediaFitMode}
         data-transparent-card={isTransparentCard ? "true" : "false"}
         className={cn(
-          "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all duration-300",
-          isMediaTransitioning && "opacity-30 scale-[0.98] blur-[1px]",
+          "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all",
           isMediaFullBleed ? "rounded-none" : "rounded-2xl",
           isTransparentCard
             ? "bg-transparent border-0 shadow-none"
             : isMediaFullBleed
-            ? "bg-black border-0 shadow-none"
-            : "bg-black/95 border border-indigo-500/30 shadow-2xl"
+              ? "bg-black border-0 shadow-none"
+              : "bg-black/95 border border-indigo-500/30 shadow-2xl"
         )}
       >
         {/* Inner Media Viewport with Pan & Zoom Transform */}
@@ -2023,20 +1945,31 @@ export const StagePreview: React.FC = () => {
                 </button>
               </div>
             </div>
+          ) : activeMedia.type === "website" ? (
+            <InteractiveWebsiteStageView
+              item={activeMedia}
+              zoom={Number((mediaZoom * breathScale).toFixed(3))}
+              panX={mediaPanX}
+              panY={mediaPanY}
+              rotation={mediaRotation}
+              isMirrored={isMediaMirrored}
+              onOpenLibraryModal={() => setIsWebsiteModalOpen(true)}
+            />
           ) : activeMedia.type === "map" && activeMedia.mapConfig ? (
             <div
               style={{
                 width: "100%",
                 height: "100%",
-                transform: [
-                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
-                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
-                    : "",
-                  mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
-                  isMediaMirrored ? "scaleX(-1)" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ") || undefined,
+                transform:
+                  [
+                    mediaZoom * breathScale > 1.001
+                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
+                      : "",
+                    mediaRotation ? `rotate(${mediaRotation}deg)` : "",
+                    isMediaMirrored ? "scaleX(-1)" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined,
                 transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
               }}
               className="w-full h-full relative pointer-events-auto"
@@ -2047,30 +1980,20 @@ export const StagePreview: React.FC = () => {
                 isInteractive={true}
                 onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
                 onConfigChange={(nextMapCfg) => {
-                  const updatedMedia = { ...activeMedia, mapConfig: { ...activeMedia.mapConfig, ...nextMapCfg } as TacticalMapConfig };
+                  const mergedCfg = { ...activeMedia.mapConfig!, ...nextMapCfg };
+                  const updatedMedia = { ...activeMedia, mapConfig: mergedCfg };
                   setActiveMedia(updatedMedia);
-                  useStudioStore.getState().updateMediaLibraryItem(activeMedia.id, { mapConfig: { ...activeMedia.mapConfig, ...nextMapCfg } as TacticalMapConfig });
+                  useStudioStore.getState().updateMediaLibraryItem(activeMedia.id, { mapConfig: mergedCfg });
                 }}
               />
             </div>
-          ) : activeMedia.type === "website" ? (
-            <InteractiveWebsiteStageView
-              item={activeMedia}
-              zoom={Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(3))}
-              panX={mediaPanX}
-              panY={mediaPanY}
-              rotation={mediaTransform.rotation || 0}
-              isMirrored={isMediaMirrored}
-              onOpenLibraryModal={() => setIsWebsiteLibraryModalOpen(true)}
-            />
-          ) : activeMedia.type === "youtube" && useYtIframeFallback && (activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url)) ? (
+          ) : activeMedia.type === "youtube" && useYtIframeFallback && activeMedia.youtubeId ? (
             (() => {
-              // Mathematical Aspect-Ratio Cover Scaling for 16:9 YouTube iframe
               const tileRelAspect = Math.max(
                 0.2,
                 Math.min(4.0, (effBounds.width || 100) / Math.max(1, effBounds.height || 100))
               );
-              const isCoverFill = mediaFitMode === "cover";
+              const isCoverFill = mediaFitMode === "cover" || Math.abs(mediaPanX) > 0.5;
               const iframeWidthPct = isCoverFill
                 ? tileRelAspect < 1
                   ? Math.ceil((1 / tileRelAspect) * 108)
@@ -2083,21 +2006,23 @@ export const StagePreview: React.FC = () => {
                 : 118;
 
               const ytTotalScale = Number(
-                (mediaZoom * (isBreathingActive ? breathScale : 1) * (isYtJerking ? 1.045 : 1)).toFixed(4)
+                (mediaZoom * breathScale * (isYtJerking ? 1.045 : 1)).toFixed(4)
               );
-              const canPanYt = isCoverFill || mediaZoom > 1;
-              const ytShiftX = canPanYt
-                ? Number((-mediaPanX * 0.65 + (isYtJerking ? 1.4 : 0)).toFixed(2))
-                : isYtJerking
-                ? 1.4
-                : 0;
-              const ytShiftY = canPanYt
-                ? Number((-mediaPanY * 0.65 + (isYtJerking ? -0.9 : 0)).toFixed(2))
-                : isYtJerking
-                ? -0.9
-                : 0;
-
-              const effectiveYtId = activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url);
+              const canPanYt = isCoverFill || mediaZoom > 1 || hasActivePanOffset;
+              const ytShiftX = Number(
+                (
+                  (canPanYt ? -mediaPanX * 0.65 : 0) +
+                  breathState.tx +
+                  (isYtJerking ? 1.4 : 0)
+                ).toFixed(2)
+              );
+              const ytShiftY = Number(
+                (
+                  (canPanYt ? -mediaPanY * 0.65 : 0) +
+                  breathState.ty +
+                  (isYtJerking ? -0.9 : 0)
+                ).toFixed(2)
+              );
 
               return (
                 <div
@@ -2110,7 +2035,9 @@ export const StagePreview: React.FC = () => {
                           ? `translate3d(${ytShiftX}%, ${ytShiftY}%, 0)`
                           : "",
                         ytTotalScale > 1.001 ? `scale(${ytTotalScale})` : "",
-                        mediaTransform.rotation ? `rotate(${mediaTransform.rotation}deg)` : "",
+                        mediaRotation || breathState.rot
+                          ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
+                          : "",
                         isMediaMirrored ? "scaleX(-1)" : "",
                       ]
                         .filter(Boolean)
@@ -2119,15 +2046,15 @@ export const StagePreview: React.FC = () => {
                     cursor: canPanYt ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
                     filter:
                       fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                        ? "contrast(1.04) saturate(1.04)"
+                        ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
                         : undefined,
                   }}
                   className="w-full h-full relative overflow-hidden pointer-events-auto bg-black"
                 >
                   <iframe
                     id="livestudio-active-youtube-iframe"
-                    key={effectiveYtId}
-                    src={`https://www.youtube-nocookie.com/embed/${effectiveYtId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${effectiveYtId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
+                    key={activeMedia.youtubeId}
+                    src={`https://www.youtube-nocookie.com/embed/${activeMedia.youtubeId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${activeMedia.youtubeId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
                     title={activeMedia.name}
                     allow="autoplay; encrypted-media; picture-in-picture"
                     onLoad={(e) => {
@@ -2146,47 +2073,50 @@ export const StagePreview: React.FC = () => {
                           sendYouTubeIframeCommand("mute", []);
                         } else {
                           sendYouTubeIframeCommand("unMute", []);
-                          sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+                          sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct || 100)]);
+                          sendYouTubeIframeCommand("playVideo", []);
                         }
                         const rate =
-                          fairUseConfig?.enabled ? fairUseConfig.playbackRate || 1.04 : 1.0;
+                          activeMedia.playbackRate ||
+                          (fairUseConfig?.enabled ? fairUseConfig.playbackRate || 1.04 : 1.0);
                         sendYouTubeIframeCommand("setPlaybackRate", [rate]);
                       };
                       initPlayer();
-                      setTimeout(initPlayer, 350);
-                      setTimeout(initPlayer, 900);
+                      setTimeout(initPlayer, 250);
+                      setTimeout(initPlayer, 750);
+                      setTimeout(initPlayer, 1500);
                     }}
                     style={{
-                      width: `${iframeWidthPct}%`,
-                      height: `${iframeHeightPct}%`,
                       position: "absolute",
                       top: "50%",
                       left: "50%",
+                      width: `${iframeWidthPct}%`,
+                      height: `${iframeHeightPct}%`,
                       transform: "translate(-50%, -50%)",
                     }}
-                    className="border-0 pointer-events-auto"
+                    className="border-0 pointer-events-none select-none"
                   />
                 </div>
               );
             })()
-          ) : (activeMedia.type === "video" || (activeMedia.type === "youtube" && !useYtIframeFallback)) ? (
+          ) : activeMedia.type === "video" || activeMedia.type === "youtube" ? (
             <video
               id="livestudio-active-media-video"
               src={
-                activeMedia.type === "youtube"
+                activeMedia.type === "youtube" && activeMedia.youtubeId
                   ? ytStreamAttempt === 0
-                    ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
-                    : `/youtube-stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
+                    ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId}`
+                    : `/youtube-stream?videoId=${activeMedia.youtubeId}`
                   : activeMedia.url
               }
               autoPlay
-              controls={false}
               playsInline
-              loop={activeMedia.loop ?? true}
+              preload="auto"
+              loop={(activeMedia.loop ?? true) && !activeMedia.startTimeSec && !activeMedia.endTimeSec}
               muted={Boolean(activeMedia.isMuted)}
               crossOrigin="anonymous"
               onError={() => {
-                if (activeMedia.type === "youtube") {
+                if (activeMedia.type === "youtube" && activeMedia.youtubeId) {
                   if (ytStreamAttempt === 0) {
                     setYtStreamAttempt(1);
                   } else {
@@ -2196,63 +2126,126 @@ export const StagePreview: React.FC = () => {
                   setMediaLoadError(true);
                 }
               }}
-              onLoadedMetadata={(e) => {
+              onCanPlay={(e) => {
+                ytReadyConfirmedRef.current = true;
                 const v = e.currentTarget;
-                if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
-                  v.currentTime = activeMedia.startTimeSec;
+                if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
+                  v.muted = false;
+                  try {
+                    v.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
+                  } catch { }
                 }
-                const dur = activeMedia.endTimeSec || v.duration || 0;
-                setVideoDuration(dur);
-                mediaDurationRef.current = dur;
+                if (v.paused && !isMediaPausedRef.current) {
+                  v.play().catch(() => { });
+                }
+              }}
+              onLoadedMetadata={(e) => {
+                ytReadyConfirmedRef.current = true;
+                const v = e.currentTarget;
+                if (Number.isFinite(v.duration) && v.duration > 0 && v.duration < 86400 * 3) {
+                  setMediaDuration(v.duration);
+                  mediaDurationRef.current = v.duration;
+                }
+                if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
+                  try {
+                    v.currentTime = activeMedia.startTimeSec;
+                  } catch { }
+                  setMediaCurrentTime(activeMedia.startTimeSec);
+                }
+                if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
+                  v.muted = false;
+                  try {
+                    v.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
+                  } catch { }
+                }
+                v.play().catch(() => {
+                  // If browser blocks unmuted autoplay before gesture, start playing and unmute immediately
+                  v.muted = false;
+                });
+                setIsMediaPaused(v.paused);
               }}
               onTimeUpdate={(e) => {
-                const ct = e.currentTarget.currentTime;
-                setVideoCurrentTime(ct);
-                mediaCurrentTimeRef.current = ct;
+                const v = e.currentTarget;
+                const ct = v.currentTime || 0;
+                setMediaCurrentTime(ct);
+                if (
+                  Number.isFinite(v.duration) &&
+                  v.duration > 0 &&
+                  v.duration < 86400 * 3 &&
+                  mediaDuration !== v.duration
+                ) {
+                  setMediaDuration(v.duration);
+                  mediaDurationRef.current = v.duration;
+                }
                 if (activeMedia.endTimeSec && activeMedia.endTimeSec > 0 && ct >= activeMedia.endTimeSec) {
                   if (activeMedia.loop !== false) {
-                    e.currentTarget.currentTime = activeMedia.startTimeSec || 0;
-                    e.currentTarget.play().catch(() => {});
+                    v.currentTime = activeMedia.startTimeSec || 0;
+                    v.play().catch(() => { });
                   } else {
-                    e.currentTarget.pause();
-                    setIsVideoPlaying(false);
+                    v.pause();
+                    setIsMediaPaused(true);
                     useStudioStore.getState().triggerMediaEnded();
                   }
                 }
               }}
               onEnded={() => {
                 if (activeMedia.loop !== false) {
-                  const el = getActiveHtmlMediaElement();
-                  if (el) {
-                    el.currentTime = activeMedia.startTimeSec || 0;
-                    el.play().catch(() => {});
+                  const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+                  if (v) {
+                    v.currentTime = activeMedia.startTimeSec || 0;
+                    v.play().catch(() => { });
                   }
                 } else {
-                  setIsVideoPlaying(false);
                   useStudioStore.getState().triggerMediaEnded();
                 }
               }}
+              onPlay={() => setIsMediaPaused(false)}
+              onPause={() => setIsMediaPaused(true)}
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                transform: [
-                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
-                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
-                    : "",
-                  (mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0) !== 0
-                    ? `rotate(${Number(((mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0)).toFixed(2))}deg)`
-                    : "",
-                  isMediaMirrored ? "scaleX(-1)" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ") || undefined,
+                transform:
+                  [
+                    breathState.tx !== 0 ||
+                      breathState.ty !== 0 ||
+                      (mediaFitMode === "contain" && hasActivePanOffset)
+                      ? `translate3d(${Number(
+                        (
+                          breathState.tx +
+                          (mediaFitMode === "contain" ? -mediaPanX * 0.45 : 0)
+                        ).toFixed(2)
+                      )}%, ${Number(
+                        (
+                          breathState.ty +
+                          (mediaFitMode === "contain" ? -mediaPanY * 0.45 : 0)
+                        ).toFixed(2)
+                      )}%, 0)`
+                      : "",
+                    mediaZoom * breathScale > 1.001
+                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
+                      : "",
+                    mediaRotation || breathState.rot
+                      ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
+                      : "",
+                    isMediaMirrored ? "scaleX(-1)" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined,
                 transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
-                cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                cursor:
+                  mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset
+                    ? isDraggingMediaPan
+                      ? "grabbing"
+                      : "grab"
+                    : "default",
                 userSelect: "none",
-                transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
+                transition:
+                  isDraggingMediaPan || breathScale > 1.001
+                    ? "none"
+                    : "object-position 0.12s ease-out, transform 0.12s ease-out, transform-origin 0.12s ease-out",
                 filter:
                   fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                    ? "contrast(1.04) saturate(1.04)"
+                    ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
                     : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
@@ -2267,24 +2260,48 @@ export const StagePreview: React.FC = () => {
               style={{
                 objectFit: mediaFitMode,
                 objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
-                transform: [
-                  mediaZoom * (isBreathingActive ? breathScale : 1) > 1.001
-                    ? `scale(${Number((mediaZoom * (isBreathingActive ? breathScale : 1)).toFixed(4))})`
-                    : "",
-                  (mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0) !== 0
-                    ? `rotate(${Number(((mediaTransform.rotation || 0) + (isBreathingActive ? breathTilt : 0)).toFixed(2))}deg)`
-                    : "",
-                  isMediaMirrored ? "scaleX(-1)" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ") || undefined,
+                transform:
+                  [
+                    breathState.tx !== 0 ||
+                      breathState.ty !== 0 ||
+                      (mediaFitMode === "contain" && hasActivePanOffset)
+                      ? `translate3d(${Number(
+                        (
+                          breathState.tx +
+                          (mediaFitMode === "contain" ? -mediaPanX * 0.45 : 0)
+                        ).toFixed(2)
+                      )}%, ${Number(
+                        (
+                          breathState.ty +
+                          (mediaFitMode === "contain" ? -mediaPanY * 0.45 : 0)
+                        ).toFixed(2)
+                      )}%, 0)`
+                      : "",
+                    mediaZoom * breathScale > 1.001
+                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
+                      : "",
+                    mediaRotation || breathState.rot
+                      ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
+                      : "",
+                    isMediaMirrored ? "scaleX(-1)" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined,
                 transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
-                cursor: mediaFitMode === "cover" || mediaZoom > 1 ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
+                cursor:
+                  mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset
+                    ? isDraggingMediaPan
+                      ? "grabbing"
+                      : "grab"
+                    : "default",
                 userSelect: "none",
-                transition: isDraggingMediaPan ? "none" : "object-position 0.15s ease-out, transform 0.15s ease-out",
+                transition:
+                  isDraggingMediaPan || breathScale > 1.001
+                    ? "none"
+                    : "object-position 0.12s ease-out, transform 0.12s ease-out, transform-origin 0.12s ease-out",
                 filter:
                   fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                    ? "contrast(1.04) saturate(1.04)"
+                    ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
                     : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
@@ -2295,32 +2312,45 @@ export const StagePreview: React.FC = () => {
           {isDraggingMediaPan && (
             <div className="absolute inset-0 pointer-events-none border-2 border-cyan-400/80 bg-cyan-950/20 flex items-center justify-center z-30">
               <span className="px-2.5 py-1 rounded-md bg-black/90 text-[11px] text-cyan-300 font-mono shadow-xl border border-cyan-500/40">
-                ✋ Pos: X {Math.round(objectPosX)}% • Y {Math.round(objectPosY)}%
+                ✋ Pan Position: L/R {Math.round(objectPosX)}% • T/B {Math.round(objectPosY)}%
               </span>
             </div>
           )}
 
-          {/* Help hint when hovering in crop mode */}
-          {(mediaFitMode === "cover" || mediaZoom > 1) && !isDraggingMediaPan && (
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
-              <span>✋ Drag to move</span>
+          {/* Help hint when hovering in crop/pan mode */}
+          {(mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset) && !isDraggingMediaPan && (
+            <div className="absolute bottom-14 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
+              <span>✋ Drag video to pan Left/Right</span>
               <span className="text-white/40">•</span>
-              <span>Use Left / Center / Right / Top buttons</span>
+              <span>Or use ◄ Left / Mid / Right ► in top bar</span>
             </div>
           )}
         </div>
 
-        {/* 60FPS Fair-Use Canvas Overlay (Multi-scale Film Grain, Dual-Core Vintage Lines, Corner Vignette) */}
-        {fairUseConfig?.enabled && <FairUseCanvasOverlay config={fairUseConfig} />}
+        {/* 60FPS HTML5 Canvas Fair-Use Film Grain + Refined 35mm Vintage Hairlines + Dynamic Vignette */}
+        {fairUseConfig?.enabled &&
+          ((fairUseConfig?.filmGrainOverlay ?? true) ||
+            (fairUseConfig?.vintageLinesOverlay ?? true)) && (
+            <FairUseCanvasOverlay
+              grainEnabled={fairUseConfig?.filmGrainOverlay ?? true}
+              grainIntensity={fairUseConfig?.grainIntensity || "random"}
+              linesEnabled={fairUseConfig?.vintageLinesOverlay ?? true}
+              linesIntensity={fairUseConfig?.vintageLinesIntensity || "medium"}
+            />
+          )}
 
         {/* YouTube Fair Use / Reaction Badge */}
         {fairUseConfig?.enabled && (
           <div
             className={cn(
               "absolute left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none transition-all",
-              activeMedia.type === "video" && mediaFitMode === "contain" && mediaZoom === 1
-                ? "bottom-11"
-                : "bottom-3"
+              activeMedia.type === "video" || activeMedia.type === "youtube"
+                ? touchesBottomTicker
+                  ? "bottom-20"
+                  : "bottom-12"
+                : touchesBottomTicker
+                  ? "bottom-11"
+                  : "bottom-3"
             )}
           >
             <ShieldAlert className="w-3 h-3 text-slate-950" />
@@ -2328,151 +2358,144 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* Multi-Slide Presentation Deck Controls */}
-        {activeMedia.slides && activeMedia.slides.length > 0 && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/50 shadow-2xl pointer-events-auto">
-            <button
-              type="button"
-              onClick={prevSlide}
-              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Previous Slide"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-[11px] font-mono text-indigo-300 font-bold px-2 select-none">
-              {(activeMedia.currentSlideIndex ?? 0) + 1} / {activeMedia.slides.length}
-            </span>
-            <button
-              type="button"
-              onClick={nextSlide}
-              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Next Slide"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {/* Custom Broadcast Media Transport Bar for Video & YouTube (Ticker-Aware) */}
-        {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+        {/* Custom Broadcast Video & YouTube Transport Bar */}
+        {(activeMedia.type === "video" || activeMedia.type === "youtube") && !mediaLoadError && (
           <div
-            className={cn(
-              "absolute left-1/2 -translate-x-1/2 z-40 bg-[#0d0e1c]/90 hover:bg-[#0d0e1c]/98 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 shadow-2xl flex items-center gap-2 max-w-[95%] pointer-events-auto transition-all",
-              touchesBottomTicker ? "bottom-12" : "bottom-2.5"
-            )}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
-          >
-            {activeMedia.type === "youtube" && (
-              <button
-                type="button"
-                onClick={() => setIsYouTubeLibraryModalOpen(true)}
-                className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                title="Edit Start/End Time or Replace YouTube Clip"
-              >
-                <Youtube className="w-3 h-3 text-red-400" />
-                <span>Clip</span>
-              </button>
+            className={cn(
+              "absolute inset-x-2.5 z-30 bg-[#080912]/92 backdrop-blur-md border border-white/15 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5 shadow-2xl opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pointer-events-auto",
+              touchesBottomTicker ? "bottom-11" : "bottom-2"
             )}
-
-            {/* Play/Pause */}
+          >
+            {/* Instant 30s Clip Button */}
             <button
               type="button"
-              onClick={handleTogglePlayVideo}
-              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-              title={isVideoPlaying ? "Pause Video" : "Play Video"}
+              onClick={handleQuickClipFromTransport}
+              className="px-2 py-1 rounded-lg bg-rose-600/90 hover:bg-rose-500 text-white text-[9.5px] font-bold flex items-center gap-1 shrink-0 shadow"
+              title="Extract 30s Highlight Clip around current timestamp to Media Library"
             >
-              {isVideoPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+              <Scissors className="w-3 h-3" />
+              <span>Clip</span>
             </button>
 
-            {/* Skip -10s */}
+            {/* Play / Pause */}
             <button
               type="button"
-              onClick={() => handleSkipVideo(-10)}
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Skip back 10 seconds"
+              onClick={handleToggleMediaPlayPause}
+              className="w-6 h-6 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shrink-0 shadow"
+              title={isMediaPaused ? "Play Video" : "Pause Video"}
+            >
+              {isMediaPaused ? <Play className="w-3 h-3 fill-current ml-0.5" /> : <Pause className="w-3 h-3 fill-current" />}
+            </button>
+
+            {/* Rewind -10s / Forward +10s */}
+            <button
+              type="button"
+              onClick={(e) => handleSkipMediaSeconds(-10, e)}
+              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white shrink-0"
+              title="Rewind 10 seconds"
             >
               -10s
             </button>
 
-            {/* Current Time / Total Duration */}
-            <span className="text-[10px] font-mono text-slate-300 min-w-[65px] text-center select-none">
-              {formatMediaTime(videoCurrentTime)} / {formatMediaTime(videoDuration)}
+            {/* Timeline Seekbar with Clean Duration (No Infinity:NaN!) */}
+            <span className="text-[9.5px] font-mono text-cyan-300 shrink-0">
+              {formatMediaTime(mediaCurrentTime)} / {formattedTotalDuration}
             </span>
-
-            {/* Interactive Timeline Seekbar */}
             <input
               type="range"
-              min={activeMedia.startTimeSec || 0}
-              max={activeMedia.endTimeSec && activeMedia.endTimeSec > 0 ? activeMedia.endTimeSec : (videoDuration || 100)}
-              step="0.5"
-              value={videoCurrentTime}
-              onChange={(e) => handleSeekVideo(Number(e.target.value))}
-              className="w-24 sm:w-36 md:w-48 h-1 accent-indigo-400 bg-white/20 rounded cursor-pointer"
-              title="Seek timeline"
+              min={0}
+              max={Math.max(
+                1,
+                Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
+                  ? mediaDuration
+                  : activeMedia.durationSeconds || 300
+              )}
+              step={0.5}
+              value={Math.min(
+                mediaCurrentTime,
+                Math.max(
+                  1,
+                  Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
+                    ? mediaDuration
+                    : activeMedia.durationSeconds || 300
+                )
+              )}
+              onChange={(e) => handleSeekMedia(Number(e.target.value))}
+              className="flex-1 h-1.5 accent-indigo-500 bg-white/20 rounded-lg cursor-pointer min-w-[50px]"
+              title="Seek video timeline"
             />
 
-            {/* Skip +10s */}
             <button
               type="button"
-              onClick={() => handleSkipVideo(10)}
-              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Skip forward 10 seconds"
+              onClick={(e) => handleSkipMediaSeconds(10, e)}
+              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white shrink-0"
+              title="Forward 10 seconds"
             >
               +10s
             </button>
 
-            {/* Speed Selector */}
+            {/* Playback Speed Selector */}
             <select
-              value={videoSpeed}
-              onChange={(e) => handleChangeVideoSpeed(Number(e.target.value))}
-              className="bg-black/60 border border-white/15 rounded px-1 py-0.5 text-[10px] text-indigo-300 font-mono focus:outline-none cursor-pointer"
+              value={String(activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1))}
+              onChange={(e) => {
+                const rate = Number(e.target.value);
+                setActiveMedia({ ...activeMedia, playbackRate: rate });
+                if (fairUseConfig?.enabled) {
+                  setFairUseConfig({ playbackRate: rate });
+                }
+              }}
+              className="bg-slate-900 border border-white/15 rounded px-1 py-0.5 text-[9.5px] font-mono text-slate-200 focus:outline-none shrink-0"
               title="Playback Speed"
             >
               <option value="0.75">0.75x</option>
               <option value="1">1.0x</option>
-              <option value="1.04">1.04x FairUse</option>
+              <option value="1.04">1.04x (Safe)</option>
+              <option value="1.15">1.15x</option>
               <option value="1.25">1.25x</option>
               <option value="1.5">1.5x</option>
-              <option value="2">2.0x</option>
             </select>
 
-            {/* Volume Mute Toggle */}
-            <button
-              type="button"
-              onClick={() => toggleMediaMute()}
-              className="p-1 rounded bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title={activeMedia.isMuted ? "Unmute" : "Mute"}
-            >
-              {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-slate-300" />}
-            </button>
-
-            {/* Volume Slider */}
-            <input
-              type="range"
-              min="0"
-              max="200"
-              value={normalizedMediaVolumePct}
-              onChange={(e) => setMediaVolume(Number(e.target.value))}
-              className="w-14 h-1 accent-indigo-400 bg-white/20 rounded cursor-pointer"
-              title={`Volume: ${normalizedMediaVolumePct}%`}
-            />
+            {/* Volume Control (0% to 200% Gain Boost) */}
+            <div className="flex items-center gap-1 bg-white/5 rounded-lg px-1.5 py-0.5 border border-white/10 shrink-0">
+              <button
+                type="button"
+                onClick={() => toggleMediaMute()}
+                className="text-slate-300 hover:text-white"
+                title={activeMedia.isMuted ? "Unmute Video" : "Mute Video"}
+              >
+                {activeMedia.isMuted || normalizedMediaVolumePct === 0 ? (
+                  <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                ) : (
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={200}
+                step={5}
+                value={activeMedia.isMuted ? 0 : normalizedMediaVolumePct}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setMediaVolume(v);
+                }}
+                className="w-12 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
+                title={`Media Volume: ${normalizedMediaVolumePct}%`}
+              />
+            </div>
 
             {/* Loop Toggle */}
             <button
               type="button"
-              onClick={() =>
-                setActiveMedia({
-                  ...activeMedia,
-                  loop: !(activeMedia.loop ?? true),
-                })
-              }
+              onClick={() => setActiveMedia({ ...activeMedia, loop: !(activeMedia.loop ?? true) })}
               className={cn(
-                "p-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer",
-                activeMedia.loop !== false
-                  ? "bg-indigo-600/50 text-indigo-200 border border-indigo-400/40"
-                  : "bg-white/5 text-slate-400 hover:text-white"
+                "p-1 rounded border transition-colors shrink-0",
+                (activeMedia.loop ?? true)
+                  ? "bg-indigo-600/40 border-indigo-400 text-indigo-200"
+                  : "bg-white/5 border-white/10 text-slate-400"
               )}
               title="Toggle Loop"
             >
@@ -2481,104 +2504,102 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
-        {/* Audio Track Visualizer & Controls */}
-        {activeMedia.type === "audio" && (
-          <div className="flex flex-col items-center justify-center gap-3 p-6 bg-gradient-to-br from-indigo-950/80 to-purple-950/80 rounded-2xl border border-indigo-500/30 w-full h-full">
-            <audio
-              id="livestudio-active-media-audio"
-              src={activeMedia.url}
-              autoPlay
-              loop={activeMedia.loop ?? true}
-              crossOrigin="anonymous"
-            />
-            <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shadow-xl">
-              <Volume2 className="w-8 h-8 animate-pulse" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-bold text-white max-w-[280px] truncate">{activeMedia.name}</p>
-              <p className="text-xs text-indigo-300/70">Audio Track Active</p>
-            </div>
+        {/* Multi-Slide Presentation Deck Controls */}
+        {activeMedia.slides && activeMedia.slides.length > 0 && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/50 shadow-2xl pointer-events-auto">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                prevSlide();
+              }}
+              disabled={(activeMedia.currentSlideIndex || 0) <= 0}
+              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              title="Previous Slide"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-xs font-mono font-bold text-white px-1">
+              Slide {(activeMedia.currentSlideIndex || 0) + 1} / {activeMedia.slides.length}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                nextSlide();
+              }}
+              disabled={(activeMedia.currentSlideIndex || 0) >= activeMedia.slides.length - 1}
+              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
+              title="Next Slide"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+
+            {activeMedia.speakerNotes && activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0] && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowSpeakerNotes(!showSpeakerNotes);
+                }}
+                className={cn(
+                  "ml-1.5 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                  showSpeakerNotes
+                    ? "bg-amber-500 text-black border-amber-400 font-bold"
+                    : "bg-white/10 hover:bg-white/20 text-amber-300 border-amber-500/30"
+                )}
+                title="Toggle Speaker Notes for this slide"
+              >
+                <FileText className="w-3 h-3" />
+                <span>Notes</span>
+              </button>
+            )}
           </div>
         )}
 
-        {/* Floating Undo / Fit Slot Pill on top-right of Resized Media Tile */}
-        {participantBounds["active-media"] && (
-          <div className="absolute top-2 right-2 z-40 flex items-center gap-1 bg-black/85 backdrop-blur-md px-2 py-1 rounded-lg border border-amber-500/40 shadow-xl pointer-events-auto">
-            <button
-              type="button"
-              onClick={handleUndoMediaBounds}
-              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white/10 hover:bg-amber-600 text-amber-300 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
-              title="Undo Window Resize"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Undo</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleResetMediaBoundsToSlot}
-              className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white/10 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors cursor-pointer"
-              title="Restore to Layout Slot"
-            >
-              Fit Slot
-            </button>
+        {/* Floating Speaker Notes Overlay for Presenter */}
+        {showSpeakerNotes && activeMedia.slides && activeMedia.speakerNotes?.[activeMedia.currentSlideIndex || 0] && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-14 left-1/2 -translate-x-1/2 max-w-md w-[88%] bg-slate-950/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-3 shadow-2xl z-35 pointer-events-auto text-left"
+          >
+            <div className="flex items-center justify-between pb-1.5 border-b border-white/10 mb-1.5">
+              <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Speaker Notes (Slide {(activeMedia.currentSlideIndex || 0) + 1})
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSpeakerNotes(false)}
+                className="text-slate-400 hover:text-white text-xs px-1"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-200 leading-relaxed font-sans">
+              {activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0]}
+            </p>
           </div>
-        )}
-
-        {/* 8-Way Interactive Resize Handles around Active Media */}
-        {!isFullBleedLayout && mediaFitMode !== "cover" && (
-          <>
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "nw", effBounds)}
-              className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Corner"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "ne", effBounds)}
-              className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Corner"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "sw", effBounds)}
-              className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nesw-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Corner"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "se", effBounds)}
-              className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-indigo-500 hover:bg-cyan-400 border-2 border-white rounded-full cursor-nwse-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Corner"
-            />
-
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "n", effBounds)}
-              className="absolute -top-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Top Edge"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "s", effBounds)}
-              className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ns-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Bottom Edge"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "w", effBounds)}
-              className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Left Edge"
-            />
-            <div
-              onMouseDown={(e) => handleMediaResizeMouseDown(e, "e", effBounds)}
-              className="absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-6 bg-indigo-500 hover:bg-cyan-400 border border-white rounded-full cursor-ew-resize z-50 shadow-md transition-colors pointer-events-auto"
-              title="Resize Right Edge"
-            />
-          </>
         )}
       </div>
     );
   };
 
+  // Layout Engine: StreamYard-Parity Canvas with Selection Tool & Independent Window Resizing
   const renderLayoutContent = () => {
-    // Empty Stage State
-    if (orderedParticipants.length === 0 && !hasVisualMedia && totalGhostSlots === 0) {
+    const isPipMode = activeLayout === "pip" || customLayoutConfig.mode === "pip";
+    const hasVisualMedia = Boolean(
+      activeMedia &&
+      (activeMedia.type === "video" ||
+        activeMedia.type === "youtube" ||
+        activeMedia.type === "map" ||
+        activeMedia.type === "website" ||
+        activeMedia.type === "image" ||
+        activeMedia.type === "pdf")
+    );
+
+    if (onStageParticipants.length === 0 && !hasVisualMedia) {
       return (
-        <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-3">
+        <div className="h-full w-full flex flex-col items-center justify-center text-slate-500 gap-3">
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
             <Video className="w-10 h-10 text-slate-400" />
           </div>
@@ -2588,606 +2609,74 @@ export const StagePreview: React.FC = () => {
       );
     }
 
-    // Auto-Expand Participant Slots When Media is in 25% PiP Mode (width <= 42% && height <= 45%)
-    const customMediaBounds = participantBounds["active-media"];
-    const isMediaInFloatingPip = Boolean(
-      customMediaBounds &&
-      customMediaBounds.width <= 42 &&
-      customMediaBounds.height <= 45
+    const shouldEnforceReactionPiP = Boolean(
+      fairUseConfig?.enabled &&
+      fairUseConfig?.enforceReactionPiP &&
+      activeMedia &&
+      (activeMedia.type === "video" || activeMedia.type === "youtube")
     );
-    const effectiveHasVisualMedia = hasVisualMedia && !isMediaInFloatingPip;
+    const customMediaBounds = participantBounds["active-media"];
+    const isMediaFloatingPip = Boolean(
+      customMediaBounds && customMediaBounds.width <= 42 && customMediaBounds.height <= 45
+    );
     const effectiveMediaCropped = Boolean(isStageCropped || mediaFitMode === "cover");
 
-    const stageLayoutResult = calculateStageLayout(
+    const rawMediaLayoutResult = calculateStageLayout(
       activeLayout,
       totalPlannedSlots,
-      effectiveHasVisualMedia,
+      hasVisualMedia,
       layoutSplitRatio,
       customLayoutConfig,
-      Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
+      shouldEnforceReactionPiP,
       mediaSlotIndex,
       effectiveMediaCropped
     );
 
+    const stageLayoutResult = isMediaFloatingPip
+      ? {
+        mediaBounds: rawMediaLayoutResult.mediaBounds,
+        participantBounds: calculateStageLayout(
+          activeLayout,
+          totalPlannedSlots,
+          false,
+          layoutSplitRatio,
+          customLayoutConfig,
+          false,
+          mediaSlotIndex,
+          isStageCropped
+        ).participantBounds,
+      }
+      : rawMediaLayoutResult;
+
     const defaultMediaBounds: ParticipantBounds =
       stageLayoutResult.mediaBounds || (
         onStageParticipants.length === 0
-          ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
-          : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
+          ? effectiveMediaCropped
+            ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
+            : { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+          : effectiveMediaCropped
+            ? { x: 0, y: 0, width: 68, height: 100, zIndex: 10, isLockedRatio: true }
+            : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
       );
-    const mediaBounds: ParticipantBounds = participantBounds["active-media"] || defaultMediaBounds;
+    const mediaBounds: ParticipantBounds = customMediaBounds || defaultMediaBounds;
     const isMediaSelected = String(selectedParticipantId) === "active-media";
     const isMediaDragging = activeDragState?.participantId === "active-media";
-
-    // Split Divider Calculation
-    const canShowSplitDivider =
-      !hasAnyCustomBounds &&
-      (activeLayout === "side-by-side" ||
-        activeLayout === "fit" ||
-        activeLayout === "cropped" ||
-        activeLayout === "podcast" ||
-        activeLayout === "interview" ||
-        activeLayout === "stacked") &&
-      ((hasVisualMedia && orderedParticipants.length === 1) || (!hasVisualMedia && orderedParticipants.length === 2));
-
-    const isStackedSplit = activeLayout === "stacked";
+    const isMediaTileEdgeToEdge =
+      (isFullBleedLayout || mediaFitMode === "cover") && !isMediaFloatingPip;
 
     return (
-      <div className={cn("w-full h-full relative select-none", (isFullBleedLayout || mediaFitMode === "cover") ? "p-0" : "p-2")}>
-        {/* Stage-Level Floating Media Action Toolbar */}
-        {hasVisualMedia && activeMedia && (
-          <div
-            style={
-              mediaToolbarPos
-                ? {
-                    left: `${mediaToolbarPos.x}px`,
-                    top: `${mediaToolbarPos.y}px`,
-                    transform: "none",
-                  }
-                : undefined
-            }
-            className={cn(
-              "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-75 max-w-[calc(100%-16px)]",
-              mediaToolbarPos
-                ? ""
-                : activeMedia.type === "website"
-                ? showTicker
-                  ? "bottom-14 left-1/2 -translate-x-1/2"
-                  : "top-12 left-1/2 -translate-x-1/2"
-                : "top-3 left-1/2 -translate-x-1/2",
-              isMediaToolbarCollapsed
-                ? "bg-transparent p-0"
-                : "bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)]"
-            )}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            {isMediaToolbarCollapsed ? (
-              <div className="flex items-center gap-1">
-                <div
-                  onMouseDown={handleStartDragToolbar}
-                  className="cursor-grab active:cursor-grabbing px-2 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 text-slate-400 hover:text-white flex items-center shadow-lg text-[10px] select-none"
-                  title="Drag controls"
-                >
-                  ⠿ Drag
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMediaToolbarCollapsed(false)}
-                  className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
-                  title="Expand Floating Media Action Controls"
-                >
-                  <span>🎬 {activeMedia.name}</span>
-                  <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* Drag Handle */}
-                <div
-                  onMouseDown={handleStartDragToolbar}
-                  className="cursor-grab active:cursor-grabbing px-1.5 py-0.5 rounded hover:bg-white/10 text-slate-400 hover:text-white flex items-center gap-1 select-none text-[9.5px] font-mono border border-transparent hover:border-white/20 transition-all"
-                  title="Click and drag to move controls anywhere on the stage"
-                >
-                  <span className="text-[12px] leading-none">⠿</span>
-                  <span>Drag</span>
-                </div>
-
-                {mediaToolbarPos !== null && (
-                  <button
-                    type="button"
-                    onClick={() => setMediaToolbarPos(null)}
-                    className="px-1.5 py-0.5 rounded text-[9px] font-semibold text-slate-400 hover:text-cyan-300 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
-                    title="Reset controls position to default"
-                  >
-                    ↺ Reset
-                  </button>
-                )}
-
-                {/* Media Name Tag */}
-                <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[140px] truncate select-none">
-                  🎬 {activeMedia.name}
-                </span>
-
-                <span className="w-px h-3 bg-white/20" />
-
-            {/* Multi-Step Undo Button */}
-            {mediaBoundsHistory.length > 0 && (
-              <button
-                type="button"
-                onClick={handleUndoMediaBounds}
-                className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-amber-500/30"
-                title="Undo previous resize / position change"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Undo</span>
-              </button>
-            )}
-
-            {/* Reset to Layout Slot */}
-            {participantBounds["active-media"] && (
-              <button
-                type="button"
-                onClick={handleResetMediaBoundsToSlot}
-                className="px-2 py-0.5 hover:bg-white/15 rounded text-cyan-300 hover:text-cyan-200 text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-cyan-500/30"
-                title="Reset media back to layout slot"
-              >
-                <span>Fit Slot</span>
-              </button>
-            )}
-
-            {/* Crop vs Fit Toggle Button */}
-            <button
-              type="button"
-              onClick={handleToggleMediaCrop}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
-                mediaFitMode === "cover"
-                  ? "bg-indigo-600 text-white border-indigo-400"
-                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
-              )}
-              title="Toggle between edge-to-edge Cropped (Fill) and letterboxed Fit"
-            >
-              <Crop className="w-3 h-3" />
-              <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
-            </button>
-
-            {/* Zoom Out, 1x Reset, Zoom In */}
-            <div className="flex items-center gap-0.5 bg-black/60 rounded px-1 py-0.5 border border-white/10">
-              <button
-                type="button"
-                onClick={handleMediaZoomOut}
-                disabled={mediaZoom <= 1}
-                className="px-1 text-[11px] text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
-                title="Zoom Out"
-              >
-                -
-              </button>
-              <button
-                type="button"
-                onClick={handleResetMediaTransform}
-                className="px-1 text-[9px] font-mono text-cyan-300 hover:text-cyan-200 cursor-pointer"
-                title="Reset Zoom & Pan"
-              >
-                {mediaZoom.toFixed(1)}x
-              </button>
-              <button
-                type="button"
-                onClick={handleMediaZoomIn}
-                disabled={mediaZoom >= 3}
-                className="px-1 text-[11px] text-slate-300 hover:text-white disabled:opacity-30 cursor-pointer"
-                title="Zoom In"
-              >
-                +
-              </button>
-            </div>
-
-            {/* Pan / Align Presets when cropped or zoomed */}
-            {(mediaFitMode === "cover" || mediaZoom > 1) && (
-              <div className="flex items-center gap-0.5 bg-black/60 rounded px-1 py-0.5 border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => handleMediaCropPreset("top")}
-                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === -50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
-                  title="Align to Top"
-                >
-                  Top
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMediaCropPreset("center")}
-                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === 0 && mediaPanX === 0 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
-                  title="Center"
-                >
-                  Center
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMediaCropPreset("bottom")}
-                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanY === 50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
-                  title="Align to Bottom"
-                >
-                  Btm
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMediaCropPreset("left")}
-                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanX === -50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
-                  title="Align to Left"
-                >
-                  Left
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleMediaCropPreset("right")}
-                  className={cn("px-1 text-[9px] font-medium rounded transition-colors", mediaPanX === 50 ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}
-                  title="Align to Right"
-                >
-                  Right
-                </button>
-              </div>
-            )}
-
-            {/* Mirror Flip Toggle */}
-            <button
-              type="button"
-              onClick={() => setTileTransform("active-media", { flipH: !isMediaMirrored })}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer",
-                isMediaMirrored
-                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-              )}
-              title="Mirror Video Horizontally"
-            >
-              <span>Mirror</span>
-            </button>
-
-            {/* Master Fair-Use ON/OFF Button (ALWAYS visible so user can toggle in 1-click) */}
-            <button
-              type="button"
-              onClick={() => {
-                const nextVal = !(fairUseConfig?.enabled ?? true);
-                setFairUseConfig({ enabled: nextVal });
-                stageBroadcaster.refreshAudioConnections();
-              }}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-all cursor-pointer shadow-sm",
-                (fairUseConfig?.enabled ?? true)
-                  ? "bg-amber-500 text-slate-950 border-amber-400 font-black hover:bg-amber-400 shadow-amber-500/20"
-                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-              )}
-              title="Toggle Fair-Use 60FPS Video/Audio Protection Engine"
-            >
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>Fair Use {(fairUseConfig?.enabled ?? true) ? "ON" : "OFF"}</span>
-            </button>
-
-            {/* Fair-Use Controls (Active Sub-Controls) */}
-            {(fairUseConfig?.enabled ?? true) && (
-              <>
-                {/* Breathing Animation Toggle */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFairUseConfig({
-                      zoomBreathing: !(fairUseConfig?.zoomBreathing ?? true),
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
-                    (fairUseConfig?.zoomBreathing ?? true)
-                      ? "bg-cyan-500/25 text-cyan-300 border-cyan-500/50 font-bold"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle Smooth 60FPS Breathing Zoom Animation"
-                >
-                  <span>Breath {(fairUseConfig?.zoomBreathing ?? true) ? "ON" : "OFF"}</span>
-                </button>
-
-                {/* Breath Intensity Selector */}
-                {(fairUseConfig?.zoomBreathing ?? true) && (
-                  <select
-                    value={fairUseConfig?.breathIntensity || "medium"}
-                    onChange={(e) =>
-                      setFairUseConfig({
-                        breathIntensity: e.target.value as "subtle" | "medium" | "strong",
-                      })
-                    }
-                    className="bg-black/60 border border-cyan-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-cyan-300 focus:outline-none cursor-pointer"
-                    title="Breath Zoom Intensity"
-                  >
-                    <option value="subtle">6% Subtle</option>
-                    <option value="medium">11% Med</option>
-                    <option value="strong">18% Strong</option>
-                  </select>
-                )}
-
-                {/* Dynamic Audio Tempo LFO & Fair-Use EQ Toggle */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFairUseConfig({
-                      dynamicTempoVariance: !(fairUseConfig?.dynamicTempoVariance ?? true),
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
-                    (fairUseConfig?.dynamicTempoVariance ?? true)
-                      ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle Dynamic Audio Tempo LFO (1.02x–1.06x) & 3-Band Spectral EQ"
-                >
-                  <span>🎵 Tempo+EQ {(fairUseConfig?.dynamicTempoVariance ?? true) ? "ON" : "OFF"}</span>
-                </button>
-
-                {/* Interactive Audio Pitch & Speed Presets (Real-time audible pitch shift) */}
-                <select
-                  value={
-                    fairUseConfig?.enableAudioFairUse === false
-                      ? "1.0-normal"
-                      : fairUseConfig?.playbackRate === 1.08
-                      ? "1.08-high"
-                      : fairUseConfig?.playbackRate === 0.95
-                      ? "0.95-deep"
-                      : "1.04-safe"
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "1.0-normal") {
-                      handleChangeMediaPitch(1.0, false);
-                    } else if (val === "1.08-high") {
-                      handleChangeMediaPitch(1.08, true);
-                    } else if (val === "0.95-deep") {
-                      handleChangeMediaPitch(0.95, true);
-                    } else {
-                      handleChangeMediaPitch(1.04, true);
-                    }
-                  }}
-                  className="bg-black/60 border border-amber-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-amber-300 focus:outline-none cursor-pointer"
-                  title="Real-time Audio Pitch & Speed Adjustment (shifts pitch audibly to prevent Content-ID audio match)"
-                >
-                  <option value="1.0-normal">🎵 1.0x Normal</option>
-                  <option value="1.04-safe">🎵 1.04x Safe Pitch (+0.7st)</option>
-                  <option value="1.08-high">🎵 1.08x High Pitch (+1.3st)</option>
-                  <option value="0.95-deep">🎵 0.95x Deep Pitch (-0.9st)</option>
-                </select>
-
-                {/* 60FPS Vintage Lines Toggle & Thickness */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFairUseConfig({
-                      vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
-                    (fairUseConfig?.vintageLinesOverlay ?? true)
-                      ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 font-bold"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle 60FPS Dual-Core Vintage Film Lines"
-                >
-                  <span>Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}</span>
-                </button>
-                {(fairUseConfig?.vintageLinesOverlay ?? true) && (
-                  <select
-                    value={fairUseConfig?.vintageLinesIntensity || "medium"}
-                    onChange={(e) =>
-                      setFairUseConfig({
-                        vintageLinesIntensity: e.target.value as "light" | "medium" | "strong",
-                      })
-                    }
-                    className="bg-black/60 border border-emerald-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-emerald-300 focus:outline-none cursor-pointer"
-                    title="Vintage Lines Thickness"
-                  >
-                    <option value="light">Light 2.8px</option>
-                    <option value="medium">Medium 3.8px</option>
-                    <option value="strong">Strong 5.2px</option>
-                  </select>
-                )}
-
-                {/* 60FPS Film Grain Toggle */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFairUseConfig({
-                      filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
-                    (fairUseConfig?.filmGrainOverlay ?? true)
-                      ? "bg-purple-500/25 text-purple-300 border-purple-500/50 font-bold"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle 60FPS Film Grain & Noise Overlay"
-                >
-                  <span>Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}</span>
-                </button>
-
-                {/* 8-12s Random Frame-Skip / Micro-Jerk Anti-Content-ID Toggle */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFairUseConfig({
-                      autoPauseIntervalSec: (fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 ? 0 : 8,
-                    })
-                  }
-                  className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer",
-                    (fairUseConfig?.autoPauseIntervalSec ?? 8) > 0
-                      ? "bg-rose-500/25 text-rose-300 border-rose-500/50 font-bold"
-                      : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
-                  )}
-                  title="Toggle 8-12s Random Frame-Skip / Micro-Jerk (Anti-Content ID Continuous Match)"
-                >
-                  <span>⚡ 8-12s Skip {(fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 ? "ON" : "OFF"}</span>
-                </button>
-                {(fairUseConfig?.autoPauseIntervalSec ?? 8) > 0 && (
-                  <select
-                    value={fairUseConfig?.autoPauseIntervalSec || 8}
-                    onChange={(e) =>
-                      setFairUseConfig({
-                        autoPauseIntervalSec: Number(e.target.value),
-                      })
-                    }
-                    className="bg-black/60 border border-rose-500/40 rounded px-1.5 py-0.5 text-[9.5px] font-bold text-rose-300 focus:outline-none cursor-pointer"
-                    title="Frame-Skip & Micro-Jerk Interval"
-                  >
-                    <option value={8}>8-12s Random</option>
-                    <option value={5}>5s Fast</option>
-                    <option value={10}>10s Steady</option>
-                    <option value={15}>15s Extended</option>
-                  </select>
-                )}
-              </>
-            )}
-
-            {/* Quick Window Size Presets */}
-            <div className="flex items-center gap-1 bg-black/60 rounded-lg p-0.5 border border-white/10">
-              <span className="text-[9px] font-bold text-slate-400 px-1 uppercase">Size:</span>
-              {[
-                { label: "25% PiP", bounds: { x: 70, y: 66, width: 28, height: 30, zIndex: 35, isLockedRatio: true } },
-                { label: "50% Half", bounds: { x: 0, y: 0, width: 50, height: 100, zIndex: 10, isLockedRatio: true } },
-                { label: "75% Large", bounds: { x: 0, y: 0, width: 75, height: 100, zIndex: 10, isLockedRatio: true } },
-                { label: "100% Full", bounds: { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true } },
-              ].map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => handleApplyMediaSizePreset(preset.bounds)}
-                  className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                >
-                  {preset.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={handleResetMediaBoundsToSlot}
-                className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-white/5 hover:bg-indigo-600 text-cyan-300 hover:text-white transition-colors cursor-pointer"
-                title="Reset to Default Layout Slot"
-              >
-                Fit Slot
-              </button>
-            </div>
-
-            {/* Media Stage Position / Slot Selector */}
-            {totalPlannedSlots >= 1 && !isSoloOrCinema && (
-              <div className="flex items-center gap-1 bg-indigo-950/80 border border-indigo-400/50 rounded-lg px-1.5 py-0.5">
-                <span className="text-[9px] font-bold text-indigo-300 uppercase">Pos:</span>
-                <select
-                  value={mediaSlotIndex}
-                  onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
-                  className="bg-transparent text-[10px] font-bold text-white focus:outline-none cursor-pointer"
-                  title="Choose where Media appears on stage (Left, Right, Middle, or Grid Slot)"
-                >
-                  {activeLayout === "cropped" || activeLayout === "podcast" || activeLayout === "side-by-side" || activeLayout === "fit" || activeLayout === "interview" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">◧ Left Side</option>
-                      <option value={1} className="bg-slate-900">◨ Right Side (Host Left)</option>
-                    </>
-                  ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
-                    <>
-                      <option value={0} className="bg-slate-900">◧ Left Col</option>
-                      <option value={1} className="bg-slate-900">⫿ Middle Col</option>
-                      <option value={2} className="bg-slate-900">◨ Right Col</option>
-                    </>
-                  ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
-                    <>
-                      <option value={0} className="bg-slate-900">↖ Top-Left</option>
-                      <option value={1} className="bg-slate-900">↗ Top-Right</option>
-                      <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
-                      <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
-                    </>
-                  ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">★ Hero Left (Large)</option>
-                      <option value={1} className="bg-slate-900">▤ Side Top-Right (Small)</option>
-                      {totalPlannedSlots >= 2 && (
-                        <option value={2} className="bg-slate-900">▤ Side Btm-Right (Small)</option>
-                      )}
-                    </>
-                  ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
-                    <>
-                      <option value={0} className="bg-slate-900">⬆ Top Window</option>
-                      <option value={1} className="bg-slate-900">⬇ Bottom Window</option>
-                    </>
-                  ) : (
-                    Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
-                      <option key={sIdx} value={sIdx} className="bg-slate-900">
-                        Slot {sIdx + 1}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
-            )}
-
-            {/* Solo Button */}
-            <button
-              type="button"
-              onClick={() => toggleSoloParticipant("active-media")}
-              className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
-                soloTargetId === "active-media"
-                  ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
-                  : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
-              )}
-              title="Solo Media Fullscreen"
-            >
-              <Maximize2 className="w-3 h-3" />
-              <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
-            </button>
-
-            {/* Replace Button */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
-              }}
-              className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
-              title="Change / Select Media from Library"
-            >
-              <MonitorUp className="w-3 h-3 text-emerald-400" />
-              <span>Replace</span>
-            </button>
-
-            {/* Remove Button */}
-            <button
-              type="button"
-              onClick={() => {
-                resetParticipantBounds("active-media");
-                setActiveMedia(null);
-              }}
-              className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-medium transition-colors cursor-pointer"
-              title="Stop and Remove Media from Stage"
-            >
-              Remove
-            </button>
-
-            {/* Collapse / Minimize Toolbar Button */}
-            <button
-              type="button"
-              onClick={() => setIsMediaToolbarCollapsed(true)}
-              className="px-1.5 py-0.5 hover:bg-white/15 rounded text-slate-400 hover:text-white text-[9.5px] font-bold border border-white/10 transition-colors cursor-pointer"
-              title="Minimize Media Action Controls"
-            >
-              ✕
-            </button>
-          </>
+      <div
+        className={cn(
+          "w-full h-full relative select-none",
+          isFullBleedLayout || (hasVisualMedia && mediaFitMode === "cover") ? "p-0" : "p-2"
         )}
-      </div>
-    )}
-
-        {/* Active Stage Media Window (Interactive, Draggable & Resizable) */}
+      >
+        {/* Active Stage Media Window */}
         {hasVisualMedia && activeMedia && (
           <div
             key="stage-active-media"
+            onMouseEnter={() => setIsMediaHovered(true)}
+            onMouseLeave={() => setIsMediaHovered(false)}
             style={{
               position: "absolute",
               left: `${mediaBounds.x}%`,
@@ -3207,47 +2696,694 @@ export const StagePreview: React.FC = () => {
               e.stopPropagation();
               setSelectedParticipantId("active-media");
             }}
-            onMouseEnter={() => setIsMediaHovered(true)}
-            onMouseLeave={() => setIsMediaHovered(false)}
             className={cn(
-              "overflow-visible select-none transition-shadow group/mediatile pointer-events-auto",
-              (isFullBleedLayout || mediaFitMode === "cover") ? "rounded-none" : "rounded-2xl",
+              "overflow-visible select-none transition-shadow group/mediatile",
+              isMediaTileEdgeToEdge ? "rounded-none" : "rounded-2xl",
               isMediaSelected
                 ? cn(
-                    "ring-2 ring-indigo-500 ring-inset shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer",
-                    !(isFullBleedLayout || mediaFitMode === "cover") && "border-indigo-400"
-                  )
-                : mediaTransform.isTransparentBg || (isFullBleedLayout || mediaFitMode === "cover")
-                ? "border-0 cursor-pointer"
-                : "border border-white/10 hover:border-indigo-400/50 cursor-pointer"
+                  "ring-2 ring-indigo-500 ring-inset shadow-[0_0_25px_rgba(99,102,241,0.5)] cursor-pointer",
+                  !isMediaTileEdgeToEdge && "border-indigo-400"
+                )
+                : mediaTransform.isTransparentBg || isMediaTileEdgeToEdge
+                  ? "border-0 cursor-pointer"
+                  : "border border-white/10 hover:border-indigo-400/50 cursor-pointer"
             )}
           >
             {/* Inner Media Content */}
             <div
               className={cn(
                 "w-full h-full overflow-hidden relative pointer-events-auto",
-                (isFullBleedLayout || mediaFitMode === "cover") ? "rounded-none" : "rounded-2xl"
+                isMediaTileEdgeToEdge ? "rounded-none" : "rounded-2xl",
+                isMediaTransitioning && "animate-in fade-in zoom-in-95 duration-300"
               )}
             >
               {renderMediaTile(mediaBounds)}
+              {isMediaTransitioning && (
+                <div className="absolute inset-0 bg-[#07070d]/35 backdrop-blur-[1.5px] z-40 pointer-events-none animate-out fade-out duration-300" />
+              )}
             </div>
+
+            {/* Quick Corner Restore / Undo Pill directly on Custom-Resized Media Window */}
+            {(customMediaBounds || mediaBoundsHistory.length > 0) && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="no-drag absolute top-2 right-2 z-40 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md border border-amber-400/60 rounded-lg px-2 py-1 shadow-xl pointer-events-auto"
+              >
+                <button
+                  type="button"
+                  onClick={handleUndoMediaBounds}
+                  className="px-1.5 py-0.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 text-[10px] font-bold flex items-center gap-1 transition-colors"
+                  title="Undo last media window resize or move"
+                >
+                  <RotateCcw className="w-3 h-3 text-amber-300" />
+                  <span>Undo</span>
+                </button>
+                {customMediaBounds && (
+                  <button
+                    type="button"
+                    onClick={handleResetMediaBoundsToSlot}
+                    className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-colors"
+                    title="Restore media window to full layout slot"
+                  >
+                    Fit Slot
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* 8-Way Interactive Mouse Resize Handles for Active Media Window */}
+            {(isMediaSelected || Boolean(participantBounds["active-media"])) && (
+              <>
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "nw", mediaBounds)}
+                  className="no-drag absolute -top-1.5 -left-1.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-950 cursor-nwse-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "ne", mediaBounds)}
+                  className="no-drag absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-950 cursor-nesw-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "sw", mediaBounds)}
+                  className="no-drag absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-950 cursor-nesw-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "se", mediaBounds)}
+                  className="no-drag absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-cyan-400 border-2 border-slate-950 cursor-nwse-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "n", mediaBounds)}
+                  className="no-drag absolute -top-1 left-1/2 -translate-x-1/2 w-8 h-2 rounded-full bg-cyan-400/90 border border-slate-950 cursor-ns-resize z-50 shadow"
+                  title="Drag top edge to resize height"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "s", mediaBounds)}
+                  className="no-drag absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-2 rounded-full bg-cyan-400/90 border border-slate-950 cursor-ns-resize z-50 shadow"
+                  title="Drag bottom edge to resize height"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "w", mediaBounds)}
+                  className="no-drag absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-8 rounded-full bg-cyan-400/90 border border-slate-950 cursor-ew-resize z-50 shadow"
+                  title="Drag left edge to resize width"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "active-media", "e", mediaBounds)}
+                  className="no-drag absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-8 rounded-full bg-cyan-400/90 border border-slate-950 cursor-ew-resize z-50 shadow"
+                  title="Drag right edge to resize width"
+                />
+              </>
+            )}
           </div>
         )}
 
+        {/* Unified Floating Action Pill Toolbar for Media (Anchored at Top-Center of Stage) */}
+        {hasVisualMedia && activeMedia && (
+          <div
+            onMouseEnter={() => setIsMediaHovered(true)}
+            onMouseLeave={() => setIsMediaHovered(false)}
+            className={cn(
+              "absolute z-50 flex flex-wrap items-center justify-center gap-1 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] transition-all duration-150 w-max max-w-[calc(100%-16px)] top-2 left-1/2 -translate-x-1/2",
+              isMediaSelected || isMediaHovered
+                ? "opacity-100 pointer-events-auto"
+                : "opacity-0 pointer-events-none"
+            )}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            {/* Drag Handle + Reset */}
+            <span className="text-[9.5px] font-semibold text-slate-400 px-1 flex items-center gap-0.5">
+              <Move className="w-3 h-3 text-indigo-400" />
+              <span>Drag</span>
+            </span>
+
+            <button
+              type="button"
+              onClick={handleResetMediaTransform}
+              className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9.5px] text-slate-300 hover:text-white flex items-center gap-0.5 border border-white/10"
+              title="Reset Media Pan, Zoom & Crop"
+            >
+              <RotateCcw className="w-2.5 h-2.5 text-amber-400" />
+              <span>Reset</span>
+            </button>
+
+            {/* Media Name Tag */}
+            <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[115px] truncate">
+              🎬 {activeMedia.name}
+            </span>
+
+            {/* Crop vs Fit Toggle Button */}
+            <button
+              type="button"
+              onClick={handleToggleMediaCrop}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-medium flex items-center gap-1 border transition-colors",
+                mediaFitMode === "cover"
+                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
+                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
+              )}
+              title={
+                mediaFitMode === "cover"
+                  ? "Currently: Cropped (Fill) — Click to Fit 100%"
+                  : "Currently: Fit — Click to Crop & Fill Window"
+              }
+            >
+              <Crop className="w-3 h-3 text-amber-400" />
+              <span>{mediaFitMode === "cover" ? "Cropped (Fill)" : "Fit"}</span>
+            </button>
+
+            {/* Always-Visible Zoom Controls */}
+            <div className="flex items-center gap-1 bg-white/5 rounded-lg border border-white/15 px-1.5 py-0.5">
+              <button
+                type="button"
+                onClick={handleMediaZoomOut}
+                disabled={mediaZoom <= 1}
+                className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                title="Zoom Out"
+              >
+                <ZoomOut className="w-3 h-3 text-cyan-400" />
+              </button>
+              <span className="text-[10px] font-mono font-bold text-cyan-300 min-w-[28px] text-center">
+                {Number(mediaZoom.toFixed(1))}x
+              </span>
+              <button
+                type="button"
+                onClick={handleMediaZoomIn}
+                disabled={mediaZoom >= 3}
+                className="p-0.5 rounded text-slate-300 hover:text-white disabled:opacity-30"
+                title="Zoom In"
+              >
+                <ZoomIn className="w-3 h-3 text-cyan-400" />
+              </button>
+            </div>
+
+            {/* ALWAYS-VISIBLE LEFT / MID / RIGHT / TOP / BTM PAN CONTROLS + HORIZONTAL L/R SLIDER FOR YOUTUBE & VIDEO */}
+            <div className="flex items-center gap-1 bg-cyan-950/50 rounded-lg border border-cyan-500/40 px-1.5 py-0.5">
+              <span className="text-[9px] font-bold text-cyan-300 uppercase">Pan:</span>
+              <button
+                type="button"
+                onClick={() => handleMediaCropPreset("left")}
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
+                  mediaPanX <= -15
+                    ? "bg-cyan-500 text-slate-950 shadow"
+                    : "bg-white/10 text-slate-200 hover:text-white"
+                )}
+                title="Pan Video to Left Side (Show Left)"
+              >
+                ◄ Left
+              </button>
+              <button
+                type="button"
+                onClick={() => handleMediaCropPreset("center")}
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
+                  Math.abs(mediaPanX) < 15 && Math.abs(mediaPanY) < 15
+                    ? "bg-cyan-500 text-slate-950 shadow"
+                    : "bg-white/10 text-slate-200 hover:text-white"
+                )}
+                title="Center Video Alignment"
+              >
+                Mid
+              </button>
+              <button
+                type="button"
+                onClick={() => handleMediaCropPreset("right")}
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-colors",
+                  mediaPanX >= 15
+                    ? "bg-cyan-500 text-slate-950 shadow"
+                    : "bg-white/10 text-slate-200 hover:text-white"
+                )}
+                title="Pan Video to Right Side (Show Right)"
+              >
+                Right ►
+              </button>
+
+              {/* Smooth Horizontal Left <-> Right Slider */}
+              <input
+                type="range"
+                min="-50"
+                max="50"
+                step="1"
+                value={Math.round(mediaPanX)}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  const targetFit = mediaZoom > 1 ? mediaFitMode : "cover";
+                  setTileTransform("active-media", {
+                    fitMode: targetFit,
+                    panX: val,
+                  });
+                }}
+                className="w-16 h-1.5 accent-cyan-400 bg-white/20 rounded cursor-pointer"
+                title={`Horizontal Left/Right Pan: ${Math.round(objectPosX)}% (Slide Left or Right)`}
+              />
+
+              <span className="w-px h-3 bg-white/20 mx-0.5" />
+              <button
+                type="button"
+                onClick={() => handleMediaCropPreset("top")}
+                className={cn(
+                  "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                  mediaPanY <= -15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
+                )}
+                title="Pan Video to Top"
+              >
+                Top
+              </button>
+              <button
+                type="button"
+                onClick={() => handleMediaCropPreset("bottom")}
+                className={cn(
+                  "px-1 py-0.5 rounded text-[9px] font-semibold transition-colors",
+                  mediaPanY >= 15 ? "bg-amber-500/35 text-amber-200 font-bold" : "text-slate-300 hover:text-white"
+                )}
+                title="Pan Video to Bottom"
+              >
+                Btm
+              </button>
+            </div>
+
+            {/* Mirror Video Button */}
+            <button
+              type="button"
+              onClick={() =>
+                setFairUseConfig({
+                  mirrorMediaVideo: !fairUseConfig?.mirrorMediaVideo,
+                })
+              }
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
+                fairUseConfig?.mirrorMediaVideo
+                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
+                  : "bg-white/10 text-slate-300 border-white/20 hover:text-white"
+              )}
+              title="Mirror / Flip Video Horizontally"
+            >
+              <span>Mirror</span>
+            </button>
+
+            {/* Fair-Use Safe Mode Controls */}
+            <button
+              type="button"
+              onClick={() => setFairUseConfig({ enabled: !fairUseConfig.enabled })}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors",
+                fairUseConfig?.enabled
+                  ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
+                  : "bg-white/10 text-slate-400 border-white/20 hover:text-white"
+              )}
+              title="Toggle YouTube Fair-Use & Anti-Content-ID Safe Mode"
+            >
+              <ShieldAlert className="w-3 h-3" />
+              <span>Fair-Use {fairUseConfig?.enabled ? "ON" : "OFF"}</span>
+            </button>
+
+            {fairUseConfig?.enabled && (
+              <>
+                <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFairUseConfig({
+                        zoomBreathing: !(fairUseConfig?.zoomBreathing ?? true),
+                      })
+                    }
+                    className={cn(
+                      "px-1 rounded text-[10px] font-semibold transition-colors",
+                      (fairUseConfig?.zoomBreathing ?? true)
+                        ? "text-amber-300 font-bold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                    title="Toggle Zoom Breathing"
+                  >
+                    Breath {(fairUseConfig?.zoomBreathing ?? true) ? "ON" : "OFF"}
+                  </button>
+                </div>
+
+                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextState = !(
+                        (fairUseConfig?.dynamicTempoVariance ?? true) &&
+                        (fairUseConfig?.audioEqProtection ?? true)
+                      );
+                      setFairUseConfig({
+                        dynamicTempoVariance: nextState,
+                        audioEqProtection: nextState,
+                      });
+                    }}
+                    className={cn(
+                      "px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-colors",
+                      (fairUseConfig?.dynamicTempoVariance ?? true) &&
+                        (fairUseConfig?.audioEqProtection ?? true)
+                        ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 font-bold"
+                        : "bg-white/10 text-slate-400 border-white/15 hover:text-white"
+                    )}
+                    title="Audio Tempo LFO + Spectral Formant EQ Protection"
+                  >
+                    <span>
+                      🎵 Tempo+EQ{" "}
+                      {(fairUseConfig?.dynamicTempoVariance ?? true) &&
+                        (fairUseConfig?.audioEqProtection ?? true)
+                        ? "ON"
+                        : "OFF"}
+                    </span>
+                  </button>
+                )}
+
+                {/* Vintage Lines Toggle + Refined Thickness Selector */}
+                <div className="flex items-center gap-0.5 bg-emerald-950/30 border border-emerald-500/40 rounded px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFairUseConfig({
+                        vintageLinesOverlay: !(fairUseConfig?.vintageLinesOverlay ?? true),
+                      })
+                    }
+                    className={cn(
+                      "px-1 rounded text-[10px] font-semibold transition-colors",
+                      (fairUseConfig?.vintageLinesOverlay ?? true)
+                        ? "text-emerald-300 font-bold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    Lines {(fairUseConfig?.vintageLinesOverlay ?? true) ? "ON" : "OFF"}
+                  </button>
+                  {(fairUseConfig?.vintageLinesOverlay ?? true) && (
+                    <select
+                      value={fairUseConfig?.vintageLinesIntensity || "medium"}
+                      onChange={(e) =>
+                        setFairUseConfig({
+                          vintageLinesIntensity: e.target.value as "light" | "medium" | "strong",
+                        })
+                      }
+                      className="bg-slate-900 border border-emerald-500/30 rounded px-1 py-0 text-[9px] text-emerald-200 font-mono focus:outline-none"
+                      title="35mm Vintage Hairline Thickness"
+                    >
+                      <option value="light">Light 0.8px</option>
+                      <option value="medium">Medium 1.4px</option>
+                      <option value="strong">Strong 2.1px</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* Film Grain Toggle + Intensity Selector */}
+                <div className="flex items-center gap-0.5 bg-amber-950/30 border border-amber-500/40 rounded px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFairUseConfig({
+                        filmGrainOverlay: !(fairUseConfig?.filmGrainOverlay ?? true),
+                      })
+                    }
+                    className={cn(
+                      "px-1 rounded text-[10px] font-semibold transition-colors",
+                      (fairUseConfig?.filmGrainOverlay ?? true)
+                        ? "text-amber-300 font-bold"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    Grain {(fairUseConfig?.filmGrainOverlay ?? true) ? "ON" : "OFF"}
+                  </button>
+                  {(fairUseConfig?.filmGrainOverlay ?? true) && (
+                    <select
+                      value={fairUseConfig?.grainIntensity || "random"}
+                      onChange={(e) =>
+                        setFairUseConfig({
+                          grainIntensity: e.target.value as "light" | "medium" | "strong" | "random",
+                        })
+                      }
+                      className="bg-slate-900 border border-amber-500/30 rounded px-1 py-0 text-[9px] text-amber-200 font-mono focus:outline-none"
+                    >
+                      <option value="random">🎲 Random</option>
+                      <option value="light">Light</option>
+                      <option value="medium">Medium</option>
+                      <option value="strong">Strong</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* 8-12s Skip Selector */}
+                <select
+                  value={`${fairUseConfig?.autoPauseIntervalSec ?? 8}:${fairUseConfig?.antiMatchMode || "jerk-skip"}`}
+                  onChange={(e) => {
+                    const [sec, mode] = e.target.value.split(":");
+                    setFairUseConfig({
+                      autoPauseIntervalSec: Number(sec),
+                      antiMatchMode: (mode as any) || "jerk-skip",
+                    });
+                  }}
+                  className="bg-slate-900 border border-rose-500/40 rounded px-1.5 py-0.5 text-[9.5px] text-rose-300 font-mono focus:outline-none"
+                  title="Anti-Content ID Jerk / Frame-Skip Mode"
+                >
+                  <option value="0:jerk-skip">Skip OFF</option>
+                  <option value="8:jerk-skip">⚡ 8-12s Skip ON</option>
+                  <option value="8:micro-pause">8-12s Micro-Pause</option>
+                  <option value="10:pause">10s Full Pause</option>
+                </select>
+              </>
+            )}
+
+            {/* Quick Media Window Resize Presets (25% PiP, 50% Half, 75% Large, 100% Full + Fit Slot) */}
+            <div className="flex items-center gap-0.5 bg-indigo-950/70 border border-indigo-400/40 rounded-lg px-1.5 py-0.5">
+              <span className="text-[9px] font-bold text-indigo-300 uppercase mr-0.5">Size:</span>
+              {[
+                {
+                  label: "25% PiP",
+                  w: 28,
+                  h: 30,
+                  x: mediaSlotIndex === 0 ? 3 : 69,
+                  y: showTicker ? 58 : 64,
+                  z: 30,
+                },
+                {
+                  label: "50% Half",
+                  w: 50,
+                  h: 100,
+                  x: mediaSlotIndex >= 1 ? 50 : 0,
+                  y: 0,
+                  z: 20,
+                },
+                {
+                  label: "75% Large",
+                  w: 75,
+                  h: 100,
+                  x: 0,
+                  y: 0,
+                  z: 20,
+                },
+                {
+                  label: "100% Full",
+                  w: 100,
+                  h: 100,
+                  x: 0,
+                  y: 0,
+                  z: 20,
+                },
+              ].map((sz) => (
+                <button
+                  key={sz.label}
+                  type="button"
+                  onClick={() =>
+                    handleApplyMediaSizePreset({
+                      x: sz.x,
+                      y: sz.y,
+                      width: sz.w,
+                      height: sz.h,
+                      zIndex: sz.z,
+                      isLockedRatio: false,
+                    })
+                  }
+                  className={cn(
+                    "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors",
+                    customMediaBounds && Math.abs(mediaBounds.width - sz.w) <= 3
+                      ? "bg-indigo-500 text-white shadow"
+                      : "text-slate-300 hover:text-white hover:bg-white/10"
+                  )}
+                >
+                  {sz.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={handleResetMediaBoundsToSlot}
+                className={cn(
+                  "px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors ml-0.5",
+                  !customMediaBounds
+                    ? "bg-emerald-600 text-white shadow"
+                    : "bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-200"
+                )}
+                title="Fit Media to Default Scene Slot"
+              >
+                Fit Slot
+              </button>
+            </div>
+
+            {/* PROMINENT LEFT / RIGHT SWAP & POSITION CONTROLS (Host ⇄ Media) */}
+            {totalPlannedSlots >= 1 && !isSoloOrCinema && (
+              <div className="flex items-center gap-1 bg-indigo-950/90 border border-indigo-400/60 rounded-lg px-1.5 py-0.5 shadow">
+                <button
+                  type="button"
+                  onClick={handleSwapMediaAndHostPosition}
+                  className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-[9.5px] flex items-center gap-1 shadow transition-all cursor-pointer"
+                  title="1-Click Swap: Shift Media Left/Right & Move Host to Opposite Side!"
+                >
+                  <ArrowLeftRight className="w-3 h-3" />
+                  <span>
+                    {mediaSlotIndex === 0
+                      ? "Shift Media Right (Host Left)"
+                      : "Shift Media Left (Host Right)"}
+                  </span>
+                </button>
+
+                <select
+                  value={mediaSlotIndex}
+                  onChange={(e) => setMediaSlotIndex(Number(e.target.value))}
+                  className="bg-slate-900 border border-white/15 rounded px-1 py-0.2 text-[9.5px] font-bold text-white focus:outline-none cursor-pointer"
+                  title="Choose Media & Host Slot Position"
+                >
+                  {activeLayout === "cropped" ||
+                    activeLayout === "podcast" ||
+                    activeLayout === "side-by-side" ||
+                    activeLayout === "fit" ||
+                    activeLayout === "interview" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">
+                        ◧ Media Left (Host Right)
+                      </option>
+                      <option value={1} className="bg-slate-900">
+                        ◨ Media Right (Host Left)
+                      </option>
+                    </>
+                  ) : activeLayout === "three-equal" && totalPlannedSlots >= 2 ? (
+                    <>
+                      <option value={0} className="bg-slate-900">◧ Left Col</option>
+                      <option value={1} className="bg-slate-900">⫿ Middle Col</option>
+                      <option value={2} className="bg-slate-900">◨ Right Col</option>
+                    </>
+                  ) : activeLayout === "four-grid" && totalPlannedSlots >= 3 ? (
+                    <>
+                      <option value={0} className="bg-slate-900">↖ Top-Left</option>
+                      <option value={1} className="bg-slate-900">↗ Top-Right</option>
+                      <option value={2} className="bg-slate-900">↙ Bottom-Left</option>
+                      <option value={3} className="bg-slate-900">↘ Bottom-Right</option>
+                    </>
+                  ) : activeLayout === "speaker-large" || activeLayout === "screen-speaker" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">★ Hero Left (Host Right)</option>
+                      <option value={1} className="bg-slate-900">▤ Side Right (Host Left)</option>
+                      {totalPlannedSlots >= 2 && (
+                        <option value={2} className="bg-slate-900">▤ Side Btm-Right</option>
+                      )}
+                    </>
+                  ) : activeLayout === "stacked" || activeLayout === "presentation" ? (
+                    <>
+                      <option value={0} className="bg-slate-900">⬆ Media Top (Host Bottom)</option>
+                      <option value={1} className="bg-slate-900">⬇ Media Bottom (Host Top)</option>
+                    </>
+                  ) : (
+                    Array.from({ length: totalPlannedSlots + 1 }).map((_, sIdx) => (
+                      <option key={sIdx} value={sIdx} className="bg-slate-900">
+                        Slot {sIdx + 1}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            )}
+
+            {/* 1-Click Solo / Restore Media Button */}
+            <button
+              type="button"
+              onClick={() => toggleSoloParticipant("active-media")}
+              className={cn(
+                "px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-colors cursor-pointer",
+                soloTargetId === "active-media"
+                  ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
+                  : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
+              )}
+              title="Solo Media Fullscreen"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>{soloTargetId === "active-media" ? "Un-Solo" : "Solo"}</span>
+            </button>
+
+            {/* Replace Media */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (activeMedia.type === "youtube") {
+                  setIsYouTubeModalOpen(true);
+                } else if (activeMedia.type === "map") {
+                  setIsTacticalMapModalOpen(true);
+                } else if (activeMedia.type === "website") {
+                  setIsWebsiteModalOpen(true);
+                } else {
+                  window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
+                }
+              }}
+              className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded text-[10px] font-semibold flex items-center gap-1 transition-colors"
+              title="Replace or Edit Media"
+            >
+              <MonitorUp className="w-3 h-3 text-emerald-400" />
+              <span>Replace</span>
+            </button>
+
+            {/* Stop / Remove Media */}
+            <button
+              type="button"
+              onClick={() => {
+                resetParticipantBounds("active-media");
+                setActiveMedia(null);
+              }}
+              className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-semibold transition-colors"
+              title="Remove Media from Stage"
+            >
+              Remove
+            </button>
+
+            {isMediaSelected && (
+              <button
+                type="button"
+                onClick={() => setSelectedParticipantId(null)}
+                className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
+                title="Close toolbar"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Participant Tiles */}
         {orderedParticipants.map((p, idx) => {
-          const calculatedBounds = stageLayoutResult.participantBounds[idx] || getDefaultSlotBounds(
-            activeLayout,
-            idx,
-            totalPlannedSlots,
-            layoutSplitRatio,
-            customLayoutConfig,
-            isStageCropped
-          );
+          const calculatedBounds =
+            stageLayoutResult.participantBounds[idx] ||
+            getDefaultSlotBounds(
+              activeLayout,
+              idx,
+              totalPlannedSlots,
+              layoutSplitRatio,
+              customLayoutConfig,
+              isStageCropped
+            );
           const isPip = activeLayout === "pip" || customLayoutConfig.mode === "pip";
           const bounds: ParticipantBounds =
-            isPip && participantBounds[p.id]
-              ? participantBounds[p.id]
-              : calculatedBounds;
+            isPip && participantBounds[p.id] ? participantBounds[p.id] : calculatedBounds;
+          if (
+            bounds.width <= 0 ||
+            bounds.height <= 0 ||
+            (bounds.zIndex !== undefined && bounds.zIndex < 0)
+          ) {
+            return null;
+          }
           const isSelected = String(selectedParticipantId) === String(p.id);
           const isThisDragging = activeDragState?.participantId === p.id;
           const isFloatingPipTile = (bounds.zIndex || 10) >= 25 && bounds.width < 50 && bounds.height < 50;
@@ -3267,7 +3403,9 @@ export const StagePreview: React.FC = () => {
                   !tileIsFullBleed && activeLayout === "custom" && customLayoutConfig?.gap !== undefined
                     ? `${customLayoutConfig.gap / 2}px`
                     : undefined,
-                transition: isThisDragging ? "none" : "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+                transition: isThisDragging
+                  ? "none"
+                  : "left 0.22s ease-out, top 0.22s ease-out, width 0.22s ease-out, height 0.22s ease-out",
               }}
               onMouseDown={(e) => handleTileMouseDown(e, p, bounds)}
               onTouchStart={(e) => handleTileTouchStart(e, p, bounds)}
@@ -3276,14 +3414,15 @@ export const StagePreview: React.FC = () => {
                 setSelectedParticipantId(p.id);
               }}
               className={cn(
-                "overflow-visible select-none transition-shadow",
+                "overflow-visible select-none",
+                newlyAddedParticipantIds.includes(String(p.id)) && "animate-in fade-in zoom-in-95 duration-300",
                 isSelected
                   ? cn(
-                      "ring-2 ring-indigo-500",
-                      tileIsFullBleed ? "rounded-none ring-inset" : "rounded-2xl",
-                      "shadow-[0_0_25px_rgba(99,102,241,0.5)]",
-                      isPipMode ? "cursor-move" : "cursor-pointer"
-                    )
+                    "ring-2 ring-indigo-500",
+                    tileIsFullBleed ? "rounded-none ring-inset" : "rounded-2xl",
+                    "shadow-[0_0_25px_rgba(99,102,241,0.5)]",
+                    isPipMode ? "cursor-move" : "cursor-pointer"
+                  )
                   : "cursor-pointer"
               )}
             >
@@ -3296,17 +3435,16 @@ export const StagePreview: React.FC = () => {
                       ? "border border-indigo-400 rounded-none bg-[#0c0c14]"
                       : "border-0 rounded-none bg-[#0c0c14]"
                     : cn(
-                        "border rounded-2xl bg-[#0c0c14]",
-                        isSelected
-                          ? "border-indigo-400"
-                          : "border-white/15 hover:border-indigo-400/50 shadow-xl"
-                      )
+                      "border rounded-2xl bg-[#0c0c14]",
+                      isSelected
+                        ? "border-indigo-400"
+                        : "border-white/15 hover:border-indigo-400/50 shadow-xl"
+                    )
                 )}
                 style={{
-                  borderRadius:
-                    tileIsFullBleed
-                      ? "0px"
-                      : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                  borderRadius: tileIsFullBleed
+                    ? "0px"
+                    : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
                       ? `${customLayoutConfig.borderRadius}px`
                       : undefined,
                   boxShadow:
@@ -3315,18 +3453,18 @@ export const StagePreview: React.FC = () => {
                       : undefined,
                   borderColor:
                     activeLayout === "custom" && customLayoutConfig?.showSpeakerBorder && p.isSpeaking
-                      ? (customLayoutConfig.highlightColor || "#6366f1")
+                      ? customLayoutConfig.highlightColor || "#6366f1"
                       : undefined,
                 }}
               >
                 {renderTile(p, idx, "w-full h-full")}
               </div>
 
-              {/* StreamYard Floating Action Pill Toolbar for Selected Participant */}
+              {/* StreamYard Floating Action Pill Toolbar for Selected Participant / Host */}
               {isSelected && (
                 <div
                   className={cn(
-                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150 max-w-[calc(100%-16px)] overflow-x-auto scrollbar-none",
+                    "absolute z-50 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-[#0c0c16]/95 backdrop-blur-md px-2.5 py-1 rounded-xl border border-indigo-500/60 shadow-[0_8px_30px_rgba(0,0,0,0.85)] pointer-events-auto whitespace-nowrap animate-in fade-in duration-150 max-w-[calc(100%-12px)] overflow-x-auto scrollbar-none",
                     bounds.height >= 85 || bounds.y < 12 ? "top-3" : "-top-11"
                   )}
                   onClick={(e) => e.stopPropagation()}
@@ -3334,9 +3472,9 @@ export const StagePreview: React.FC = () => {
                   onTouchStart={(e) => e.stopPropagation()}
                 >
                   {/* Participant Name Tag */}
-                  <span className="text-[10px] font-bold text-white px-2 py-0.5 rounded bg-white/10 max-w-[110px] truncate flex items-center gap-1">
+                  <span className="text-[10px] font-bold text-white px-2 py-0.5 rounded bg-white/10 max-w-[105px] truncate flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                    {p.name || "Guest"}
+                    {p.name || "Host"}
                   </span>
 
                   {/* Mic Toggle Button */}
@@ -3349,15 +3487,27 @@ export const StagePreview: React.FC = () => {
                         ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
                         : "bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30"
                     )}
-                    title={p.micOn ? "Mute participant microphone" : "Unmute participant microphone"}
                   >
                     {p.micOn ? <Mic className="w-3 h-3 text-emerald-400" /> : <MicOff className="w-3 h-3 text-rose-400" />}
                     <span>{p.micOn ? "Mic ON" : "Muted"}</span>
                   </button>
 
-                  <span className="w-px h-3 bg-white/20" />
+                  {/* SHIFT HOST LEFT / RIGHT (Always visible when Media is on stage, even with 1 Host!) */}
+                  {hasVisualMedia && !isSoloOrCinema && (
+                    <button
+                      type="button"
+                      onClick={handleSwapMediaAndHostPosition}
+                      className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-[10px] flex items-center gap-1 shadow transition-all cursor-pointer"
+                      title="Shift Host Left / Right (Swap position with Media window)"
+                    >
+                      <ArrowLeftRight className="w-3 h-3" />
+                      <span>
+                        {bounds.x < 35 ? "Shift Host Right ►" : "◄ Shift Host Left"}
+                      </span>
+                    </button>
+                  )}
 
-                  {/* Swap Participant Slot Order (Left / Right / Up / Down) */}
+                  {/* Swap Participant Slot Order (when 2+ Participants are on stage) */}
                   {orderedParticipants.length >= 2 && (
                     <div className="flex items-center gap-0.5 bg-white/10 rounded-lg border border-white/15 px-1 py-0.5">
                       <button
@@ -3365,7 +3515,7 @@ export const StagePreview: React.FC = () => {
                         disabled={idx === 0}
                         onClick={() => moveParticipantOrder(p.id, "left")}
                         className="px-1 text-[10px] font-bold text-cyan-300 hover:text-white disabled:opacity-30 cursor-pointer"
-                        title="Swap with previous slot (Move Left / Up)"
+                        title="Move Left / Up"
                       >
                         ◄
                       </button>
@@ -3375,7 +3525,7 @@ export const StagePreview: React.FC = () => {
                         disabled={idx === orderedParticipants.length - 1}
                         onClick={() => moveParticipantOrder(p.id, "right")}
                         className="px-1 text-[10px] font-bold text-cyan-300 hover:text-white disabled:opacity-30 cursor-pointer"
-                        title="Swap with next slot (Move Right / Down)"
+                        title="Move Right / Down"
                       >
                         ►
                       </button>
@@ -3392,7 +3542,6 @@ export const StagePreview: React.FC = () => {
                         ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md"
                         : "bg-white/10 text-slate-200 border-white/15 hover:bg-white/20"
                     )}
-                    title="Instantly Solo this speaker full-screen (click again to restore previous layout)"
                   >
                     <Maximize2 className="w-3 h-3" />
                     <span>{String(soloTargetId) === String(p.id) ? "Un-Solo" : "Solo"}</span>
@@ -3414,11 +3563,6 @@ export const StagePreview: React.FC = () => {
                         ? "bg-amber-500/25 text-amber-300 border-amber-500/50 font-bold"
                         : "bg-white/10 text-slate-300 border-white/15 hover:bg-white/20 hover:text-white"
                     )}
-                    title={
-                      customLayoutConfig.heroParticipantId === p.id
-                        ? "Currently Spotlighted (Click to un-spotlight)"
-                        : "Spotlight this participant as primary speaker"
-                    }
                   >
                     <Sparkles className="w-3 h-3 text-amber-400" />
                     <span>{customLayoutConfig.heroParticipantId === p.id ? "Spotlighted" : "Spotlight"}</span>
@@ -3437,17 +3581,11 @@ export const StagePreview: React.FC = () => {
                         ? "bg-indigo-500/25 text-indigo-300 border-indigo-500/50"
                         : "bg-white/10 text-slate-300 border-white/15 hover:bg-white/20 hover:text-white"
                     )}
-                    title={
-                      (tileTransforms[p.id]?.fitMode || "cover") === "contain"
-                        ? "Currently: Fit to Frame (letterboxed). Click to Fill frame."
-                        : "Currently: Fill Frame (cropped). Click to Fit frame (16:9 full view)."
-                    }
                   >
                     <Crop className="w-3 h-3 text-indigo-400" />
                     <span>{(tileTransforms[p.id]?.fitMode || "cover") === "contain" ? "Fit (16:9)" : "Fill"}</span>
                   </button>
 
-                  {/* PiP repositioning if in PiP mode */}
                   {isPipMode && (
                     <button
                       type="button"
@@ -3457,39 +3595,34 @@ export const StagePreview: React.FC = () => {
                           currentPos === "bottom-right"
                             ? "bottom-left"
                             : currentPos === "bottom-left"
-                            ? "top-left"
-                            : currentPos === "top-left"
-                            ? "top-right"
-                            : "bottom-right";
+                              ? "top-left"
+                              : currentPos === "top-left"
+                                ? "top-right"
+                                : "bottom-right";
                         setCustomLayoutConfig({ pipPosition: nextPos });
                       }}
                       className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/10 hover:bg-white/20 text-slate-200 border border-white/15 flex items-center gap-1 transition-colors"
-                      title="Move PiP to next corner"
                     >
                       <Move className="w-3 h-3 text-slate-300" />
                       <span>Corner</span>
                     </button>
                   )}
 
-                  {/* Reset to Grid (only shown if custom bounds are attached to this participant) */}
                   {participantBounds[p.id] && (
                     <button
                       type="button"
                       onClick={() => resetParticipantBounds(p.id)}
                       className="px-2 py-0.5 hover:bg-white/15 rounded text-amber-300 hover:text-amber-200 text-[10px] font-medium flex items-center gap-1 transition-colors"
-                      title="Reset window to default layout position"
                     >
                       <RotateCcw className="w-3 h-3 text-amber-400" />
                       <span>Reset</span>
                     </button>
                   )}
 
-                  {/* Deselect / Close */}
                   <button
                     type="button"
                     onClick={() => setSelectedParticipantId(null)}
                     className="p-1 hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 rounded transition-colors"
-                    title="Close selection"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -3499,7 +3632,7 @@ export const StagePreview: React.FC = () => {
           );
         })}
 
-        {/* StreamYard Ghost / Placeholder Slots: Waiting for Guest to join */}
+        {/* StreamYard Ghost / Placeholder Slots */}
         {allowGhostSlots && totalGhostSlots > 0 && (
           <>
             {Array.from({ length: totalGhostSlots }).map((_, i) => {
@@ -3540,10 +3673,9 @@ export const StagePreview: React.FC = () => {
                 >
                   <div
                     style={{
-                      borderRadius:
-                        isFullBleedLayout
-                          ? "0px"
-                          : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
+                      borderRadius: isFullBleedLayout
+                        ? "0px"
+                        : activeLayout === "custom" && customLayoutConfig?.borderRadius !== undefined
                           ? `${customLayoutConfig.borderRadius}px`
                           : undefined,
                     }}
@@ -3575,7 +3707,6 @@ export const StagePreview: React.FC = () => {
                           ? "bg-emerald-600 text-white shadow-emerald-500/30"
                           : "bg-indigo-600/80 hover:bg-indigo-600 text-white shadow-indigo-500/20 hover:shadow-indigo-500/40"
                       )}
-                      title="Copy invite link to share with guest"
                     >
                       {isCopied ? <Check className="w-3 h-3 text-emerald-200" /> : <Copy className="w-3 h-3" />}
                       <span>{isCopied ? "Copied! ✓" : "Invite Guest"}</span>
@@ -3587,7 +3718,7 @@ export const StagePreview: React.FC = () => {
           </>
         )}
 
-        {/* StreamYard Responsive Stage Split Dividers (Multi-Layout Parity) */}
+        {/* StreamYard Responsive Stage Split Dividers */}
         {((hasVisualMedia && totalPlannedSlots >= 1) || orderedParticipants.length >= 2) && (() => {
           const isVerticalSplit =
             activeLayout === "side-by-side" ||
@@ -3616,7 +3747,9 @@ export const StagePreview: React.FC = () => {
           const isThreeCol = activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal");
           const isCustom3Split = layoutSplitRatio !== 50 && layoutSplitRatio !== 33 && layoutSplitRatio !== 65;
           const dividerLeftPct = isThreeCol
-            ? (isCustom3Split ? Math.max(20, Math.min(58, layoutSplitRatio)) : 33.33)
+            ? isCustom3Split
+              ? Math.max(20, Math.min(58, layoutSplitRatio))
+              : 33.33
             : layoutSplitRatio;
 
           if (isVerticalSplit) {
@@ -3699,12 +3832,21 @@ export const StagePreview: React.FC = () => {
           if (!rawMedia) return;
           try {
             const parsed = JSON.parse(rawMedia);
-            const mediaItem = parsed?.type === "livestudio-media" ? parsed.media : (parsed?.id && parsed?.url ? parsed : null);
+            const mediaItem =
+              parsed?.type === "livestudio-media"
+                ? parsed.media
+                : parsed?.id && parsed?.url
+                  ? parsed
+                  : null;
             if (mediaItem && mediaItem.id && mediaItem.url) {
               e.preventDefault();
               e.stopPropagation();
-              // Determine target slot if dropped on a multi-slot stage layout
-              if (stageContainerRef.current && totalPlannedSlots >= 1 && !isSoloOrCinema && mediaItem.type !== "audio") {
+              if (
+                stageContainerRef.current &&
+                totalPlannedSlots >= 1 &&
+                !isSoloOrCinema &&
+                mediaItem.type !== "audio"
+              ) {
                 const rect = stageContainerRef.current.getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0) {
                   const pctX = ((e.clientX - rect.left) / rect.width) * 100;
@@ -3722,7 +3864,14 @@ export const StagePreview: React.FC = () => {
                   } else {
                     const totalSlots = totalPlannedSlots + 1;
                     for (let s = 0; s < totalSlots; s++) {
-                      const sb = getDefaultSlotBounds(activeLayout, s, totalSlots, layoutSplitRatio, customLayoutConfig, isStageCropped);
+                      const sb = getDefaultSlotBounds(
+                        activeLayout,
+                        s,
+                        totalSlots,
+                        layoutSplitRatio,
+                        customLayoutConfig,
+                        isStageCropped
+                      );
                       if (pctX >= sb.x && pctX <= sb.x + sb.width && pctY >= sb.y && pctY <= sb.y + sb.height) {
                         setMediaSlotIndex(s);
                         break;
@@ -3734,14 +3883,14 @@ export const StagePreview: React.FC = () => {
               setActiveMedia({
                 ...mediaItem,
                 loop: mediaItem.loop ?? true,
+                isMuted: false,
+                volume: mediaItem.volume && mediaItem.volume > 0 ? mediaItem.volume : 100,
               });
               if (isStageCropped) {
                 setTileTransform("active-media", { fitMode: "cover", panX: 0, panY: 0 });
               }
             }
-          } catch {
-            // ignore non-JSON text drops
-          }
+          } catch { }
         }}
         className={cn(
           "relative rounded-2xl overflow-hidden border bg-[#050508] shadow-2xl flex flex-col justify-center mx-auto my-auto select-none group/stage transition-all",
@@ -3753,799 +3902,752 @@ export const StagePreview: React.FC = () => {
           aspectRatio: "16 / 9",
           maxWidth: "100%",
           maxHeight: "100%",
-          backgroundImage: !isFullBleedLayout && activeBackgroundUrl && !isVideoBg ? `url(${activeBackgroundUrl})` : undefined,
+          backgroundImage:
+            !isFullBleedLayout && activeBackgroundUrl && !isVideoBg
+              ? `url(${activeBackgroundUrl})`
+              : undefined,
           backgroundSize: "cover",
           backgroundPosition: "center",
           backgroundRepeat: "no-repeat",
         }}
       >
-      {/* Real-time Video Background Layer (Seamless continuous loop) */}
-      {!isFullBleedLayout && isVideoBg && activeBackgroundUrl && (
-        <video
-          key={activeBackgroundUrl}
-          src={activeBackgroundUrl}
-          autoPlay
-          loop
-          muted
-          playsInline
-          crossOrigin="anonymous"
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
-        />
-      )}
+        {/* Real-time Video Background Layer */}
+        {!isFullBleedLayout && isVideoBg && activeBackgroundUrl && (
+          <video
+            key={activeBackgroundUrl}
+            src={activeBackgroundUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            crossOrigin="anonymous"
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+          />
+        )}
 
-      {/* Active Video Stage Content */}
-      <div className="absolute inset-0 z-10">{renderLayoutContent()}</div>
+        {/* Active Video Stage Content */}
+        <div className="absolute inset-0 z-10">{renderLayoutContent()}</div>
 
-      {/* Global Transparent Drag Overlay (captures all pointer events anywhere on screen while dragging/resizing) */}
-      {(activeDragState || isDraggingSplit) && (
-        <div
-          className={cn(
-            "fixed inset-0 z-50 select-none bg-transparent pointer-events-auto",
-            isDraggingSplit && "cursor-col-resize",
-            activeDragState?.type === "move" && "cursor-move",
-            activeDragState?.type === "resize" && (
-              activeDragState.handle === "nw" || activeDragState.handle === "se"
+        {/* Global Transparent Drag Overlay */}
+        {(activeDragState || isDraggingSplit) && (
+          <div
+            className={cn(
+              "fixed inset-0 z-50 select-none bg-transparent pointer-events-auto",
+              isDraggingSplit && "cursor-col-resize",
+              activeDragState?.type === "move" && "cursor-move",
+              activeDragState?.type === "resize" &&
+              (activeDragState.handle === "nw" || activeDragState.handle === "se"
                 ? "cursor-nwse-resize"
                 : activeDragState.handle === "ne" || activeDragState.handle === "sw"
-                ? "cursor-nesw-resize"
-                : activeDragState.handle === "n" || activeDragState.handle === "s"
-                ? "cursor-ns-resize"
-                : "cursor-ew-resize"
-            )
-          )}
-        />
-      )}
+                  ? "cursor-nesw-resize"
+                  : activeDragState.handle === "n" || activeDragState.handle === "s"
+                    ? "cursor-ns-resize"
+                    : "cursor-ew-resize")
+            )}
+          />
+        )}
 
-      {/* Stage Top Bar: Custom Layout Active / Reset All to Grid */}
-      {hasAnyCustomBounds && (
-        <div className="absolute top-3 right-4 z-30 flex items-center gap-2 bg-black/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/40 shadow-xl pointer-events-auto">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span className="text-[11px] font-medium text-slate-200">Custom Stage Layout</span>
-          <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-md border border-emerald-500/30">
-            Saved ✓
-          </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              resetAllParticipantBounds();
-            }}
-            className="ml-1 px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-semibold flex items-center gap-1 transition-colors border border-white/10"
-            title="Restore all windows to default grid"
+        {/* Stage Top Bar: Custom Layout Active / Reset All to Grid */}
+        {hasAnyCustomBounds && (
+          <div className="absolute top-3 right-4 z-30 flex items-center gap-2 bg-black/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/40 shadow-xl pointer-events-auto">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-[11px] font-medium text-slate-200">Custom Stage Layout</span>
+            <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-md border border-emerald-500/30">
+              Saved ✓
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                resetAllParticipantBounds();
+              }}
+              className="ml-1 px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-semibold flex items-center gap-1 transition-colors border border-white/10"
+              title="Restore all windows to default grid"
+            >
+              <RotateCcw className="w-3 h-3 text-amber-400" />
+              <span>Reset All to Grid</span>
+            </button>
+          </div>
+        )}
+
+        {/* StreamYard Stage Window Quick-Split Controller */}
+        {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
+          <div
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 z-30 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto",
+              showTicker ? "bottom-14" : "bottom-3",
+              selectedParticipantId !== null
+                ? "opacity-0 pointer-events-none"
+                : "opacity-0 group-hover/stage:opacity-100 hover:opacity-100"
+            )}
           >
-            <RotateCcw className="w-3 h-3 text-amber-400" />
-            <span>Reset All to Grid</span>
-          </button>
-        </div>
-      )}
-
-      {/* StreamYard Stage Window Quick-Split Controller (appears when 2+ slots or participants on stage and no tile is selected) */}
-      {(onStageParticipants.length >= 2 || expectedSlots >= 2) && (
-        <div
-          className={cn(
-            "absolute left-1/2 -translate-x-1/2 z-30 transition-opacity duration-200 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/15 flex items-center gap-1.5 shadow-2xl pointer-events-auto",
-            hasVisualMedia ? "top-14" : "top-3",
-            selectedParticipantId !== null
-              ? "opacity-0 pointer-events-none"
-              : "opacity-0 group-hover/stage:opacity-100 hover:opacity-100"
-          )}
-        >
-          <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
-          {(activeLayout === "three-equal" || (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal")
-            ? [
+            <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">Split:</span>
+            {(activeLayout === "three-equal" ||
+              (activeLayout === "custom" && customLayoutConfig?.mode === "three-equal")
+              ? [
                 { label: "1:1:1", ratio: 33 },
                 { label: "50:25", ratio: 50 },
                 { label: "60:20", ratio: 60 },
                 { label: "25:37", ratio: 25 },
               ]
-            : [
+              : [
                 { label: "50:50", ratio: 50 },
                 { label: "65:35", ratio: 65 },
                 { label: "35:65", ratio: 35 },
                 { label: "75:25", ratio: 75 },
               ]
-          ).map((preset) => (
-            <button
-              key={preset.label}
-              onClick={(e) => {
-                e.stopPropagation();
-                setLayoutSplitRatio(preset.ratio);
-              }}
-              className={cn(
-                "px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold transition-all border",
-                Math.abs(layoutSplitRatio - preset.ratio) <= 2
-                  ? "bg-indigo-600 border-indigo-400 text-white shadow-md"
-                  : "bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10"
-              )}
-            >
-              {preset.label}
-            </button>
-          ))}
-          <span className="w-px h-3 bg-white/20 ml-0.5" />
-          <span className="text-[10px] font-mono text-cyan-300 font-bold px-1">
-            {layoutSplitRatio}% | {100 - layoutSplitRatio}%
-          </span>
-        </div>
-      )}
-
-      {/* StreamYard Full-Frame Overlay (1920x1080 Transparent PNG/GIF/WebM) */}
-      {activeOverlayUrl && (
-        <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
-          <img
-            src={activeOverlayUrl}
-            alt="Full Frame Overlay"
-            className="w-full h-full object-contain pointer-events-none"
-          />
-        </div>
-      )}
-
-      {/* Real-time Interactive Stage Overlay Layer (Images / Videos / Graphics) */}
-      {activeStageOverlay && activeStageOverlay.isShowing && (
-        <div
-          data-stage-overlay="true"
-          style={getOverlayStyle()}
-          className="group/overlay cursor-move select-none"
-          onMouseDown={handleOverlayMouseDown}
-          onTouchStart={handleOverlayTouchStart}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Quick-action Mini Dock: Placed outside cropped container so it NEVER gets clipped by circle or rounded corners */}
-          <div
-            className={cn(
-              "absolute z-40 left-1/2 -translate-x-1/2 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/90 backdrop-blur-md rounded-xl px-2 py-1 flex items-center gap-1.5 border border-white/20 shadow-2xl pointer-events-auto whitespace-nowrap",
-              (activeStageOverlay.customCoords?.y ?? (activeStageOverlay.position.startsWith("top") ? 5 : 80)) < 16
-                ? "-bottom-10"
-                : "-top-10"
-            )}
-            onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            {/* Drag Handle Indicator */}
-            <span className="text-slate-400 p-0.5 mr-0.5 cursor-move" title="Drag to reposition">
-              <Move className="w-3 h-3" />
-            </span>
-
-            {/* Quick Size cycle */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const nextScale = activeStageOverlay.scale === 20 ? 35 : activeStageOverlay.scale === 35 ? 60 : activeStageOverlay.scale === 60 ? 100 : 20;
-                updateStageOverlay({ scale: nextScale });
-              }}
-              className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] font-mono"
-              title={`Current scale: ${activeStageOverlay.scale}%. Click to cycle scale.`}
-            >
-              {activeStageOverlay.scale}%
-            </button>
-
-            <span className="w-px h-3 bg-white/20" />
-
-            {/* Quick Crop toggle */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const modes: ("fit" | "cover" | "square" | "circle")[] = ["fit", "cover", "square", "circle"];
-                const nextIdx = (modes.indexOf(activeStageOverlay.cropMode) + 1) % modes.length;
-                updateStageOverlay({ cropMode: modes[nextIdx] });
-              }}
-              className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] uppercase font-semibold"
-              title={`Crop Mode: ${activeStageOverlay.cropMode}. Click to cycle.`}
-            >
-              {activeStageOverlay.cropMode}
-            </button>
-
-            {/* Mute toggle for video */}
-            {activeStageOverlay.type === "video" && (
+            ).map((preset) => (
+              <button
+                key={preset.label}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLayoutSplitRatio(preset.ratio);
+                }}
+                className={cn(
+                  "px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold transition-all border",
+                  Math.abs(layoutSplitRatio - preset.ratio) <= 2
+                    ? "bg-indigo-600 border-indigo-400 text-white shadow-md"
+                    : "bg-white/5 border-white/5 text-slate-300 hover:text-white hover:bg-white/10"
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+            {hasVisualMedia && !isSoloOrCinema && (
               <>
-                <span className="w-px h-3 bg-white/20" />
+                <span className="w-px h-3 bg-white/20 mx-0.5" />
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    updateStageOverlay({ isMuted: !activeStageOverlay.isMuted });
-                  }}
-                  className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
-                  title={activeStageOverlay.isMuted ? "Unmute Audio" : "Mute Audio"}
+                  type="button"
+                  onClick={handleSwapMediaAndHostPosition}
+                  className="px-2 py-0.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-[10px] flex items-center gap-1 shadow"
+                  title="Swap Host and Media Left/Right"
                 >
-                  {activeStageOverlay.isMuted ? <VolumeX className="w-3 h-3 text-rose-400" /> : <Volume2 className="w-3 h-3 text-emerald-400" />}
+                  <ArrowLeftRight className="w-3 h-3" />
+                  <span>Swap L/R</span>
                 </button>
               </>
             )}
-
-            {/* Transparent PNG vs Card Backdrop Toggle */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                updateStageOverlay({ showBackdrop: !activeStageOverlay.showBackdrop });
-              }}
-              className={cn(
-                "px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors",
-                activeStageOverlay.showBackdrop
-                  ? "bg-white/20 border-white/30 text-white"
-                  : "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
-              )}
-              title={activeStageOverlay.showBackdrop ? "Currently: Card Background (Click for 100% Transparent PNG)" : "Currently: 100% Transparent PNG (Click for Card Box)"}
-            >
-              {activeStageOverlay.showBackdrop ? "Card" : "PNG"}
-            </button>
-
-            <span className="w-px h-3 bg-white/20" />
-
-            {/* Hide Live */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleStageOverlayVisibility();
-              }}
-              className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
-              title="Hide overlay"
-            >
-              <EyeOff className="w-3 h-3" />
-            </button>
-
-            {/* Remove */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setStageOverlay(null);
-              }}
-              className="p-1 hover:bg-rose-600 rounded text-slate-300 hover:text-white"
-              title="Remove overlay from stage"
-            >
-              <X className="w-3 h-3" />
-            </button>
           </div>
+        )}
 
-          {/* Inner Cropped Content Container */}
+        {/* StreamYard Full-Frame Overlay */}
+        {activeOverlayUrl && (
+          <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
+            <img
+              src={activeOverlayUrl}
+              alt="Full Frame Overlay"
+              className="w-full h-full object-contain pointer-events-none"
+            />
+          </div>
+        )}
+
+        {/* Real-time Interactive Stage Overlay Layer */}
+        {activeStageOverlay && activeStageOverlay.isShowing && (
           <div
-            className={cn(
-              "relative overflow-hidden transition-shadow select-none",
-              activeStageOverlay.showBackdrop
-                ? "bg-black/75 backdrop-blur-md border border-white/10 shadow-2xl"
-                : "bg-transparent",
-              activeStageOverlay.cropMode === "circle" ? "rounded-full" : "rounded-2xl"
-            )}
-            style={{
-              borderRadius: activeStageOverlay.cropMode === "circle" ? "9999px" : `${activeStageOverlay.borderRadius || 16}px`,
-            }}
+            data-stage-overlay="true"
+            style={getOverlayStyle()}
+            className="group/overlay cursor-move select-none"
+            onMouseDown={handleOverlayMouseDown}
+            onTouchStart={handleOverlayTouchStart}
+            onClick={(e) => e.stopPropagation()}
           >
-            {activeStageOverlay.type === "video" ? (
-              <video
-                src={activeStageOverlay.url}
-                autoPlay
-                playsInline
-                loop={activeStageOverlay.isLooping !== false}
-                muted={activeStageOverlay.isMuted !== false}
-                className={getCropClasses()}
-              />
-            ) : (
-              <img
-                src={activeStageOverlay.url}
-                alt={activeStageOverlay.name}
-                className={cn(
-                  getCropClasses(),
-                  !activeStageOverlay.showBackdrop && "drop-shadow-md"
-                )}
-                draggable={false}
-              />
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Watermark Logo Overlay */}
-      {showLogo && (
-        <div className={cn("absolute z-30 pointer-events-none transition-all", logoPositionClasses[logoPosition])}>
-          {logoConfig?.mode === "image" && logoConfig?.imageUrl ? (
-            <div className="p-1">
-              <img
-                src={logoConfig.imageUrl}
-                alt="Logo"
-                style={{ height: `${logoConfig.heightPx || 40}px` }}
-                className="w-auto object-contain drop-shadow-lg"
-              />
-            </div>
-          ) : logoConfig?.mode === "both" && logoConfig?.imageUrl ? (
             <div
               className={cn(
-                "px-3 py-1 flex items-center gap-2.5 transition-all select-none",
-                logoConfig?.isTransparentBg
-                  ? "bg-transparent border-0 shadow-none"
-                  : "rounded-xl backdrop-blur-md border shadow-xl"
+                "absolute z-40 left-1/2 -translate-x-1/2 opacity-0 group-hover/overlay:opacity-100 transition-opacity bg-black/90 backdrop-blur-md rounded-xl px-2 py-1 flex items-center gap-1.5 border border-white/20 shadow-2xl pointer-events-auto whitespace-nowrap",
+                (activeStageOverlay.customCoords?.y ?? (activeStageOverlay.position.startsWith("top") ? 5 : 80)) < 16
+                  ? "-bottom-10"
+                  : "-top-10"
               )}
-              style={
-                logoConfig?.isTransparentBg
-                  ? undefined
-                  : {
-                      backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
-                      borderColor: `${activeThemeColor}50`,
-                    }
-              }
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
             >
-              <img
-                src={logoConfig.imageUrl}
-                alt="Logo"
-                style={{ height: `${Math.min(logoConfig.heightPx || 36, 44)}px` }}
-                className="w-auto object-contain drop-shadow"
-              />
-              <span
-                className={cn(
-                  "font-bold tracking-wider uppercase font-mono drop-shadow-md",
-                  logoConfig?.fontSize === "small" && "text-[10px]",
-                  logoConfig?.fontSize === "large" && "text-sm font-black",
-                  (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
-                )}
-                style={{ color: logoConfig?.textColor || "#ffffff" }}
-              >
-                {logoConfig?.text || logoUrl}
+              <span className="text-slate-400 p-0.5 mr-0.5 cursor-move" title="Drag to reposition">
+                <Move className="w-3 h-3" />
               </span>
-            </div>
-          ) : (
-            <div 
-              className={cn(
-                "px-3.5 py-1.5 flex items-center gap-2 transition-all select-none",
-                logoConfig?.isTransparentBg
-                  ? "bg-transparent border-0 shadow-none"
-                  : "rounded-xl backdrop-blur-md border shadow-xl"
-              )}
-              style={
-                logoConfig?.isTransparentBg
-                  ? undefined
-                  : {
-                      backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(((logoConfig?.bgOpacity ?? 75) / 100) * 255).toString(16).padStart(2, "0")}`,
-                      borderColor: `${activeThemeColor}50`,
-                    }
-              }
-            >
-              <span 
-                className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0" 
-                style={{ backgroundColor: activeThemeColor }} 
-              />
-              <span 
-                className={cn(
-                  "font-bold tracking-wider uppercase font-mono drop-shadow-md",
-                  logoConfig?.fontSize === "small" && "text-[10px]",
-                  logoConfig?.fontSize === "large" && "text-sm font-black",
-                  (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
-                )}
-                style={{ color: logoConfig?.textColor || "#ffffff" }}
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextScale =
+                    activeStageOverlay.scale === 20
+                      ? 35
+                      : activeStageOverlay.scale === 35
+                        ? 60
+                        : activeStageOverlay.scale === 60
+                          ? 100
+                          : 20;
+                  updateStageOverlay({ scale: nextScale });
+                }}
+                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] font-mono"
               >
-                {logoConfig?.text || logoUrl}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+                {activeStageOverlay.scale}%
+              </button>
 
-      {/* Lower-Third Banner */}
-      {activeBanner && activeBanner.isShowing && (
-        <div className={cn(
-          "absolute left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300 pointer-events-none select-none",
-          showTicker ? "bottom-16" : "bottom-10"
-        )}>
-          {activeBanner.style === "minimal" ? (
-            <div className="backdrop-blur-md bg-black/60 px-5 py-2 rounded-lg border-b-2" style={{ borderBottomColor: activeBanner.themeColor || activeThemeColor }}>
-              <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
-              {activeBanner.subtitle && (
-                <p className="text-xs font-medium" style={{ color: activeBanner.themeColor || activeThemeColor }}>{activeBanner.subtitle}</p>
-              )}
-            </div>
-          ) : activeBanner.style === "block" ? (
-            <div className="shadow-2xl flex flex-col overflow-hidden rounded-md">
-              <div className="px-5 py-1.5 font-bold text-sm text-white uppercase tracking-wider" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }}>
-                {activeBanner.title}
-              </div>
-              {activeBanner.subtitle && (
-                <div className="px-5 py-1 text-xs font-semibold text-slate-200 bg-black/85">
-                  {activeBanner.subtitle}
-                </div>
-              )}
-            </div>
-          ) : activeBanner.style === "bubble" ? (
-            <div className="rounded-full shadow-2xl flex items-center gap-3 px-5 py-2 border border-white/20 backdrop-blur-md bg-black/80">
-              <span className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
-              <div>
-                <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
-                {activeBanner.subtitle && (
-                  <p className="text-[11px] font-medium text-slate-300">{activeBanner.subtitle}</p>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
-              <div className="w-2.5" style={{ backgroundColor: activeBanner.themeColor || activeThemeColor }} />
-              <div className="px-5 py-2.5">
-                <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
-                {activeBanner.subtitle && (
-                  <p className="text-xs font-medium" style={{ color: activeBanner.themeColor || activeThemeColor }}>{activeBanner.subtitle}</p>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+              <span className="w-px h-3 bg-white/20" />
 
-      {/* Interactive Broadcast-Grade Telestrator & On-Screen Drawing Canvas */}
-      <StageTelestrator />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const modes: ("fit" | "cover" | "square" | "circle")[] = ["fit", "cover", "square", "circle"];
+                  const nextIdx = (modes.indexOf(activeStageOverlay.cropMode) + 1) % modes.length;
+                  updateStageOverlay({ cropMode: modes[nextIdx] });
+                }}
+                className="px-1.5 py-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-white text-[10px] uppercase font-semibold"
+              >
+                {activeStageOverlay.cropMode}
+              </button>
 
-      {/* Pinned Stream Message Overlay (StreamYard Lower-Third Broadcast Style) */}
-      {pinnedMessage && (
-        <div
-          className={cn(
-            "absolute left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92%] px-3 transition-all duration-300 select-none group/comment pointer-events-auto",
-            commentConfig?.position === "top"
-              ? "top-5 animate-in fade-in slide-in-from-top-4"
-              : showTicker
-              ? "bottom-16 animate-in fade-in slide-in-from-bottom-4"
-              : "bottom-6 animate-in fade-in slide-in-from-bottom-4"
-          )}
-        >
-          <div
-            className={cn(
-              "relative backdrop-blur-xl border shadow-2xl flex items-start gap-3 transition-all duration-200",
-              commentConfig?.theme === "minimal"
-                ? "p-3 rounded-xl bg-black/85 border-l-4"
-                : commentConfig?.theme === "classic"
-                ? "p-3.5 rounded-none bg-[#0d0d16] border-t-2 border-b-2"
-                : "p-3.5 rounded-2xl bg-[#090912]/95 border-white/15 ring-1 ring-white/5"
-            )}
-            style={{
-              borderColor:
-                commentConfig?.theme === "minimal"
-                  ? `${activeThemeColor}`
-                  : commentConfig?.theme === "classic"
-                  ? `${activeThemeColor}`
-                  : `${activeThemeColor}60`,
-              boxShadow: `0 16px 40px rgba(0, 0, 0, 0.85), 0 0 30px ${activeThemeColor}20`,
-            }}
-          >
-            {/* Commenter Avatar */}
-            {commentConfig?.showAvatar !== false && (
-              <div className="relative shrink-0">
-                {pinnedMessage.avatar ? (
-                  <img
-                    src={pinnedMessage.avatar}
-                    alt={pinnedMessage.author}
-                    className="w-10 h-10 rounded-full object-cover border-2 border-white/20 shadow-md"
-                  />
-                ) : (
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-md border-2 border-white/20"
-                    style={{ backgroundColor: activeThemeColor }}
+              {activeStageOverlay.type === "video" && (
+                <>
+                  <span className="w-px h-3 bg-white/20" />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      updateStageOverlay({ isMuted: !activeStageOverlay.isMuted });
+                    }}
+                    className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
                   >
-                    {(pinnedMessage.author[0] || "U").toUpperCase()}
-                  </div>
-                )}
-                {/* Mini Platform Icon Badge overlayed on Avatar */}
-                <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-black/90 border border-white/30 flex items-center justify-center">
-                  {pinnedMessage.platform === "youtube" ? (
-                    <Youtube className="w-2.5 h-2.5 text-rose-500" />
-                  ) : pinnedMessage.platform === "twitch" ? (
-                    <Twitch className="w-2.5 h-2.5 text-purple-400" />
-                  ) : (
-                    <Globe className="w-2.5 h-2.5 text-cyan-400" />
-                  )}
-                </div>
-              </div>
-            )}
+                    {activeStageOverlay.isMuted ? (
+                      <VolumeX className="w-3 h-3 text-rose-400" />
+                    ) : (
+                      <Volume2 className="w-3 h-3 text-emerald-400" />
+                    )}
+                  </button>
+                </>
+              )}
 
-            {/* Comment Body */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-2 mb-0.5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs sm:text-sm font-bold text-white truncate">
-                    {pinnedMessage.author}
-                  </span>
-                  {pinnedMessage.platform === "youtube" ? (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-400 bg-rose-500/15 px-1.5 py-0.5 rounded border border-rose-500/30 uppercase tracking-wider">
-                      <Youtube className="w-2.5 h-2.5" /> YouTube
-                    </span>
-                  ) : pinnedMessage.platform === "twitch" ? (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase tracking-wider">
-                      <Twitch className="w-2.5 h-2.5" /> Twitch
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-cyan-300 bg-cyan-500/15 px-1.5 py-0.5 rounded border border-cyan-500/30 uppercase tracking-wider">
-                      <Globe className="w-2.5 h-2.5" /> {pinnedMessage.platform}
-                    </span>
-                  )}
-                </div>
-
-                {/* Quick Close Button */}
-                <button
-                  type="button"
-                  onClick={() => pinMessage(null)}
-                  className="opacity-60 hover:opacity-100 p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-opacity"
-                  title="Hide comment from stream"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <p
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  updateStageOverlay({ showBackdrop: !activeStageOverlay.showBackdrop });
+                }}
                 className={cn(
-                  "text-slate-100 font-medium leading-relaxed break-words line-clamp-3",
-                  commentConfig?.fontSize === "large"
-                    ? "text-sm sm:text-base"
-                    : commentConfig?.fontSize === "small"
-                    ? "text-xs"
-                    : "text-xs sm:text-sm"
+                  "px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors",
+                  activeStageOverlay.showBackdrop
+                    ? "bg-white/20 border-white/30 text-white"
+                    : "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
                 )}
               >
-                {pinnedMessage.message}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+                {activeStageOverlay.showBackdrop ? "Card" : "PNG"}
+              </button>
 
-      {/* Animated News Ticker Crawl */}
-      {showTicker && (
-        <div 
-          className="absolute bottom-0 inset-x-0 h-12 border-t backdrop-blur-md z-30 flex items-center overflow-hidden shadow-2xl"
-          style={{ 
-            backgroundColor: tickerConfig?.bgColor || "#050508",
-            borderColor: `${activeThemeColor}40`,
-            borderBottom: `3px solid ${activeThemeColor}`
-          }}
-        >
-          <div 
-            className="px-4 text-xs font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
-            style={{ backgroundColor: tickerConfig?.badgeBgColor || activeThemeColor }}
-          >
-            {tickerConfig?.badgeText || "LIVE UPDATES"}
-          </div>
-          <div className="flex-1 overflow-hidden relative">
-            <div 
+              <span className="w-px h-3 bg-white/20" />
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStageOverlayVisibility();
+                }}
+                className="p-1 hover:bg-white/20 rounded text-slate-300 hover:text-white"
+              >
+                <EyeOff className="w-3 h-3" />
+              </button>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setStageOverlay(null);
+                }}
+                className="p-1 hover:bg-rose-600 rounded text-slate-300 hover:text-white"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+
+            <div
               className={cn(
-                "animate-marquee font-medium px-4",
-                tickerConfig?.fontSize === "small" && "text-sm font-medium",
-                tickerConfig?.fontSize === "medium" && "text-base font-semibold",
-                tickerConfig?.fontSize === "large" && "text-lg font-bold",
-                tickerConfig?.fontSize === "xlarge" && "text-xl font-black",
-                !tickerConfig?.fontSize && "text-base font-semibold"
+                "relative overflow-hidden transition-shadow select-none",
+                activeStageOverlay.showBackdrop
+                  ? "bg-black/75 backdrop-blur-md border border-white/10 shadow-2xl"
+                  : "bg-transparent",
+                activeStageOverlay.cropMode === "circle" ? "rounded-full" : "rounded-2xl"
               )}
-              style={{ 
-                color: tickerConfig?.textColor || "#ffffff",
-                animationDuration: tickerConfig?.speed === "slow" ? "75s" : tickerConfig?.speed === "fast" ? "30s" : "50s"
+              style={{
+                borderRadius:
+                  activeStageOverlay.cropMode === "circle"
+                    ? "9999px"
+                    : `${activeStageOverlay.borderRadius || 16}px`,
               }}
             >
-              {tickerConfig?.text || tickerText}
+              {activeStageOverlay.type === "video" ? (
+                <video
+                  src={activeStageOverlay.url}
+                  autoPlay
+                  playsInline
+                  loop={activeStageOverlay.isLooping !== false}
+                  muted={activeStageOverlay.isMuted !== false}
+                  className={getCropClasses()}
+                />
+              ) : (
+                <img
+                  src={activeStageOverlay.url}
+                  alt={activeStageOverlay.name}
+                  className={cn(getCropClasses(), !activeStageOverlay.showBackdrop && "drop-shadow-md")}
+                  draggable={false}
+                />
+              )}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Active Stage Background Audio Stream */}
-      {activeMedia && activeMedia.type === "audio" && (
-        <>
-          <audio
-            id="livestudio-active-media-audio"
-            src={activeMedia.url}
-            autoPlay
-            loop={activeMedia.loop ?? true}
-            muted={activeMedia.isMuted ?? false}
-          />
-          <div className="absolute top-5 left-5 z-40 animate-in fade-in max-w-[92%] sm:max-w-md">
-            <div className="px-3.5 py-2 rounded-2xl bg-[#0c0d1a]/95 backdrop-blur-md border border-cyan-500/50 shadow-2xl space-y-2 text-white">
-              {/* Header: Title + Mute + Close */}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", activeMedia.isMuted ? "bg-rose-400" : "bg-cyan-400 animate-pulse")} />
-                  <span className="text-xs font-bold text-cyan-200 truncate">
-                    🎵 {activeMedia.name}
-                  </span>
+        {/* Watermark Logo Overlay */}
+        {showLogo && (
+          <div className={cn("absolute z-30 pointer-events-none transition-all", logoPositionClasses[logoPosition])}>
+            <div
+              className={cn(
+                "px-3 py-1.5 flex items-center gap-2 transition-all select-none",
+                logoConfig?.isTransparentBg
+                  ? "bg-transparent border-0 shadow-none"
+                  : "rounded-xl backdrop-blur-md border shadow-xl"
+              )}
+              style={
+                logoConfig?.isTransparentBg
+                  ? undefined
+                  : {
+                    backgroundColor: `${logoConfig?.bgColor || "#000000"}${Math.round(
+                      ((logoConfig?.bgOpacity ?? 75) / 100) * 255
+                    )
+                      .toString(16)
+                      .padStart(2, "0")}`,
+                    borderColor: `${activeThemeColor}50`,
+                  }
+              }
+            >
+              {(logoConfig?.mode === "image" || logoConfig?.mode === "both") && logoConfig?.imageUrl ? (
+                <img
+                  src={logoConfig.imageUrl}
+                  alt="Brand Logo"
+                  style={{ height: `${logoConfig?.scale || 40}px` }}
+                  className="w-auto object-contain drop-shadow-md"
+                />
+              ) : (
+                <span
+                  className="w-2 h-2 rounded-full animate-pulse shadow-sm shrink-0"
+                  style={{ backgroundColor: activeThemeColor }}
+                />
+              )}
+              {(logoConfig?.mode !== "image" || !logoConfig?.imageUrl) && (
+                <span
+                  className={cn(
+                    "font-bold tracking-wider uppercase font-mono drop-shadow-md",
+                    logoConfig?.fontSize === "small" && "text-[10px]",
+                    logoConfig?.fontSize === "large" && "text-sm font-black",
+                    (!logoConfig?.fontSize || logoConfig?.fontSize === "medium") && "text-xs"
+                  )}
+                  style={{ color: logoConfig?.textColor || "#ffffff" }}
+                >
+                  {logoConfig?.text || logoUrl}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Lower-Third Banner */}
+        {activeBanner && activeBanner.isShowing && (() => {
+          const bStyle = activeBanner.style || "default";
+          const accent = activeBanner.themeColor || activeThemeColor;
+          return (
+            <div
+              className={cn(
+                "absolute left-8 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300",
+                showTicker ? "bottom-16" : "bottom-10"
+              )}
+            >
+              {bStyle === "minimal" ? (
+                <div
+                  className="pl-4 py-1.5 pr-6 bg-black/70 backdrop-blur-md border-l-4 shadow-xl"
+                  style={{ borderColor: accent }}
+                >
+                  <h4 className="text-sm font-bold text-white tracking-tight drop-shadow">{activeBanner.title}</h4>
+                  {activeBanner.subtitle && (
+                    <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: accent }}>
+                      {activeBanner.subtitle}
+                    </p>
+                  )}
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+              ) : bStyle === "block" ? (
+                <div className="shadow-2xl overflow-hidden rounded-lg flex flex-col">
+                  <div className="px-5 py-2 text-white font-black text-sm uppercase tracking-wide" style={{ backgroundColor: accent }}>
+                    {activeBanner.title}
+                  </div>
+                  {activeBanner.subtitle && (
+                    <div className="px-5 py-1.5 bg-slate-950/95 text-slate-200 text-xs font-semibold border-x border-b border-white/15">
+                      {activeBanner.subtitle}
+                    </div>
+                  )}
+                </div>
+              ) : bStyle === "bubble" ? (
+                <div
+                  className="px-6 py-2.5 rounded-full shadow-2xl border-2 backdrop-blur-xl bg-slate-950/90 flex items-center gap-3"
+                  style={{ borderColor: accent }}
+                >
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+                  <div>
+                    <h4 className="text-sm font-bold text-white leading-tight">{activeBanner.title}</h4>
+                    {activeBanner.subtitle && (
+                      <p className="text-[11px] font-medium" style={{ color: accent }}>
+                        {activeBanner.subtitle}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl overflow-hidden shadow-2xl flex border border-white/15 backdrop-blur-md bg-black/85">
+                  <div className="w-2.5" style={{ backgroundColor: accent }} />
+                  <div className="px-5 py-2.5">
+                    <h4 className="text-sm font-bold text-white tracking-tight">{activeBanner.title}</h4>
+                    {activeBanner.subtitle && (
+                      <p className="text-xs font-medium" style={{ color: accent }}>
+                        {activeBanner.subtitle}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Interactive Broadcast-Grade Telestrator */}
+        <StageTelestrator />
+
+        {/* Pinned Stream Message Overlay */}
+        {pinnedMessage && (
+          <div
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92%] px-3 transition-all duration-300 select-none group/comment pointer-events-auto",
+              commentConfig?.position === "top"
+                ? "top-5 animate-in fade-in slide-in-from-top-4"
+                : showTicker
+                  ? "bottom-16 animate-in fade-in slide-in-from-bottom-4"
+                  : "bottom-6 animate-in fade-in slide-in-from-bottom-4"
+            )}
+          >
+            <div
+              className={cn(
+                "relative backdrop-blur-xl border shadow-2xl flex items-start gap-3 transition-all duration-200",
+                commentConfig?.theme === "minimal"
+                  ? "p-3 rounded-xl bg-black/85 border-l-4"
+                  : commentConfig?.theme === "classic"
+                    ? "p-3.5 rounded-none bg-[#0d0d16] border-t-2 border-b-2"
+                    : "p-3.5 rounded-2xl bg-[#090912]/95 border-white/15 ring-1 ring-white/5"
+              )}
+              style={{
+                borderColor:
+                  commentConfig?.theme === "minimal" || commentConfig?.theme === "classic"
+                    ? `${activeThemeColor}`
+                    : `${activeThemeColor}60`,
+                boxShadow: `0 16px 40px rgba(0, 0, 0, 0.85), 0 0 30px ${activeThemeColor}20`,
+              }}
+            >
+              {commentConfig?.showAvatar !== false && (
+                <div className="relative shrink-0">
+                  {pinnedMessage.avatar ? (
+                    <img
+                      src={pinnedMessage.avatar}
+                      alt={pinnedMessage.author}
+                      className="w-10 h-10 rounded-full object-cover border-2 border-white/20 shadow-md"
+                    />
+                  ) : (
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm text-white shadow-md border-2 border-white/20"
+                      style={{ backgroundColor: activeThemeColor }}
+                    >
+                      {(pinnedMessage.author[0] || "U").toUpperCase()}
+                    </div>
+                  )}
+                  <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-black/90 border border-white/30 flex items-center justify-center">
+                    {pinnedMessage.platform === "youtube" ? (
+                      <Youtube className="w-2.5 h-2.5 text-rose-500" />
+                    ) : pinnedMessage.platform === "twitch" ? (
+                      <Twitch className="w-2.5 h-2.5 text-purple-400" />
+                    ) : (
+                      <Globe className="w-2.5 h-2.5 text-cyan-400" />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs sm:text-sm font-bold text-white truncate">
+                      {pinnedMessage.author}
+                    </span>
+                    {pinnedMessage.platform === "youtube" ? (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold text-rose-400 bg-rose-500/15 px-1.5 py-0.5 rounded border border-rose-500/30 uppercase tracking-wider">
+                        <Youtube className="w-2.5 h-2.5" /> YouTube
+                      </span>
+                    ) : pinnedMessage.platform === "twitch" ? (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase tracking-wider">
+                        <Twitch className="w-2.5 h-2.5" /> Twitch
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[9px] font-bold text-cyan-300 bg-cyan-500/15 px-1.5 py-0.5 rounded border border-cyan-500/30 uppercase tracking-wider">
+                        <Globe className="w-2.5 h-2.5" /> {pinnedMessage.platform}
+                      </span>
+                    )}
+                  </div>
+
                   <button
                     type="button"
-                    onClick={toggleMediaMute}
-                    className={cn(
-                      "p-1 rounded-lg text-xs flex items-center gap-1 transition-colors border",
-                      activeMedia.isMuted
-                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                        : "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
-                    )}
-                    title={activeMedia.isMuted ? "Unmute Background Audio" : "Mute Background Audio"}
-                  >
-                    {activeMedia.isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    onClick={() => setActiveMedia(null)}
-                    className="p-1 rounded-lg bg-white/5 hover:bg-rose-600 text-slate-400 hover:text-white text-xs transition-colors"
-                    title="Stop Audio"
+                    onClick={() => pinMessage(null)}
+                    className="opacity-60 hover:opacity-100 p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-opacity"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              </div>
 
-              {/* Transport Controls Row */}
-              <div className="flex items-center gap-1.5 text-xs">
-                {/* Play/Pause */}
+                <p
+                  className={cn(
+                    "text-slate-100 font-medium leading-relaxed break-words line-clamp-3",
+                    commentConfig?.fontSize === "large"
+                      ? "text-sm sm:text-base"
+                      : commentConfig?.fontSize === "small"
+                        ? "text-xs"
+                        : "text-xs sm:text-sm"
+                  )}
+                >
+                  {pinnedMessage.message}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Animated News Ticker Crawl */}
+        {showTicker && (
+          <div
+            className="absolute bottom-0 inset-x-0 h-12 border-t backdrop-blur-md z-30 flex items-center overflow-hidden shadow-2xl"
+            style={{
+              backgroundColor: tickerConfig?.bgColor || "#050508",
+              borderColor: `${activeThemeColor}40`,
+              borderBottom: `3px solid ${activeThemeColor}`,
+            }}
+          >
+            <div
+              className="px-4 text-xs font-black tracking-widest text-white uppercase shrink-0 h-full flex items-center z-10 shadow-lg"
+              style={{ backgroundColor: tickerConfig?.badgeBgColor || activeThemeColor }}
+            >
+              {tickerConfig?.badgeText || "LIVE UPDATES"}
+            </div>
+            <div className="flex-1 overflow-hidden relative">
+              <div
+                className={cn(
+                  "animate-marquee font-medium px-4",
+                  tickerConfig?.fontSize === "small" && "text-sm font-medium",
+                  tickerConfig?.fontSize === "medium" && "text-base font-semibold",
+                  tickerConfig?.fontSize === "large" && "text-lg font-bold",
+                  tickerConfig?.fontSize === "xlarge" && "text-xl font-black",
+                  !tickerConfig?.fontSize && "text-base font-semibold"
+                )}
+                style={{
+                  color: tickerConfig?.textColor || "#ffffff",
+                  animationDuration:
+                    tickerConfig?.speed === "slow" ? "75s" : tickerConfig?.speed === "fast" ? "30s" : "50s",
+                }}
+              >
+                {tickerConfig?.text || tickerText}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Active Stage Background Audio Stream */}
+        {activeMedia && activeMedia.type === "audio" && (
+          <>
+            <audio
+              id="livestudio-active-media-audio"
+              src={activeMedia.url}
+              autoPlay
+              loop={activeMedia.loop ?? true}
+              muted={activeMedia.isMuted ?? false}
+              onLoadedMetadata={(e) => {
+                const a = e.currentTarget;
+                if (Number.isFinite(a.duration) && a.duration > 0) setMediaDuration(a.duration);
+                setIsMediaPaused(a.paused);
+              }}
+              onTimeUpdate={(e) => {
+                const a = e.currentTarget;
+                setMediaCurrentTime(a.currentTime || 0);
+                if (Number.isFinite(a.duration) && a.duration > 0 && mediaDuration !== a.duration) {
+                  setMediaDuration(a.duration);
+                }
+              }}
+              onPlay={() => setIsMediaPaused(false)}
+              onPause={() => setIsMediaPaused(true)}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="absolute top-3 left-3 z-40 animate-in fade-in pointer-events-auto max-w-[calc(100%-24px)]"
+            >
+              <div className="px-3 py-2 rounded-2xl bg-[#090a14]/95 backdrop-blur-md border border-cyan-500/50 flex flex-wrap items-center gap-2 shadow-2xl">
                 <button
                   type="button"
-                  onClick={handleTogglePlayAudio}
-                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
-                  title={isAudioPlaying ? "Pause Audio" : "Play Audio"}
+                  onClick={handleToggleMediaPlayPause}
+                  className="w-6 h-6 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white flex items-center justify-center shrink-0 shadow"
                 >
-                  {isAudioPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+                  {isMediaPaused ? <Play className="w-3 h-3 fill-current ml-0.5" /> : <Pause className="w-3 h-3 fill-current" />}
                 </button>
 
-                {/* Skip -10s */}
+                <span className="text-[11px] font-semibold text-cyan-200 truncate max-w-[130px]" title={activeMedia.name}>
+                  🎵 {activeMedia.name}
+                </span>
+
                 <button
                   type="button"
-                  onClick={() => handleSkipAudio(-10)}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
-                  title="Skip back 10 seconds"
+                  onClick={(e) => handleSkipMediaSeconds(-10, e)}
+                  className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white"
                 >
                   -10s
                 </button>
-
-                {/* Time Display */}
-                <span className="text-[10px] font-mono text-slate-300 min-w-[62px] text-center select-none">
-                  {formatMediaTime(audioCurrentTime)} / {formatMediaTime(audioDuration)}
-                </span>
-
-                {/* Seekbar */}
-                <input
-                  type="range"
-                  min="0"
-                  max={audioDuration || 100}
-                  step="0.5"
-                  value={audioCurrentTime}
-                  onChange={(e) => handleSeekAudio(Number(e.target.value))}
-                  className="flex-1 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
-                  title="Seek audio track"
-                />
-
-                {/* Skip +10s */}
                 <button
                   type="button"
-                  onClick={() => handleSkipAudio(10)}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition-colors"
-                  title="Skip forward 10 seconds"
+                  onClick={(e) => handleSkipMediaSeconds(10, e)}
+                  className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/15 text-[9px] font-mono text-slate-300 hover:text-white"
                 >
                   +10s
                 </button>
 
-                {/* Speed */}
-                <select
-                  value={audioSpeed}
-                  onChange={(e) => handleChangeAudioSpeed(Number(e.target.value))}
-                  className="bg-black/60 border border-white/15 rounded px-1 py-0.5 text-[9px] text-cyan-300 font-mono focus:outline-none cursor-pointer"
-                  title="Playback Speed"
-                >
-                  <option value="0.75">0.75x</option>
-                  <option value="1">1.0x</option>
-                  <option value="1.25">1.25x</option>
-                  <option value="1.5">1.5x</option>
-                </select>
-
-                {/* Loop */}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveMedia({
-                      ...activeMedia,
-                      loop: !(activeMedia.loop ?? true),
-                    })
-                  }
-                  className={cn(
-                    "p-1 rounded text-[10px] transition-colors border",
-                    (activeMedia.loop ?? true)
-                      ? "bg-cyan-600/30 text-cyan-300 border-cyan-400/50"
-                      : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
-                  )}
-                  title={(activeMedia.loop ?? true) ? "Loop ON" : "Loop OFF"}
-                >
-                  <Repeat className="w-3 h-3" />
-                </button>
-              </div>
-
-              {/* Volume Slider Row */}
-              <div className="flex items-center gap-2 pt-0.5 border-t border-white/10 text-xs">
-                <span className="text-[10px] text-slate-400 font-medium">Vol:</span>
+                <span className="text-[9.5px] font-mono text-cyan-300">{formatMediaTime(mediaCurrentTime)}</span>
                 <input
                   type="range"
-                  min="0"
-                  max="200"
-                  step="5"
-                  value={activeMedia.isMuted ? 0 : (activeMedia.volume ?? 100)}
-                  onChange={(e) => {
-                    const vol = Number(e.target.value);
-                    setActiveMedia({
-                      ...activeMedia,
-                      volume: vol,
-                      isMuted: vol === 0,
-                    });
-                  }}
-                  className="flex-1 h-1 accent-cyan-400 bg-white/20 rounded cursor-pointer"
-                  title={`Audio Volume: ${activeMedia.volume ?? 100}%`}
+                  min={0}
+                  max={Math.max(1, Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : 100)}
+                  step={0.1}
+                  value={Math.min(mediaCurrentTime, Math.max(1, Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : 100))}
+                  onChange={(e) => handleSeekMedia(Number(e.target.value))}
+                  className="w-24 h-1.5 accent-cyan-400 bg-white/20 rounded-lg cursor-pointer"
                 />
-                <span className="text-[10px] font-mono text-cyan-300 font-bold min-w-[32px] text-right">
-                  {activeMedia.volume ?? 100}%
-                </span>
+                <span className="text-[9.5px] font-mono text-slate-400">{formattedTotalDuration}</span>
+
+                <div className="flex items-center gap-1 bg-white/5 rounded-lg px-1.5 py-0.5 border border-white/10">
+                  <button
+                    type="button"
+                    onClick={toggleMediaMute}
+                    className={cn(
+                      "p-0.5 rounded text-[10px]",
+                      activeMedia.isMuted || normalizedMediaVolumePct === 0 ? "text-rose-400" : "text-emerald-400"
+                    )}
+                  >
+                    {activeMedia.isMuted || normalizedMediaVolumePct === 0 ? (
+                      <VolumeX className="w-3.5 h-3.5" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={200}
+                    step={5}
+                    value={activeMedia.isMuted ? 0 : normalizedMediaVolumePct}
+                    onChange={(e) => setMediaVolume(Number(e.target.value))}
+                    className="w-14 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer"
+                  />
+                  <span className="text-[9px] font-mono text-emerald-300 min-w-[28px]">
+                    {activeMedia.isMuted ? "0%" : `${normalizedMediaVolumePct}%`}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => setActiveMedia(null)}
+                  className="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/35 text-[10px] text-rose-300 font-bold transition-colors"
+                >
+                  ✕
+                </button>
               </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        )}
 
-      {/* Scene Custom Title / Text Card (StreamYard Paid Plan) */}
-      {activeTextCard && activeTextCard.enabled && activeTextCard.heading && (
-        <div
-          className={cn(
-            "absolute z-35 max-w-2xl w-[86%] pointer-events-none transition-all duration-300 animate-in fade-in select-none",
-            activeTextCard.position === "top"
-              ? "top-8 left-1/2 -translate-x-1/2"
-              : activeTextCard.position === "top-left"
-              ? "top-8 left-8"
-              : activeTextCard.position === "bottom-right"
-              ? "bottom-20 right-8"
-              : "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-          )}
-        >
+        {/* Scene Custom Title / Text Card */}
+        {activeTextCard && activeTextCard.enabled && activeTextCard.heading && (
           <div
-            className="p-5 rounded-2xl shadow-2xl backdrop-blur-md text-center border border-white/15"
-            style={{
-              backgroundColor: activeTextCard.bgColor || "rgba(15, 23, 42, 0.88)",
-              opacity: (activeTextCard.bgOpacity ?? 85) / 100,
-            }}
-          >
-            <h3
-              className="text-2xl md:text-3xl font-black tracking-tight"
-              style={{ color: activeTextCard.textColor || "#ffffff" }}
-            >
-              {activeTextCard.heading}
-            </h3>
-            {activeTextCard.subheading && (
-              <p className="mt-1 text-sm md:text-base text-slate-300 font-medium">
-                {activeTextCard.subheading}
-              </p>
+            className={cn(
+              "absolute z-35 max-w-2xl w-[86%] pointer-events-none transition-all duration-300 animate-in fade-in select-none",
+              activeTextCard.position === "top"
+                ? "top-8 left-1/2 -translate-x-1/2"
+                : activeTextCard.position === "top-left"
+                  ? "top-8 left-8"
+                  : activeTextCard.position === "bottom-right"
+                    ? "bottom-20 right-8"
+                    : "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
             )}
+          >
+            <div
+              className="p-5 rounded-2xl shadow-2xl backdrop-blur-md text-center border border-white/15"
+              style={{
+                backgroundColor: activeTextCard.bgColor || "rgba(15, 23, 42, 0.88)",
+                opacity: (activeTextCard.bgOpacity ?? 85) / 100,
+              }}
+            >
+              <h3
+                className="text-2xl md:text-3xl font-black tracking-tight"
+                style={{ color: activeTextCard.textColor || "#ffffff" }}
+              >
+                {activeTextCard.heading}
+              </h3>
+              {activeTextCard.subheading && (
+                <p className="mt-1 text-sm md:text-base text-slate-300 font-medium">
+                  {activeTextCard.subheading}
+                </p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Drag-and-Drop Media Target Overlay on Stage */}
-      {isMediaDragOverStage && (
-        <div className="absolute inset-0 z-50 bg-indigo-950/60 backdrop-blur-xs border-4 border-dashed border-cyan-400 rounded-2xl flex flex-col items-center justify-center gap-2 pointer-events-none animate-in fade-in duration-150">
-          <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl">
-            <MonitorUp className="w-6 h-6 animate-bounce" />
+        {/* Drag-and-Drop Media Target Overlay on Stage */}
+        {isMediaDragOverStage && (
+          <div className="absolute inset-0 z-50 bg-indigo-950/60 backdrop-blur-xs border-4 border-dashed border-cyan-400 rounded-2xl flex flex-col items-center justify-center gap-2 pointer-events-none animate-in fade-in duration-150">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl">
+              <MonitorUp className="w-6 h-6 animate-bounce" />
+            </div>
+            <span className="text-sm font-bold text-white tracking-wide drop-shadow">
+              Drop Media to Present on Stage & Save to Current Scene
+            </span>
+            <span className="text-[11px] text-cyan-200 font-medium">
+              Release mouse on Left, Right, or any Grid Slot to place media there
+            </span>
           </div>
-          <span className="text-sm font-bold text-white tracking-wide drop-shadow">
-            Drop Media to Present on Stage & Save to Current Scene
-          </span>
-          <span className="text-[11px] text-cyan-200 font-medium">
-            Release mouse on Left, Right, or any Grid Slot to place media there
-          </span>
-        </div>
-      )}
+        )}
 
-      {/* Scene Transition Fade Overlay (StreamYard Paid Plan) */}
-      {isSceneTransitioning && (
-        <div className="absolute inset-0 bg-[#07070d]/40 backdrop-blur-[2px] z-40 pointer-events-none transition-opacity duration-300 animate-in fade-in" />
-      )}
+        {/* Scene Transition Fade Overlay */}
+        {isSceneTransitioning && (
+          <div className="absolute inset-0 bg-[#07070d]/40 backdrop-blur-[2px] z-40 pointer-events-none transition-opacity duration-300 animate-in fade-in" />
+        )}
       </div>
 
+      {/* Direct YouTube Scene Player & Clip Library Modal */}
       <YouTubeLibraryModal
-        isOpen={isYouTubeLibraryModalOpen}
-        onClose={() => setIsYouTubeLibraryModalOpen(false)}
+        isOpen={isYouTubeModalOpen}
+        onClose={() => setIsYouTubeModalOpen(false)}
+        targetSceneId={activeSceneId}
       />
 
+      {/* Clipboard Screenshot Paste Confirmation Toast */}
+      {(pastedToastMsg || clipSavedToast) && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[9999] bg-emerald-600/95 text-white px-4 py-2 rounded-xl shadow-2xl border border-emerald-300/50 text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-3 duration-150">
+          <Clipboard className="w-4 h-4 text-white" />
+          <span>{pastedToastMsg || clipSavedToast}</span>
+        </div>
+      )}
+
+      {/* Broadcast News Tactical Map & Missile / Airplane Animator Modal */}
       <TacticalMapModal
         isOpen={isTacticalMapModalOpen}
         onClose={() => setIsTacticalMapModalOpen(false)}
-        initialItem={activeMedia?.type === "map" ? activeMedia : undefined}
+        targetSceneId={activeSceneId}
+        initialItem={activeMedia?.type === "map" ? activeMedia : null}
       />
 
+      {/* Interactive Website URL Scene & Library Modal */}
       <WebsiteLibraryModal
-        isOpen={isWebsiteLibraryModalOpen}
-        onClose={() => setIsWebsiteLibraryModalOpen(false)}
-        onSelectWebsiteItem={(item) => {
-          if (activeSceneId) updateScene(activeSceneId, { activeMedia: item });
-          setActiveMedia(item);
-        }}
+        isOpen={isWebsiteModalOpen}
+        onClose={() => setIsWebsiteModalOpen(false)}
+        targetSceneId={activeSceneId}
       />
     </div>
   );

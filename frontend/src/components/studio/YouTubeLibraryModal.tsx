@@ -10,12 +10,8 @@ import {
   Clock,
   Trash2,
   Edit2,
-  Check,
-  Sparkles,
-  RefreshCw,
-  ShieldAlert,
-  ExternalLink,
   Film,
+  Check,
 } from "lucide-react";
 import { MediaFileItem, useStudioStore } from "@/stores/studio.store";
 import { cn } from "@/lib/utils";
@@ -56,9 +52,13 @@ export function formatSecondsToMmSs(sec?: number): string {
   const mins = Math.floor((sec % 3600) / 60);
   const secs = Math.floor(sec % 60);
   if (hrs > 0) {
-    return `${hrs}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    return `${hrs}:${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}`;
   }
-  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  return `${mins.toString().padStart(2, "0")}:${secs
+    .toString()
+    .padStart(2, "0")}`;
 }
 
 interface YouTubeLibraryModalProps {
@@ -98,6 +98,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   const [endInput, setEndInput] = useState("");
   const [loopClip, setLoopClip] = useState(true);
   const [isFetchingMeta, setIsFetchingMeta] = useState(false);
+  const [fetchedDurationSec, setFetchedDurationSec] = useState<number>(0);
   const [previewVideoId, setPreviewVideoId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -106,21 +107,36 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   const targetScene = scenes.find((s) => s.id === effectiveSceneId);
 
   const youtubeItems = React.useMemo(
-    () => mediaLibrary.filter((m) => m.type === "youtube" || Boolean(m.youtubeId)),
+    () =>
+      mediaLibrary.filter((m) => m.type === "youtube" || Boolean(m.youtubeId)),
     [mediaLibrary]
   );
 
-  // Auto-resolve video ID & fetch public oEmbed title (Zero API Key) when URL changes
   useEffect(() => {
     const vid = extractYouTubeVideoId(urlInput);
     setPreviewVideoId(vid);
     setErrorMsg(null);
-    if (!vid) return;
+    if (!vid) {
+      setFetchedDurationSec(0);
+      return;
+    }
 
     let cancelled = false;
     setIsFetchingMeta(true);
 
-    // 1. Try public noembed / oEmbed (100% free, no API key, CORS enabled)
+    fetch(`/api/media/youtube/info?videoId=${encodeURIComponent(vid)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (cancelled || !json?.success || !json.data) return;
+        if (json.data.title && !titleInput.trim()) {
+          setTitleInput(json.data.title);
+        }
+        if (Number(json.data.durationSeconds) > 0) {
+          setFetchedDurationSec(Number(json.data.durationSeconds));
+        }
+      })
+      .catch(() => { });
+
     fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${vid}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -128,7 +144,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
           setTitleInput(data.title);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         if (!cancelled) setIsFetchingMeta(false);
       });
@@ -145,6 +161,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     setTitleInput("");
     setStartInput("");
     setEndInput("");
+    setFetchedDurationSec(0);
     setPreviewVideoId(null);
     setEditingItemId(null);
     setErrorMsg(null);
@@ -152,10 +169,14 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
 
   const handleEditExistingItem = (item: MediaFileItem) => {
     setEditingItemId(item.id);
-    setUrlInput(item.youtubeUrl || `https://www.youtube.com/watch?v=${item.youtubeId || ""}`);
+    setUrlInput(
+      item.youtubeUrl ||
+      `https://www.youtube.com/watch?v=${item.youtubeId || ""}`
+    );
     setTitleInput(item.name);
     setStartInput(formatSecondsToMmSs(item.startTimeSec));
     setEndInput(formatSecondsToMmSs(item.endTimeSec));
+    setFetchedDurationSec(item.durationSeconds || 0);
     setLoopClip(item.loop ?? true);
     setPreviewVideoId(item.youtubeId || extractYouTubeVideoId(item.url));
   };
@@ -163,7 +184,9 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   const handleSaveYouTubeClip = (attachAndPlayNow: boolean) => {
     const videoId = extractYouTubeVideoId(urlInput);
     if (!videoId) {
-      setErrorMsg("Please paste a valid YouTube Video URL (watch?v=, youtu.be/, shorts/, or live/).");
+      setErrorMsg(
+        "Please paste a valid YouTube Video URL (watch?v=, youtu.be/, shorts/, or live/)."
+      );
       return;
     }
 
@@ -177,8 +200,15 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
 
     const clipRangeLabel =
       startSec || endSec
-        ? `${startSec ? formatSecondsToMmSs(startSec) : "00:00"} → ${endSec ? formatSecondsToMmSs(endSec) : "End"}`
-        : "Full Video";
+        ? `${startSec ? formatSecondsToMmSs(startSec) : "00:00"} → ${endSec
+          ? formatSecondsToMmSs(endSec)
+          : fetchedDurationSec > 0
+            ? formatSecondsToMmSs(fetchedDurationSec)
+            : "End"
+        }`
+        : fetchedDurationSec > 0
+          ? formatSecondsToMmSs(fetchedDurationSec)
+          : "Full Video";
 
     const cleanTitle = titleInput.trim() || `YouTube Clip (${videoId})`;
     const canonicalWatchUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -194,9 +224,12 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
         youtubeUrl: canonicalWatchUrl,
         thumbnail: thumbUrl,
         duration: clipRangeLabel,
+        durationSeconds: fetchedDurationSec || undefined,
         startTimeSec: startSec,
         endTimeSec: endSec,
         loop: loopClip,
+        volume: 100,
+        isMuted: false,
         isUploaded: true,
       };
       updateMediaLibraryItem(editingItemId, updates);
@@ -227,6 +260,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
       youtubeUrl: canonicalWatchUrl,
       thumbnail: thumbUrl,
       duration: clipRangeLabel,
+      durationSeconds: fetchedDurationSec || undefined,
       startTimeSec: startSec,
       endTimeSec: endSec,
       loop: loopClip,
@@ -254,14 +288,22 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   };
 
   const handleAttachLibraryItemToScene = (item: MediaFileItem) => {
+    const audibleItem: MediaFileItem = {
+      ...item,
+      isMuted: false,
+      volume: typeof item.volume === "number" && item.volume >= 20 ? item.volume : 100,
+    };
+    if (audibleItem.youtubeId) {
+      fetch(`/api/media/youtube/info?videoId=${encodeURIComponent(audibleItem.youtubeId)}`).catch(() => { });
+    }
     if (effectiveSceneId) {
-      updateScene(effectiveSceneId, { activeMedia: item });
+      updateScene(effectiveSceneId, { activeMedia: audibleItem });
       if (effectiveSceneId !== activeSceneId) {
         switchScene(effectiveSceneId);
       }
     }
-    setActiveMedia(item);
-    onSelectYouTubeItem?.(item);
+    setActiveMedia(audibleItem);
+    onSelectYouTubeItem?.(audibleItem);
     onClose();
   };
 
@@ -274,9 +316,12 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     }
   };
 
+  const previewStartSec = parseTimeInputToSeconds(startInput) || 0;
+  const previewEndSec = parseTimeInputToSeconds(endInput);
+
   return createPortal(
     <div
-      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150"
+      className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div
@@ -284,20 +329,20 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-white/10 bg-[#121324] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
-              <Youtube className="w-5 h-5" />
+        <div className="px-6 py-4 border-b border-white/10 bg-[#121324] flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shadow-lg">
+              <Youtube className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <h3 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2.5 flex-wrap">
                 <span>Direct YouTube Scene Player & Clip Library</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                  Zero API Key • Subtitles OFF • Fair-Use Ready
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                  Instant Scene Switch • Unmuted 100% Audio • Pan Left/Right Ready
                 </span>
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Paste any YouTube URL with optional Start/End time — plays automatically when switching to your Scene
+              <p className="text-xs text-slate-300 mt-0.5">
+                Paste any YouTube URL with optional Start/End time — pre-buffers automatically & plays unmuted when switching to your Scene
               </p>
             </div>
           </div>
@@ -305,54 +350,59 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 border border-white/10 transition-colors"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
-          {/* Left Column: Add / Edit YouTube URL & Start/End Time (6 cols) */}
-          <div className="lg:col-span-6 p-4 space-y-3.5 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
+          {/* Left Column */}
+          <div className="lg:col-span-6 p-6 space-y-4 overflow-y-auto custom-scrollbar">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5" />
-                <span>{editingItemId ? "Edit / Replace YouTube Clip" : "Add New YouTube Video to Library"}</span>
+              <span className="text-sm font-extrabold uppercase tracking-wider text-rose-300 flex items-center gap-2">
+                <Plus className="w-4 h-4" />
+                <span>
+                  {editingItemId
+                    ? "Edit / Replace YouTube Clip"
+                    : "Add New YouTube Video to Library"}
+                </span>
               </span>
               {editingItemId && (
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="text-[10px] text-slate-400 hover:text-white underline"
+                  className="text-xs text-slate-300 hover:text-white underline font-semibold"
                 >
                   Cancel Edit
                 </button>
               )}
             </div>
 
-            {/* YouTube URL Input */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300 block">
-                YouTube Video URL or Video ID *
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-200 block">
+                YouTube Video URL or 11-Character Video ID *
               </label>
               <input
                 type="text"
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
+                spellCheck={false}
                 placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
-                className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-rose-500 font-mono"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/15 text-xs sm:text-sm text-white focus:outline-none focus:border-rose-500 font-sans"
               />
             </div>
 
-            {/* Clip Title */}
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-slate-300">
+                <label className="text-xs font-bold text-slate-200">
                   Clip Title / Label (Auto-fetched or custom)
                 </label>
                 {isFetchingMeta && (
-                  <span className="text-[10px] text-cyan-400 animate-pulse">Fetching title...</span>
+                  <span className="text-xs text-cyan-400 animate-pulse font-semibold">
+                    Pre-warming stream & fetching metadata...
+                  </span>
                 )}
               </div>
               <input
@@ -360,23 +410,26 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
                 value={titleInput}
                 onChange={(e) => setTitleInput(e.target.value)}
                 placeholder="e.g. Breaking News Footage / Reaction Clip"
-                className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white focus:outline-none focus:border-indigo-400"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/15 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-400"
               />
             </div>
 
-            {/* Optional Start Time & End Time */}
-            <div className="p-3 rounded-xl bg-indigo-950/25 border border-indigo-500/30 space-y-2.5">
+            <div className="p-4 rounded-2xl bg-indigo-950/25 border border-indigo-500/35 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-indigo-200 flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-xs font-extrabold text-indigo-200 flex items-center gap-1.5 uppercase">
+                  <Clock className="w-4 h-4 text-cyan-400" />
                   <span>Optional Start Time & End Time Trim</span>
                 </span>
-                <span className="text-[9.5px] font-mono text-slate-400">Format: mm:ss or seconds</span>
+                <span className="text-xs font-mono text-slate-300">
+                  {fetchedDurationSec > 0
+                    ? `Total Duration: ${formatSecondsToMmSs(fetchedDurationSec)}`
+                    : "Format: mm:ss or seconds"}
+                </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="text-[10px] text-slate-300 font-medium block mb-1">
+                  <label className="text-xs text-slate-200 font-semibold block mb-1">
                     Start Time (Optional)
                   </label>
                   <input
@@ -384,42 +437,43 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
                     value={startInput}
                     onChange={(e) => setStartInput(e.target.value)}
                     placeholder="00:00 (Start of video)"
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-cyan-300 font-mono focus:outline-none focus:border-cyan-400"
+                    className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs sm:text-sm text-cyan-300 font-mono focus:outline-none focus:border-cyan-400"
                   />
-                  <span className="text-[9px] text-slate-500 block mt-0.5">
+                  <span className="text-[11px] text-slate-400 block mt-1">
                     Leave blank to play from 0:00
                   </span>
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-slate-300 font-medium block mb-1">
+                  <label className="text-xs text-slate-200 font-semibold block mb-1">
                     End Time (Optional)
                   </label>
                   <input
                     type="text"
                     value={endInput}
                     onChange={(e) => setEndInput(e.target.value)}
-                    placeholder="Full Duration (No limit)"
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-black/60 border border-white/15 text-xs text-amber-300 font-mono focus:outline-none focus:border-amber-400"
+                    placeholder={fetchedDurationSec > 0 ? formatSecondsToMmSs(fetchedDurationSec) : "Full Duration (No limit)"}
+                    className="w-full px-3 py-2 rounded-xl bg-black/60 border border-white/15 text-xs sm:text-sm text-amber-300 font-mono focus:outline-none focus:border-amber-400"
                   />
-                  <span className="text-[9px] text-slate-500 block mt-0.5">
+                  <span className="text-[11px] text-slate-400 block mt-1">
                     Leave blank to play till end
                   </span>
                 </div>
               </div>
 
-              {/* Loop vs Play Once at End Time */}
-              <div className="flex items-center justify-between pt-1 border-t border-white/10">
-                <span className="text-[10px] text-slate-300">When End Time (or video end) is reached:</span>
-                <div className="flex items-center gap-1">
+              <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                <span className="text-xs text-slate-200 font-medium">
+                  When End Time (or video end) is reached:
+                </span>
+                <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() => setLoopClip(true)}
                     className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-semibold border transition-all",
+                      "px-3 py-1 rounded-lg text-xs font-bold border transition-all",
                       loopClip
-                        ? "bg-indigo-600 text-white border-indigo-400"
-                        : "bg-white/5 text-slate-400 border-white/10"
+                        ? "bg-indigo-600 text-white border-indigo-400 shadow"
+                        : "bg-white/5 text-slate-300 border-white/10"
                     )}
                   >
                     Loop Clip Range
@@ -428,10 +482,10 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
                     type="button"
                     onClick={() => setLoopClip(false)}
                     className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-semibold border transition-all",
+                      "px-3 py-1 rounded-lg text-xs font-bold border transition-all",
                       !loopClip
-                        ? "bg-amber-600 text-white border-amber-400"
-                        : "bg-white/5 text-slate-400 border-white/10"
+                        ? "bg-amber-600 text-white border-amber-400 shadow"
+                        : "bg-white/5 text-slate-300 border-white/10"
                     )}
                   >
                     Stop / Next Scene
@@ -440,99 +494,90 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
               </div>
             </div>
 
-            {/* Live Embedded 16:9 YouTube Clip Preview Player */}
             {previewVideoId && (
-              <div className="space-y-2 p-3 rounded-2xl bg-black/60 border border-white/15 shadow-inner">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
-                    <Film className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Live 16:9 YouTube Clip Preview</span>
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono">
-                    Test Start/End Trim Live
-                  </span>
-                </div>
-
-                <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black border border-white/20 shadow-xl">
+              <div className="space-y-2">
+                <span className="text-xs font-bold uppercase text-emerald-300 flex items-center gap-1.5">
+                  <Check className="w-4 h-4" />
+                  <span>Live Clip Preview (ID: {previewVideoId})</span>
+                </span>
+                <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black border border-white/15 shadow-xl">
                   <iframe
-                    key={`${previewVideoId}-${parseTimeInputToSeconds(startInput) || 0}-${parseTimeInputToSeconds(endInput) || ""}`}
-                    src={`https://www.youtube-nocookie.com/embed/${previewVideoId}?autoplay=0&controls=1&start=${parseTimeInputToSeconds(startInput) || 0}${parseTimeInputToSeconds(endInput) ? `&end=${parseTimeInputToSeconds(endInput)}` : ""}&rel=0`}
-                    title="YouTube Clip Preview Player"
-                    className="w-full h-full border-0"
+                    key={`${previewVideoId}-${previewStartSec}-${previewEndSec || 0}`}
+                    src={`https://www.youtube-nocookie.com/embed/${previewVideoId}?controls=1&cc_load_policy=0&rel=0&modestbranding=1${previewStartSec ? `&start=${previewStartSec}` : ""
+                      }${previewEndSec ? `&end=${previewEndSec}` : ""}`}
+                    title="YouTube Preview"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
+                    className="w-full h-full border-0"
                   />
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
-                  <span className="text-white font-medium truncate max-w-[280px]">
-                    {titleInput || `YouTube Video (${previewVideoId})`}
-                  </span>
-                  <span className="text-emerald-400 font-mono">
-                    Trim: {startInput || "0:00"} → {endInput || "End"}
-                  </span>
                 </div>
               </div>
             )}
 
             {errorMsg && (
-              <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300">
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs font-semibold text-rose-300">
                 {errorMsg}
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => handleSaveYouTubeClip(false)}
-                className="flex-1 py-2 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/15 text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all"
               >
-                <Plus className="w-3.5 h-3.5 text-cyan-400" />
-                <span>{editingItemId ? "Save Changes to Library" : "Save to YouTube Library"}</span>
+                <Plus className="w-4 h-4 text-cyan-400" />
+                <span>
+                  {editingItemId
+                    ? "Save Changes to Library"
+                    : "Save to YouTube Library"}
+                </span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handleSaveYouTubeClip(true)}
-                className="flex-1 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/25 transition-all"
+                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition-all"
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>{targetScene ? `Add to "${targetScene.name}"` : "Play on Stage Now"}</span>
+                <Play className="w-4 h-4 fill-current" />
+                <span>
+                  {targetScene
+                    ? `Add & Play on "${targetScene.name}"`
+                    : "Play on Stage Now"}
+                </span>
               </button>
             </div>
           </div>
 
-          {/* Right Column: Saved YouTube Video Library & Scene Assignment (6 cols) */}
-          <div className="lg:col-span-6 p-4 bg-[#090a14] flex flex-col justify-between gap-3 overflow-y-auto custom-scrollbar">
-            <div className="space-y-2.5">
+          {/* Right Column */}
+          <div className="lg:col-span-6 p-6 bg-[#090a14] flex flex-col justify-between gap-4 overflow-y-auto custom-scrollbar">
+            <div className="space-y-3.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                  <Film className="w-3.5 h-3.5 text-rose-400" />
+                <span className="text-sm font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                  <Film className="w-4 h-4 text-rose-400" />
                   <span>Saved YouTube Clips Library ({youtubeItems.length})</span>
                 </span>
                 {targetScene && (
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <span className="text-xs px-3 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
                     Target Scene: <strong>{targetScene.name}</strong>
                   </span>
                 )}
               </div>
 
-              {/* Currently Attached Scene Media Banner with Remove/Replace */}
               {targetScene?.activeMedia && (
-                <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/40 flex items-center justify-between gap-2">
+                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/40 flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <span className="text-[9.5px] font-bold uppercase text-emerald-400 block">
+                    <span className="text-[11px] font-bold uppercase text-emerald-400 block">
                       Currently Attached to {targetScene.name}:
                     </span>
-                    <span className="text-xs font-semibold text-white truncate block">
-                      {targetScene.activeMedia.name} ({targetScene.activeMedia.duration || "Ready"})
+                    <span className="text-xs sm:text-sm font-bold text-white truncate block mt-0.5">
+                      {targetScene.activeMedia.name} (
+                      {targetScene.activeMedia.duration || "Ready"})
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={handleDetachFromScene}
-                    className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white text-[10px] font-semibold border border-rose-500/40 shrink-0 transition-colors"
+                    className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white text-xs font-bold border border-rose-500/40 shrink-0 transition-colors"
                   >
                     Remove from Scene
                   </button>
@@ -540,31 +585,34 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
               )}
 
               {youtubeItems.length === 0 ? (
-                <div className="p-8 rounded-2xl border border-dashed border-white/10 text-center space-y-2 text-slate-400">
-                  <Youtube className="w-8 h-8 text-rose-500/50 mx-auto" />
-                  <p className="text-xs font-semibold text-slate-300">No YouTube clips in library yet</p>
-                  <p className="text-[11px] text-slate-500">
+                <div className="p-10 rounded-2xl border border-dashed border-white/15 text-center space-y-2.5 text-slate-400">
+                  <Youtube className="w-10 h-10 text-rose-500/50 mx-auto" />
+                  <p className="text-sm font-bold text-slate-200">
+                    No YouTube clips in library yet
+                  </p>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
                     Paste any YouTube link on the left, set optional Start/End times, and click Save. Click any saved clip here to attach or replace it in your Scene!
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-[52vh] overflow-y-auto pr-1 custom-scrollbar">
+                <div className="space-y-2.5 max-h-[58vh] overflow-y-auto pr-1 custom-scrollbar">
                   {youtubeItems.map((item) => {
-                    const isAttachedToScene = targetScene?.activeMedia?.id === item.id;
+                    const isAttachedToScene =
+                      targetScene?.activeMedia?.id === item.id;
                     const isPlayingOnStage = activeMedia?.id === item.id;
                     return (
                       <div
                         key={item.id}
                         onClick={() => handleAttachLibraryItemToScene(item)}
                         className={cn(
-                          "p-2.5 rounded-xl border flex items-center justify-between gap-2.5 cursor-pointer transition-all group",
+                          "p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all group",
                           isAttachedToScene || isPlayingOnStage
-                            ? "bg-rose-950/30 border-rose-500/60 ring-1 ring-rose-500/30"
-                            : "bg-white/[0.03] border-white/10 hover:border-rose-500/40 hover:bg-white/[0.06]"
+                            ? "bg-rose-950/35 border-rose-500/60 ring-1 ring-rose-500/30"
+                            : "bg-white/[0.04] border-white/10 hover:border-rose-500/40 hover:bg-white/[0.07]"
                         )}
                       >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <div className="w-20 h-12 rounded-lg overflow-hidden bg-black border border-white/10 relative shrink-0">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-24 h-14 rounded-lg overflow-hidden bg-black border border-white/15 relative shrink-0">
                             {item.thumbnail ? (
                               <img
                                 src={item.thumbnail}
@@ -573,27 +621,37 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
                               />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center">
-                                <Youtube className="w-5 h-5 text-rose-500" />
+                                <Youtube className="w-6 h-6 text-rose-500" />
                               </div>
                             )}
-                            <span className="absolute bottom-0.5 right-0.5 px-1 py-0.2 rounded bg-black/85 text-[8px] font-mono text-amber-300">
+                            <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded bg-black/85 text-[9.5px] font-mono text-amber-300">
                               {item.duration || "Full"}
                             </span>
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="text-xs font-bold text-white truncate group-hover:text-rose-300 transition-colors">
+                            <div className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-rose-300 transition-colors">
                               {item.name}
                             </div>
-                            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono mt-0.5 flex-wrap">
+                            <div className="flex items-center gap-2 text-xs text-slate-300 font-mono mt-1 flex-wrap">
                               <span>
-                                ⏱ {item.startTimeSec ? formatSecondsToMmSs(item.startTimeSec) : "00:00"} →{" "}
-                                {item.endTimeSec ? formatSecondsToMmSs(item.endTimeSec) : "End"}
+                                ⏱{" "}
+                                {item.startTimeSec
+                                  ? formatSecondsToMmSs(item.startTimeSec)
+                                  : "00:00"}{" "}
+                                →{" "}
+                                {item.endTimeSec
+                                  ? formatSecondsToMmSs(item.endTimeSec)
+                                  : item.durationSeconds
+                                    ? formatSecondsToMmSs(item.durationSeconds)
+                                    : "End"}
                               </span>
                               <span>•</span>
-                              <span>{item.loop !== false ? "Loop" : "1-Shot"}</span>
+                              <span>
+                                {item.loop !== false ? "Loop" : "1-Shot"}
+                              </span>
                               {isAttachedToScene && (
-                                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
                                   In Scene ✓
                                 </span>
                               )}
@@ -601,35 +659,41 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="flex items-center gap-1.5 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <button
                             type="button"
                             onClick={() => handleAttachLibraryItemToScene(item)}
                             className={cn(
-                              "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors",
+                              "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors shadow",
                               isAttachedToScene
                                 ? "bg-emerald-600 text-white"
                                 : "bg-rose-600 hover:bg-rose-500 text-white"
                             )}
-                            title="Attach or Replace in Scene"
                           >
-                            {isAttachedToScene ? "Play" : targetScene?.activeMedia ? "Replace" : "Use"}
+                            {isAttachedToScene
+                              ? "Play"
+                              : targetScene?.activeMedia
+                                ? "Replace"
+                                : "Use"}
                           </button>
                           <button
                             type="button"
                             onClick={() => handleEditExistingItem(item)}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10"
+                            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 hover:text-white border border-white/10"
                             title="Edit Start/End Time or URL"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Edit2 className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
                             onClick={() => removeMediaLibraryItem(item.id)}
-                            className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30"
+                            className="p-2 rounded-xl bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30"
                             title="Delete from YouTube Library"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -639,8 +703,8 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
               )}
             </div>
 
-            <div className="p-3 rounded-xl bg-amber-950/25 border border-amber-500/30 text-[10.5px] text-amber-200/90 leading-relaxed">
-              💡 <strong>Zero-Download Instant Workflow:</strong> Switching to any Scene with a YouTube clip automatically starts playing from your configured <strong>Start Time</strong>, hides subtitles, applies your <strong>Fair-Use Safe Mode</strong> filters (Grain, Lines, 8–12s Jerk/Pause, Flip, Speed, Volume/Ducking), and stops or loops at your <strong>End Time</strong>.
+            <div className="p-3.5 rounded-xl bg-amber-950/25 border border-amber-500/30 text-xs text-amber-200/95 leading-relaxed">
+              💡 <strong>Zero-Download Instant Workflow:</strong> Switching to any Scene with a YouTube clip automatically starts playing unmuted at 100% volume from your configured <strong>Start Time</strong>, enables <strong>◄ Left / Mid / Right ►</strong> horizontal video panning, and applies your <strong>Fair-Use Safe Mode</strong> filters.
             </div>
           </div>
         </div>

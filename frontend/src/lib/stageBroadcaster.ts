@@ -1,22 +1,12 @@
-
-function extractYouTubeVideoId(urlOrId: string): string {
-  if (!urlOrId) return "";
-  const trimmed = urlOrId.trim();
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(
-    /(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
-  );
-  return match ? match[1] : "";
-}
-
 /**
  * LiveStudio Stage Broadcaster
  * Composites the active studio stage (participants, active media, layouts, backgrounds, overlays, banners, tickers)
  * into a pristine 1280x720 30fps canvas + Web Audio stream, and pipes real-time WebM chunks to
  * the backend FFmpeg RTMP service for broadcast to YouTube Live / Twitch / Facebook.
- * 
+ *
  * Optimized for buttery-smooth playback (zero DOM layout thrashing, 30fps throttled compositor,
- * strict sequential FIFO chunk queuing, and resilient audio mixing).
+ * strict sequential FIFO chunk queuing, distortion-free audio mixing for Recording & Streaming,
+ * and refined 35mm cinema Fair-Use visual/audio protection).
  */
 
 import { useStudioStore } from "@/stores/studio.store";
@@ -49,16 +39,14 @@ class StageBroadcaster {
   private ctx: CanvasRenderingContext2D | null = null;
   private audioCtx: AudioContext | null = null;
   private audioDestination: MediaStreamAudioDestinationNode | null = null;
-  private silentGain: GainNode | null = null;
   private activeBroadcastId: string | null = null;
-  private isCompositeActive = false;
+  private isBroadcasting = false;
   private isStreamingRtmp = false;
   private isLocalRecordingActive = false;
 
   // Frame Rate Throttling (Strict 30 FPS to save CPU and eliminate video stutter)
   private lastFrameTime = 0;
-  private readonly FRAME_INTERVAL = 1000 / 30; // ~33.33ms
-  private readonly FRAME_TOLERANCE = 27; // ms (smooth 30 FPS on 60Hz/120Hz/144Hz displays without dropped vsync ticks)
+  private readonly FRAME_TOLERANCE = 27; // ms (smooth 30 FPS on 60Hz/120Hz/144Hz displays)
 
   // Layout Cache (Eliminates forced synchronous layout thrashing)
   private cachedLayouts: CachedTileLayout[] = [];
@@ -80,25 +68,42 @@ class StageBroadcaster {
     string,
     { source: MediaStreamAudioSourceNode; gain: GainNode }
   >();
-  private mediaStreamSources = new Map<string, MediaStreamAudioSourceNode>();
   private connectedMediaElements = new Set<HTMLMediaElement>();
+  private mediaStreamSources = new Map<string, MediaStreamAudioSourceNode>();
   private mediaGainNode: GainNode | null = null;
-  private hpFilter: BiquadFilterNode | null = null;
-  private formantFilter: BiquadFilterNode | null = null;
-  private sweepingNotchFilter: BiquadFilterNode | null = null;
+  private mediaHighpassFilter: BiquadFilterNode | null = null;
+  private mediaNotchFilter: BiquadFilterNode | null = null;
+  private mediaFormantFilter: BiquadFilterNode | null = null;
 
-  // Cached Background & Overlay Images
+  // Cached Background, Full-Frame Overlay, Chroma Backdrop & Logo Images
   private cachedBgUrl: string | null = null;
   private bgImage: HTMLImageElement | null = null;
   private cachedOverlayUrl: string | null = null;
   private overlayImage: HTMLImageElement | null = null;
-  private cachedLogoUrl: string | null = null;
-  private cachedLogoImage: HTMLImageElement | null = null;
-  private cachedChromaBackdropUrl: string | null = null;
-  private chromaBackdropImage: HTMLImageElement | null = null;
-  private youtubePosterCache = new Map<string, HTMLImageElement>();
+  private cachedFullFrameOverlayUrl: string | null = null;
+  private fullFrameOverlayImage: HTMLImageElement | null = null;
+  private cachedChromaBgUrl: string | null = null;
+  private chromaBgImage: HTMLImageElement | null = null;
+  private cachedLogoImgUrl: string | null = null;
+  private logoImageEl: HTMLImageElement | null = null;
+  private cachedMediaPosterUrl: string | null = null;
+  private mediaPosterImage: HTMLImageElement | null = null;
   private grainCanvas: HTMLCanvasElement | null = null;
-  private grainFrameCount = 0;
+  private grainFrameTick = 0;
+  private vintageScratchTracks: Array<{
+    xNorm: number;
+    vx: number;
+    tilt: number;
+    lenNorm: number;
+    yStartNorm: number;
+    isDark: boolean;
+    weight: number;
+  }> = [
+      { xNorm: 0.18, vx: 0.0005, tilt: 0.8, lenNorm: 0.92, yStartNorm: 0.02, isDark: false, weight: 1.0 },
+      { xNorm: 0.44, vx: -0.0004, tilt: -0.6, lenNorm: 0.78, yStartNorm: 0.1, isDark: true, weight: 0.85 },
+      { xNorm: 0.68, vx: 0.0006, tilt: 0.5, lenNorm: 0.88, yStartNorm: 0.05, isDark: false, weight: 0.95 },
+      { xNorm: 0.83, vx: -0.0005, tilt: -0.7, lenNorm: 0.7, yStartNorm: 0.14, isDark: false, weight: 0.8 },
+    ];
 
   // Background Web Worker Clock (prevents tab throttling to 1 FPS when switching to YouTube Studio tab)
   private workerTimer: Worker | null = null;
@@ -130,18 +135,15 @@ class StageBroadcaster {
   }
 
   public isStreaming(): boolean {
-    return this.isStreamingRtmp;
+    return this.isBroadcasting;
   }
 
-  public isCompositeRunning(): boolean {
-    return this.isCompositeActive;
+  public isRtmpStreaming(): boolean {
+    return this.isStreamingRtmp;
   }
 
   public setLocalRecordingActive(active: boolean): void {
     this.isLocalRecordingActive = active;
-    if (!active && !this.isStreamingRtmp && this.isCompositeActive) {
-      this.stopStageComposite();
-    }
   }
 
   public getCanvas(): HTMLCanvasElement | null {
@@ -156,16 +158,11 @@ class StageBroadcaster {
     return tracks.length > 0 ? new MediaStream(tracks) : null;
   }
 
-  public getCompositeAudioTrack(): MediaStreamTrack | null {
-    return this.activeAudioTrack;
-  }
-
   /**
    * Start 30 FPS Canvas render loop & Web Audio mix, returning live MediaStreamTracks for WebRTC
-   * This allows LiveKit to stream the exact stage (with overlays, tickers, banners, backgrounds) to YouTube!
    */
   public startStageComposite(stageElement: HTMLElement | null): { videoTrack: MediaStreamTrack; audioTrack: MediaStreamTrack | null } | null {
-    if (this.isCompositeActive && this.activeVideoTrack) {
+    if (this.isBroadcasting && this.activeVideoTrack) {
       return { videoTrack: this.activeVideoTrack, audioTrack: this.activeAudioTrack };
     }
 
@@ -175,7 +172,7 @@ class StageBroadcaster {
       return null;
     }
 
-    this.isCompositeActive = true;
+    this.isBroadcasting = true;
     this.lastAutoPauseTimestamp = performance.now();
     this.lastHostActiveTimestamp = performance.now();
 
@@ -204,15 +201,12 @@ class StageBroadcaster {
       return null;
     }
 
-    // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live)
+    // 2. Setup Web Audio API Pipeline (Continuous stereo AAC for YouTube Live & Local Recording)
     try {
-      this.ensureAudioContext();
-      if (!this.audioCtx) {
-        const AudioContextClass =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.audioCtx = new AudioContextClass();
-      }
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.audioCtx = new AudioContextClass();
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume().catch((audioResumeErr) => {
           console.warn("[StageBroadcaster] AudioContext resume warning:", audioResumeErr);
@@ -220,29 +214,27 @@ class StageBroadcaster {
       }
       this.audioDestination = this.audioCtx.createMediaStreamDestination();
 
-      // Continuous gentle carrier (amplitude 0.0002 = ~ -74dB)
-      // Completely inaudible to human ears, but forces WebRTC & GStreamer AAC to stream 128 kbps audio packets 24/7 without silence suppression/DTX
+      // Continuous ultra-low carrier (-76dB) to prevent WebRTC/FFmpeg silence drop
       const sampleRate = this.audioCtx.sampleRate || 48000;
       const bufferSize = sampleRate * 2;
       const noiseBuffer = this.audioCtx.createBuffer(2, bufferSize, sampleRate);
       for (let ch = 0; ch < 2; ch++) {
         const channelData = noiseBuffer.getChannelData(ch);
         for (let i = 0; i < bufferSize; i++) {
-          channelData[i] = (Math.random() * 2 - 1) * 0.0002;
+          channelData[i] = (Math.random() * 2 - 1) * 0.00015;
         }
       }
       const carrier = this.audioCtx.createBufferSource();
       carrier.buffer = noiseBuffer;
       carrier.loop = true;
       carrier.connect(this.audioDestination);
-      
-      // Audible tab flag trick: route at inaudible 0.00001 volume to system speakers so Chrome NEVER throttles background tab timers or WebRTC streams!
+
       try {
         const bgKeepAlive = this.audioCtx.createGain();
         bgKeepAlive.gain.value = 0.00001;
         carrier.connect(bgKeepAlive);
         bgKeepAlive.connect(this.audioCtx.destination);
-      } catch {}
+      } catch { }
 
       carrier.start();
     } catch (audioErr) {
@@ -255,13 +247,13 @@ class StageBroadcaster {
     // 4. Initial layout snapshot
     this.updateLayoutCache(container, WIDTH, HEIGHT);
 
-    // 5. Start Resilient 30 FPS Canvas Render Loop (Dual clock: Worker Timer + requestAnimationFrame)
+    // 5. Start Resilient 30 FPS Canvas Render Loop
     this.lastTickerTime = performance.now();
     this.lastFrameTime = performance.now();
     let lastRafTime = performance.now();
 
     const doRenderFrame = (now: number) => {
-      if (!this.isCompositeActive || !this.ctx || !this.canvas) return;
+      if (!this.isBroadcasting || !this.ctx || !this.canvas) return;
 
       const elapsed = now - this.lastFrameTime;
       if (elapsed >= this.FRAME_TOLERANCE) {
@@ -278,25 +270,22 @@ class StageBroadcaster {
       }
     };
 
-    // Foreground VSync Loop
     const render = (time: number) => {
-      if (!this.isCompositeActive) return;
+      if (!this.isBroadcasting) return;
       lastRafTime = time;
       doRenderFrame(time);
       this.animFrameId = requestAnimationFrame(render);
     };
     this.animFrameId = requestAnimationFrame(render);
 
-    // Background Web Worker Clock: Only renders when browser tab is hidden/throttled or rAF stalls
     this.startWorkerClock(() => {
-      if (!this.isCompositeActive) return;
+      if (!this.isBroadcasting) return;
       const now = performance.now();
       if ((typeof document !== "undefined" && document.hidden) || now - lastRafTime > 60) {
         doRenderFrame(now);
       }
     });
 
-    // 5.5. Draw initial frame BEFORE captureStream so the track starts with valid non-black pixels
     this.renderStageFrame(container, WIDTH, HEIGHT, performance.now());
 
     // 6. Extract MediaStreamTracks
@@ -321,47 +310,83 @@ class StageBroadcaster {
   }
 
   /**
-   * Enforces YouTube Fair-Use & StreamYard Auto-Advance on active media elements:
-   * 1. Binds `ended` listener to auto-advance to `nextSceneIdOnMediaEnd`
-   * 2. Applies playbackRate shift (e.g. 1.04x) & dynamic tempo variance
-   * 3. Applies periodic Auto-Pause interval to break Content-ID continuous match
-   * 4. Idle Media Guard: cuts back to host if mic & cam are off for too long
+   * Enforces YouTube Fair-Use & StreamYard Auto-Advance on active media elements
+   * while keeping audio natural and distortion-free during recording & streaming.
    */
   private enforceFairUseMediaPolicies(now: number) {
     const store = useStudioStore.getState();
     const { fairUseConfig, activeMedia, participants } = store;
 
-    const mediaVideo =
-      (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
-      (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
-    if (!mediaVideo || !activeMedia || (activeMedia.type !== "video" && activeMedia.type !== "audio" && activeMedia.type !== "youtube")) return;
+    const mediaVideo = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+    const mediaAudio = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
+    const activeEl = mediaVideo || mediaAudio;
+    if (
+      !activeEl ||
+      !activeMedia ||
+      (activeMedia.type !== "video" && activeMedia.type !== "youtube" && activeMedia.type !== "audio")
+    )
+      return;
 
-    // 1. Auto-Advance Scene when Video Ends
-    if (!this.boundEndedElements.has(mediaVideo)) {
-      this.boundEndedElements.add(mediaVideo);
-      mediaVideo.addEventListener("ended", () => {
+    // Enforce optional Start/End Time range during live broadcast
+    if (
+      mediaVideo &&
+      activeMedia.endTimeSec &&
+      activeMedia.endTimeSec > 0 &&
+      mediaVideo.currentTime >= activeMedia.endTimeSec
+    ) {
+      if (activeMedia.loop !== false) {
+        mediaVideo.currentTime = activeMedia.startTimeSec || 0;
+        mediaVideo.play().catch(() => { });
+      } else {
+        mediaVideo.pause();
+        store.triggerMediaEnded();
+        return;
+      }
+    }
+
+    // 1. Auto-Advance Scene when Media Ends
+    if (!this.boundEndedElements.has(activeEl)) {
+      this.boundEndedElements.add(activeEl);
+      activeEl.addEventListener("ended", () => {
         useStudioStore.getState().triggerMediaEnded();
       });
     }
 
-    if (!fairUseConfig || !fairUseConfig.enabled) return;
-
-    // 2. Playback Speed Shift & Dynamic Tempo Variance (Anti-Fingerprint)
-    const isAudioFairUse = Boolean(fairUseConfig.enableAudioFairUse ?? true);
-    const baseRate = isAudioFairUse ? (fairUseConfig.playbackRate || 1.04) : 1.0;
-    const isTempoVar = Boolean(fairUseConfig.dynamicTempoVariance ?? true);
-    const tempoVariance = (isAudioFairUse && isTempoVar) ? Math.sin(now / 3500) * 0.02 : 0;
-    const targetRate = isAudioFairUse ? Math.max(0.8, Math.min(1.5, baseRate + tempoVariance)) : 1.0;
-    if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.005) {
-      mediaVideo.playbackRate = targetRate;
-      (mediaVideo as any).preservesPitch = !isAudioFairUse;
-      (mediaVideo as any).mozPreservesPitch = !isAudioFairUse;
-      (mediaVideo as any).webkitPreservesPitch = !isAudioFairUse;
+    if (!fairUseConfig || !fairUseConfig.enabled) {
+      const normalRate = activeMedia.playbackRate || 1.0;
+      if (Math.abs(activeEl.playbackRate - normalRate) > 0.01) {
+        activeEl.playbackRate = normalRate;
+      }
+      try {
+        (activeEl as any).preservesPitch = true;
+        (activeEl as any).mozPreservesPitch = true;
+        (activeEl as any).webkitPreservesPitch = true;
+      } catch { }
+      return;
     }
 
-    // 3. 8-12s Random Jerk / Frame-Skip / Pause (Anti-Content ID Continuous Match)
-    if (fairUseConfig.autoPauseIntervalSec > 0) {
-      // Agar 8 select hai to har baar 8s se 12s ke beech random time lega
+    // 2. Smooth Playback Speed + Pitch Unlinking (Gentle LFO so audio never warbles or distorts in recording)
+    const baseRate = activeMedia.playbackRate || fairUseConfig.playbackRate || 1.04;
+    const lfoOffset = (fairUseConfig.dynamicTempoVariance ?? true)
+      ? Math.sin(now / 2400) * 0.012 + Math.cos(now / 3900) * 0.006
+      : 0;
+    const targetRate = Number(Math.max(0.5, Math.min(2.0, baseRate + lfoOffset)).toFixed(3));
+    if (Math.abs(activeEl.playbackRate - targetRate) > 0.01) {
+      activeEl.playbackRate = targetRate;
+    }
+    const shouldShiftPitch = Boolean(fairUseConfig.audioEqProtection ?? true);
+    try {
+      (activeEl as any).preservesPitch = !shouldShiftPitch;
+      (activeEl as any).mozPreservesPitch = !shouldShiftPitch;
+      (activeEl as any).webkitPreservesPitch = !shouldShiftPitch;
+    } catch { }
+
+    // 3. 8-12s Random Jerk / Frame-Skip / Pause (Anti-Content ID Continuous Match for Video & YouTube)
+    if (
+      mediaVideo &&
+      (activeMedia.type === "video" || activeMedia.type === "youtube") &&
+      fairUseConfig.autoPauseIntervalSec > 0
+    ) {
       const targetIntervalMs =
         fairUseConfig.autoPauseIntervalSec === 8
           ? this.nextRandomIntervalMs
@@ -369,44 +394,43 @@ class StageBroadcaster {
 
       if (!mediaVideo.paused && now - this.lastAutoPauseTimestamp >= targetIntervalMs) {
         this.lastAutoPauseTimestamp = now;
-        // Agle cycle ke liye naya 8s–12s (8000ms–12000ms) random time set karein
         this.nextRandomIntervalMs = Math.floor(8000 + Math.random() * 4000);
 
         const mode = fairUseConfig.antiMatchMode || "jerk-skip";
 
         if (mode === "jerk-skip") {
-          // Micro-Jerk + Frame Skip: 180ms pause + 0.26s frame jump (Content-ID sequence break without long freeze)
           this.isAutoPausedByFairUse = true;
           mediaVideo.pause();
           setTimeout(() => {
             if (this.isAutoPausedByFairUse) {
               this.isAutoPausedByFairUse = false;
-              const dur = mediaVideo.duration || 0;
-              const isNearEnd = dur > 0 && isFinite(dur) && mediaVideo.currentTime + 0.5 >= dur;
-              if (!isNearEnd) {
-                mediaVideo.currentTime += 0.24 + Math.random() * 0.12;
+              if (
+                Number.isFinite(mediaVideo.duration) &&
+                mediaVideo.duration > 1 &&
+                mediaVideo.currentTime + 0.35 < mediaVideo.duration
+              ) {
+                mediaVideo.currentTime += 0.22 + Math.random() * 0.1;
               }
               this.lastAutoPauseTimestamp = performance.now();
-              mediaVideo.play().catch(() => {});
+              mediaVideo.play().catch(() => { });
             }
-          }, 180);
+          }, 150);
         } else {
-          // Micro-Pause (380ms) ya Full Pause (1800ms)
-          const pauseMs = mode === "micro-pause" ? 380 : 1800;
+          const pauseMs = mode === "micro-pause" ? 340 : 1600;
           this.isAutoPausedByFairUse = true;
           mediaVideo.pause();
           setTimeout(() => {
             if (this.isAutoPausedByFairUse && mediaVideo.paused) {
               this.isAutoPausedByFairUse = false;
               this.lastAutoPauseTimestamp = performance.now();
-              mediaVideo.play().catch(() => {});
+              mediaVideo.play().catch(() => { });
             }
           }, pauseMs);
         }
       }
     }
 
-    // 4. Idle Media Guard (Prevents unoriginal stream flag if host leaves media unattended)
+    // 4. Idle Media Guard
     const isAnySpeakerActive = participants.some(
       (p) => p.status === "ON_STAGE" && (p.camOn || p.micOn || p.isSpeaking)
     );
@@ -421,15 +445,19 @@ class StageBroadcaster {
     }
   }
 
-  public stopStageComposite() {
-    this.isCompositeActive = false;
+  public stopStageComposite(force: boolean = false) {
+    if (!force && (this.isStreamingRtmp || this.isLocalRecordingActive)) {
+      console.log("[StageBroadcaster] Keeping composite active because RTMP stream or local recorder is still running.");
+      return;
+    }
+    this.isBroadcasting = false;
     this.activeVideoTrack = null;
     this.activeAudioTrack = null;
 
     if (this.canvas && this.canvas.parentNode) {
       try {
         this.canvas.parentNode.removeChild(this.canvas);
-      } catch {}
+      } catch { }
     }
 
     if (this.animFrameId !== null) {
@@ -439,48 +467,38 @@ class StageBroadcaster {
 
     this.stopWorkerClock();
 
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch { }
+      this.audioCtx = null;
+    }
+
     if (this.mediaGainNode) {
       try {
         this.mediaGainNode.disconnect();
-      } catch {}
+      } catch { }
       this.mediaGainNode = null;
-    }
-
-    if (this.hpFilter) {
-      try {
-        this.hpFilter.disconnect();
-      } catch {}
-      this.hpFilter = null;
-    }
-
-    if (this.sweepingNotchFilter) {
-      try {
-        this.sweepingNotchFilter.disconnect();
-      } catch {}
-      this.sweepingNotchFilter = null;
-    }
-
-    if (this.formantFilter) {
-      try {
-        this.formantFilter.disconnect();
-      } catch {}
-      this.formantFilter = null;
     }
 
     this.participantAudioNodes.forEach((entry) => {
       try {
         entry.source.disconnect();
         entry.gain.disconnect();
-      } catch {}
+      } catch { }
     });
     this.participantAudioNodes.clear();
     this.mediaStreamSources.forEach((src) => {
       try {
         src.disconnect();
-      } catch {}
+      } catch { }
     });
     this.mediaStreamSources.clear();
     this.connectedMediaElements.clear();
+    this.mediaGainNode = null;
+    this.mediaHighpassFilter = null;
+    this.mediaNotchFilter = null;
+    this.mediaFormantFilter = null;
     this.cachedLayouts = [];
     this.canvas = null;
     this.ctx = null;
@@ -488,18 +506,9 @@ class StageBroadcaster {
     this.bgImage = null;
     this.cachedOverlayUrl = null;
     this.overlayImage = null;
-    this.cachedLogoUrl = null;
-    this.cachedLogoImage = null;
-    this.cachedChromaBackdropUrl = null;
-    this.chromaBackdropImage = null;
     console.log("[StageBroadcaster] Stage composite stopped and resources freed.");
   }
 
-  /**
-   * Dedicated Web Worker clock: Chrome aggressively throttles timers (requestAnimationFrame to 0 FPS,
-   * setInterval to 1 FPS) in background or unfocused tabs. Web Workers run in a separate thread and are
-   * immune to background tab throttling, ensuring a steady 30 FPS stream even when user switches to YouTube Studio.
-   */
   private startWorkerClock(onTick: () => void) {
     this.stopWorkerClock();
     try {
@@ -524,9 +533,7 @@ class StageBroadcaster {
         onTick();
       };
       this.workerTimer.postMessage("start");
-      console.log("[StageBroadcaster] Web Worker background 30 FPS clock active.");
     } catch (err) {
-      console.warn("[StageBroadcaster] Web Worker clock unavailable, using interval fallback:", err);
       if (this.bgIntervalId) clearInterval(this.bgIntervalId);
       this.bgIntervalId = setInterval(() => {
         onTick();
@@ -539,13 +546,13 @@ class StageBroadcaster {
       try {
         this.workerTimer.postMessage("stop");
         this.workerTimer.terminate();
-      } catch {}
+      } catch { }
       this.workerTimer = null;
     }
     if (this.workerBlobUrl) {
       try {
         URL.revokeObjectURL(this.workerBlobUrl);
-      } catch {}
+      } catch { }
       this.workerBlobUrl = null;
     }
     if (this.bgIntervalId) {
@@ -555,11 +562,10 @@ class StageBroadcaster {
   }
 
   /**
-   * Start broadcasting the live stage via RTMP FFmpeg pipe
+   * Start broadcasting the live stage
    */
   public async start(stageElement: HTMLElement | null, broadcastId: string): Promise<boolean> {
     if (this.isStreamingRtmp) {
-      console.warn("[StageBroadcaster] RTMP Broadcast is already active, ignoring duplicate start request");
       return true;
     }
 
@@ -569,22 +575,18 @@ class StageBroadcaster {
       return false;
     }
 
+    if (!this.isBroadcasting || !this.canvas || !this.ctx) {
+      const started = this.startStageComposite(container);
+      if (!started || !this.canvas) {
+        return false;
+      }
+    }
+
     this.activeBroadcastId = broadcastId;
     this.isStreamingRtmp = true;
     this.chunkQueue = [];
     this.isUploading = false;
 
-    // 1. Ensure composite canvas & Web Audio mix is running
-    if (!this.isCompositeActive || !this.canvas) {
-      const composite = this.startStageComposite(container);
-      if (!composite || !this.canvas) {
-        console.error("[StageBroadcaster] Failed to start underlying stage composite");
-        this.isStreamingRtmp = false;
-        return false;
-      }
-    }
-
-    // 2. Combine Video Track from Canvas + Audio Track from Web Audio Destination
     try {
       const canvasStream = this.canvas.captureStream(30);
       const videoTrack = canvasStream.getVideoTracks()[0];
@@ -601,7 +603,6 @@ class StageBroadcaster {
 
       const combinedStream = new MediaStream(tracks);
 
-      // Determine best supported WebM container for FFmpeg pipe
       let mimeType = "video/webm;codecs=vp8,opus";
       if (!MediaRecorder.isTypeSupported(mimeType)) {
         mimeType = "video/webm;codecs=h264,opus";
@@ -610,16 +611,14 @@ class StageBroadcaster {
         }
       }
 
-      console.log(`[StageBroadcaster] Starting MediaRecorder with MIME: ${mimeType}`);
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType,
-        videoBitsPerSecond: 2800000, // 2.8 Mbps crisp 720p HD streaming
-        audioBitsPerSecond: 128000,  // 128 kbps stereo AAC
+        videoBitsPerSecond: 2800000,
+        audioBitsPerSecond: 128000,
       });
 
       this.mediaRecorder.ondataavailable = (e: BlobEvent) => {
         if (e.data && e.data.size > 0 && this.activeBroadcastId) {
-          console.log(`[StageBroadcaster] WebM Chunk emitted (${e.data.size} bytes) for ${this.activeBroadcastId}`);
           this.enqueueChunk(e.data);
         }
       };
@@ -628,9 +627,7 @@ class StageBroadcaster {
         console.error("[StageBroadcaster] MediaRecorder error:", recorderErr);
       };
 
-      // Emit chunk every 500ms for smooth, continuous delivery
       this.mediaRecorder.start(500);
-      console.log("[StageBroadcaster] Live stage streaming initiated successfully.");
       return true;
     } catch (streamErr) {
       console.error("[StageBroadcaster] Failed to start MediaRecorder stream:", streamErr);
@@ -640,7 +637,7 @@ class StageBroadcaster {
   }
 
   /**
-   * Snapshot stage layout bounds outside the 30fps draw loop to prevent forced layout thrashing
+   * Snapshot stage layout bounds outside the 30fps draw loop
    */
   private updateLayoutCache(container: HTMLElement, W: number, H: number) {
     try {
@@ -677,8 +674,12 @@ class StageBroadcaster {
         let w = tileRect.width * scaleX;
         let h = tileRect.height * scaleY;
 
-        if (isFullBleed) {
-          // Snap flush to edge borders and round internal seams to eliminate any sub-pixel/margin gaps in canvas recording
+        const isMediaTileCover =
+          tile.hasAttribute("data-stage-media") &&
+          (tile.getAttribute("data-participant-fit") === "cover" ||
+            store.tileTransforms["active-media"]?.fitMode === "cover");
+
+        if (isFullBleed || isMediaTileCover) {
           x = Math.round(x);
           y = Math.round(y);
           w = Math.ceil(w);
@@ -744,7 +745,6 @@ class StageBroadcaster {
         });
       });
 
-      // Z-Index sorting so floating PiP & dragged freeform boxes draw on top
       nextLayouts.sort((a, b) => (a.zIndex || 10) - (b.zIndex || 10));
       this.cachedLayouts = nextLayouts;
     } catch (err) {
@@ -753,27 +753,28 @@ class StageBroadcaster {
   }
 
   /**
-   * Connect participant and media audio streams into the broadcast mix
-   * StreamYard Parity: Backstage & muted participants are instantly silenced with GainNode
+   * Connect participant and media audio streams into the broadcast/recording mix.
+   * Ensures clean, transparent, distortion-free audio on both Record to PC and Live Stream.
    */
   public refreshAudioConnections() {
     if (!this.audioCtx || !this.audioDestination) return;
 
     try {
+      if (this.audioCtx.state === "suspended") {
+        this.audioCtx.resume().catch(() => { });
+      }
       const store = useStudioStore.getState();
       const activeTrackIds = new Set<string>();
 
       let isAnyParticipantSpeaking = false;
 
-      // 1. Participant Microphones with GainNode control (Prevents mute/backstage audio leaks)
+      // 1. Participant Microphones with GainNode control
       store.participants.forEach((p) => {
         const mediaTrack =
           (p.audioTrack as any)?.mediaStreamTrack ||
           (p.audioTrack instanceof MediaStreamTrack ? p.audioTrack : null);
 
         const isHost = Boolean(p.isLocal || p.role === "host" || p.role === "HOST");
-        // Host mic is audible whenever Host Mic is ON (even if Host tile is backstage during Media+Guest 2-window swap!)
-        // Guest mic is audible only when Guest is ON_STAGE and Guest Mic is ON.
         const isAudible = (p.status === "ON_STAGE" || isHost) && p.micOn !== false;
         if (isAudible && p.isSpeaking) {
           isAnyParticipantSpeaking = true;
@@ -793,29 +794,26 @@ class StageBroadcaster {
               source.connect(gain);
               gain.connect(this.audioDestination!);
               this.participantAudioNodes.set(trackId, { source, gain });
-              console.log(`[StageBroadcaster] Connected mic audio with GainNode for ${p.name}`);
             } catch (err) {
               console.warn(`[StageBroadcaster] Audio connect error for ${p.name}:`, err);
             }
           } else {
-            // Real-time Mute / Unmute / Backstage cutoff
             nodeEntry.gain.gain.value = isAudible ? 1 : 0;
           }
         }
       });
 
-      // Disconnect and clean up participants that left or disconnected
       this.participantAudioNodes.forEach((entry, trackId) => {
         if (!activeTrackIds.has(trackId)) {
           try {
             entry.source.disconnect();
             entry.gain.disconnect();
-          } catch {}
+          } catch { }
           this.participantAudioNodes.delete(trackId);
         }
       });
 
-      // 2. Active Stage Media Video / Audio Element (with Auto Audio Ducking)
+      // 2. Active Stage Media Video / Audio Element (Crystal-clear audio with optional gentle Fair-Use EQ)
       const mediaVideo =
         (document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null) ||
         (document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null);
@@ -823,104 +821,97 @@ class StageBroadcaster {
       if (mediaVideo && this.audioCtx && this.audioDestination) {
         if (!this.mediaGainNode) {
           try {
+            this.mediaHighpassFilter = this.audioCtx.createBiquadFilter();
+            this.mediaHighpassFilter.type = "highpass";
+            this.mediaHighpassFilter.frequency.value = 55;
+
+            this.mediaNotchFilter = this.audioCtx.createBiquadFilter();
+            this.mediaNotchFilter.type = "peaking";
+            this.mediaNotchFilter.frequency.value = 1650;
+            this.mediaNotchFilter.Q.value = 2.8;
+            this.mediaNotchFilter.gain.value = 0;
+
+            this.mediaFormantFilter = this.audioCtx.createBiquadFilter();
+            this.mediaFormantFilter.type = "peaking";
+            this.mediaFormantFilter.frequency.value = 2350;
+            this.mediaFormantFilter.Q.value = 1.2;
+            this.mediaFormantFilter.gain.value = 0;
+
             this.mediaGainNode = this.audioCtx.createGain();
+            this.mediaHighpassFilter.connect(this.mediaNotchFilter);
+            this.mediaNotchFilter.connect(this.mediaFormantFilter);
+            this.mediaFormantFilter.connect(this.mediaGainNode);
             this.mediaGainNode.connect(this.audioDestination);
           } catch (gainErr) {
-            console.warn("[StageBroadcaster] Failed to create mediaGainNode:", gainErr);
+            console.warn("[StageBroadcaster] Failed to create media audio DSP chain:", gainErr);
           }
         }
 
+        if (this.mediaFormantFilter && this.mediaHighpassFilter && this.mediaNotchFilter) {
+          const eqActive = Boolean(store.fairUseConfig?.enabled && (store.fairUseConfig?.audioEqProtection ?? true));
+          this.mediaHighpassFilter.frequency.value = eqActive ? 75 : 20;
+          const sweepHz = 1100 + ((1 + Math.sin(performance.now() / 1900)) / 2) * 1200;
+          this.mediaNotchFilter.frequency.setTargetAtTime(sweepHz, this.audioCtx.currentTime, 0.15);
+          // Gentle -2.8 dB notch & +2.2 dB formant shift alters audio fingerprint without any muffled or metallic distortion
+          this.mediaNotchFilter.gain.value = eqActive ? -2.8 : 0;
+          this.mediaFormantFilter.gain.value = eqActive ? 2.2 : 0;
+        }
+
         const isMediaMuted = Boolean(store.activeMedia?.isMuted || mediaVideo.muted);
-        const baseVol = (store.activeMedia?.volume ?? 100) / 100; // 0.0 to 2.0 (boost supported)
-        const isDuckingEnabled = Boolean(
+        const rawVol = store.activeMedia?.volume;
+        const normalizedVolPct =
+          typeof rawVol === "number" && !Number.isNaN(rawVol)
+            ? rawVol > 0 && rawVol <= 1 && !Number.isInteger(rawVol)
+              ? rawVol * 100
+              : Math.max(0, Math.min(200, rawVol))
+            : 100;
+        const baseVol = normalizedVolPct / 100;
+        const shouldDuck =
           store.fairUseConfig?.enabled &&
           store.fairUseConfig?.autoAudioDucking &&
-          (store.fairUseConfig?.duckingActive !== false)
-        );
-        const shouldDuck = isDuckingEnabled && isAnyParticipantSpeaking;
-        const duckVol = (store.fairUseConfig?.duckingVolumePct ?? 18) / 100;
+          isAnyParticipantSpeaking;
+        const duckVol = (store.fairUseConfig?.duckingVolumePct ?? 25) / 100;
         const finalGain = isMediaMuted ? 0 : shouldDuck ? Math.min(baseVol, duckVol) : baseVol;
 
         if (this.mediaGainNode) {
-          this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.12);
+          this.mediaGainNode.gain.setTargetAtTime(finalGain, this.audioCtx.currentTime, 0.1);
         }
         if (mediaVideo.muted !== isMediaMuted) {
           mediaVideo.muted = isMediaMuted;
         }
 
-        // Setup 5-Stage Audio Anti-Content-ID DSP Pipeline (High-pass + Sweeping Notch + Formant Peaking)
-        const needsAudioFairUse = Boolean(
-          store.fairUseConfig?.enabled && (store.fairUseConfig?.enableAudioFairUse ?? store.fairUseConfig?.audioEqProtection ?? true)
-        );
-        if (needsAudioFairUse && !this.hpFilter && this.audioCtx) {
-          try {
-            // Stage 3: 85 Hz Sub-Bass High-Pass Cut
-            this.hpFilter = this.audioCtx.createBiquadFilter();
-            this.hpFilter.type = "highpass";
-            this.hpFilter.frequency.value = 85;
-
-            // Stage 4: Sweeping Spectral Notch Filter LFO (900 Hz - 2700 Hz @ -5.5 dB)
-            this.sweepingNotchFilter = this.audioCtx.createBiquadFilter();
-            this.sweepingNotchFilter.type = "peaking";
-            this.sweepingNotchFilter.frequency.value = 1800;
-            this.sweepingNotchFilter.Q.value = 2.2;
-            this.sweepingNotchFilter.gain.value = -5.5;
-
-            // Stage 5: Formant Peaking EQ (+3.2 dB @ 2.35 kHz)
-            this.formantFilter = this.audioCtx.createBiquadFilter();
-            this.formantFilter.type = "peaking";
-            this.formantFilter.frequency.value = 2350;
-            this.formantFilter.Q.value = 1.4;
-            this.formantFilter.gain.value = 3.2;
-
-            this.hpFilter.connect(this.sweepingNotchFilter);
-            this.sweepingNotchFilter.connect(this.formantFilter);
-            if (this.mediaGainNode) {
-              this.formantFilter.connect(this.mediaGainNode);
-            }
-          } catch (filterErr) {
-            console.warn("[StageBroadcaster] Audio filter chain creation error:", filterErr);
-          }
-        }
-
-        const targetInputNode =
-          needsAudioFairUse && this.hpFilter
-            ? this.hpFilter
-            : this.mediaGainNode || this.audioDestination;
-
         try {
-          let srcNode = (mediaVideo as any).__lsSourceNode as MediaElementAudioSourceNode | null;
-          if (!srcNode) {
-            try {
-              srcNode = this.audioCtx.createMediaElementSource(mediaVideo);
-              (mediaVideo as any).__lsSourceNode = srcNode;
-              this.connectedMediaElements.add(mediaVideo);
-              console.log("[StageBroadcaster] Connected media element source node to broadcast mix");
-            } catch (elemErr) {
-              console.warn("[StageBroadcaster] createMediaElementSource note:", elemErr);
-            }
-          }
+          const stream =
+            (mediaVideo as any).captureStream?.() ||
+            (mediaVideo as any).mozCaptureStream?.();
 
-          if (srcNode) {
-            try {
-              srcNode.disconnect();
-            } catch {}
-            srcNode.connect(targetInputNode);
-            srcNode.connect(this.audioCtx.destination);
-          } else {
-            const stream =
-              (mediaVideo as any).captureStream?.() ||
-              (mediaVideo as any).mozCaptureStream?.();
-
-            if (stream) {
-              const audioTrack = stream.getAudioTracks()[0];
-              if (audioTrack && !this.mediaStreamSources.has(audioTrack.id)) {
-                const streamSrcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-                streamSrcNode.connect(targetInputNode);
-                this.mediaStreamSources.set(audioTrack.id, streamSrcNode);
-                console.log("[StageBroadcaster] Connected media video captureStream audio to broadcast mix");
+          const entryNode = this.mediaHighpassFilter || this.mediaGainNode;
+          if (stream) {
+            const audioTrack = stream.getAudioTracks()[0];
+            if (audioTrack && audioTrack.readyState === "live" && !this.mediaStreamSources.has(audioTrack.id)) {
+              this.mediaStreamSources.forEach((oldSrc, oldId) => {
+                try {
+                  oldSrc.disconnect();
+                } catch { }
+                this.mediaStreamSources.delete(oldId);
+              });
+              const srcNode = this.audioCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+              if (entryNode) {
+                srcNode.connect(entryNode);
+              } else {
+                srcNode.connect(this.audioDestination);
               }
+              this.mediaStreamSources.set(audioTrack.id, srcNode);
             }
+          } else if (!this.connectedMediaElements.has(mediaVideo)) {
+            const src = this.audioCtx.createMediaElementSource(mediaVideo);
+            if (entryNode) {
+              src.connect(entryNode);
+            } else {
+              src.connect(this.audioDestination);
+            }
+            src.connect(this.audioCtx.destination);
+            this.connectedMediaElements.add(mediaVideo);
           }
         } catch (err) {
           console.warn("[StageBroadcaster] Media audio capture error:", err);
@@ -932,7 +923,7 @@ class StageBroadcaster {
   }
 
   /**
-   * Render single frame of the live stage onto the composite canvas using cached layout coordinates
+   * Render single frame of the live stage onto the composite canvas
    */
   private renderStageFrame(container: HTMLElement, W: number, H: number, timestamp: number) {
     if (!this.ctx) return;
@@ -940,16 +931,14 @@ class StageBroadcaster {
     const store = useStudioStore.getState();
 
     try {
-      // ─────────────────────────────────────────────────────────────
-      // 1. Draw Background Layer (Video, Wallpaper Image, or Dark Slate)
-      // ─────────────────────────────────────────────────────────────
+      // 1. Draw Background Layer
       const bgVideo = container.querySelector("video.object-cover") as HTMLVideoElement | null;
       let drewVideoBackground = false;
       if (bgVideo && bgVideo.readyState >= 2) {
         try {
           ctx.drawImage(bgVideo, 0, 0, W, H);
           drewVideoBackground = true;
-        } catch {}
+        } catch { }
       }
       if (!drewVideoBackground && store.activeBackgroundUrl && !store.activeBackgroundUrl.endsWith(".mp4")) {
         if (this.cachedBgUrl !== store.activeBackgroundUrl) {
@@ -969,1218 +958,1070 @@ class StageBroadcaster {
           ctx.fillStyle = "#07070d";
           ctx.fillRect(0, 0, W, H);
         }
-      }
-      if (!drewVideoBackground && store.chromaKeyConfig?.enabled && store.chromaKeyConfig?.backdropUrl) {
-        if (this.cachedChromaBackdropUrl !== store.chromaKeyConfig.backdropUrl) {
-          this.cachedChromaBackdropUrl = store.chromaKeyConfig.backdropUrl;
-          this.chromaBackdropImage = new Image();
-          this.chromaBackdropImage.crossOrigin = "anonymous";
-          this.chromaBackdropImage.src = store.chromaKeyConfig.backdropUrl;
-        }
-        if (this.chromaBackdropImage && this.chromaBackdropImage.complete && this.chromaBackdropImage.naturalWidth > 0) {
-          try {
-            ctx.drawImage(this.chromaBackdropImage, 0, 0, W, H);
-            drewVideoBackground = true;
-          } catch {}
-        }
-      }
-      if (!drewVideoBackground) {
+      } else if (!drewVideoBackground) {
         ctx.fillStyle = "#07070d";
         ctx.fillRect(0, 0, W, H);
       }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2. Draw All Stage Tiles from Cached Layouts (Zero DOM Thrashing)
-    // ─────────────────────────────────────────────────────────────
-    for (let i = 0; i < this.cachedLayouts.length; i++) {
-      const tile = this.cachedLayouts[i];
-      const { element: el, x, y, w, h, isMedia } = tile;
+      // 2. Draw All Stage Tiles from Cached Layouts
+      for (let i = 0; i < this.cachedLayouts.length; i++) {
+        const tile = this.cachedLayouts[i];
+        const { element: el, x, y, w, h, isMedia } = tile;
 
-      ctx.save();
-      const currentStore = useStudioStore.getState();
-      const isFullBleed =
-        currentStore.isStageCropped ||
-        currentStore.activeLayout === "cropped" ||
-        currentStore.activeLayout === "podcast" ||
-        currentStore.activeLayout === "interview" ||
-        currentStore.activeLayout === "cinema" ||
-        currentStore.activeLayout === "screen-full" ||
-        currentStore.activeLayout === "solo" ||
-        (currentStore.activeLayout === "custom" &&
-          (currentStore.customLayoutConfig?.mode === "solo" ||
-            currentStore.customLayoutConfig?.mode === "cinema" ||
-            currentStore.customLayoutConfig?.mode === "cropped" ||
-            currentStore.customLayoutConfig?.mode === "podcast"));
+        ctx.save();
+        const currentStore = useStudioStore.getState();
+        const isFullBleed =
+          currentStore.isStageCropped ||
+          currentStore.activeLayout === "cropped" ||
+          currentStore.activeLayout === "podcast" ||
+          currentStore.activeLayout === "interview" ||
+          currentStore.activeLayout === "cinema" ||
+          currentStore.activeLayout === "screen-full" ||
+          currentStore.activeLayout === "solo" ||
+          (currentStore.activeLayout === "custom" &&
+            (currentStore.customLayoutConfig?.mode === "solo" ||
+              currentStore.customLayoutConfig?.mode === "cinema" ||
+              currentStore.customLayoutConfig?.mode === "cropped" ||
+              currentStore.customLayoutConfig?.mode === "podcast"));
 
-      const isFloatingPipTile = (tile.zIndex || 10) >= 25 && w < W * 0.5 && h < H * 0.5;
+        const isFloatingPipTile = (tile.zIndex || 10) >= 25 && w < W * 0.5 && h < H * 0.5;
+        const isMediaFullCover = isMedia && (tile.fitMode === "cover" || currentStore.tileTransforms["active-media"]?.fitMode === "cover") && !isFloatingPipTile;
 
-      if ((!isFullBleed || isFloatingPipTile) && !tile.isTransparentCard) {
-        const radius =
-          currentStore.activeLayout === "custom" &&
-          currentStore.customLayoutConfig?.borderRadius !== undefined
-            ? currentStore.customLayoutConfig.borderRadius
-            : 14;
-        if (radius > 0) {
-          this.drawRoundedRect(ctx, x, y, w, h, radius);
-          ctx.clip();
-        }
-      }
-
-      // Card background: only draw solid dark background if card is NOT transparent
-      if (!tile.isTransparentCard) {
-        ctx.fillStyle = "#0a0a14";
-        ctx.fillRect(x, y, w, h);
-      }
-
-      if (isMedia) {
-        // ── Media Tile (Video, Image/Slides, or Tactical Map Canvas) ──
-        const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
-        const mediaImg = el.querySelector("img") as HTMLImageElement | null;
-        const mediaCanvas = (el.querySelector("canvas#livestudio-tactical-map-canvas") ||
-          el.querySelector("canvas#livestudio-active-website-canvas") ||
-          el.querySelector("canvas[data-media-canvas='true']")) as HTMLCanvasElement | null;
-
-
-
-        const defaultMediaFit = currentStore.isStageCropped ? "cover" : "contain";
-        const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: defaultMediaFit, zoom: 1, panX: 0, panY: 0 };
-        const isCover = (tile.fitMode === "cover" || mediaTf.fitMode === "cover");
-        const zoom = Math.max(1, mediaTf.zoom || 1);
-        const panX = mediaTf.panX || 0;
-        const panY = mediaTf.panY || 0;
-
-        // 2D Pan + Zoom + Micro-Tilt Breathing LFO (defeating DCT perceptual hashes & macroblocks)
-        const isBreathing = Boolean(
-          currentStore.fairUseConfig?.enabled &&
-            (currentStore.fairUseConfig?.zoomBreathing ?? currentStore.fairUseConfig?.isBreathingEnabled ?? true)
-        );
-        const breathIntensity = currentStore.fairUseConfig?.breathIntensity || currentStore.fairUseConfig?.breathingIntensity || "medium";
-        const maxDelta = breathIntensity === "subtle" ? 0.06 : breathIntensity === "strong" ? 0.18 : 0.11;
-        const breathWave = isBreathing ? (1 + Math.sin(timestamp / 520)) / 2 : 0;
-        const breathingScale = 1.0 + breathWave * maxDelta;
-        const breathPanX = isBreathing ? Math.sin(timestamp / 780) * 0.85 : 0;
-        const breathPanY = isBreathing ? Math.cos(timestamp / 920) * 0.65 : 0;
-        const breathTilt = isBreathing ? Math.sin(timestamp / 1100) * 0.35 : 0;
-        const effectiveZoom = zoom * breathingScale;
-
-        // Dynamic Sweeping Spectral Notch Filter LFO & Dual-Wave Irrational Tempo
-        if (this.sweepingNotchFilter && this.audioCtx) {
-          const sweepHz = 1800 + Math.sin(timestamp / 820) * 900;
-          this.sweepingNotchFilter.frequency.setValueAtTime(sweepHz, this.audioCtx.currentTime);
-        }
-        if (mediaVideo && !mediaVideo.paused) {
-          try {
-            const isAudioFairUse = Boolean(
-              currentStore.fairUseConfig?.enabled &&
-              (currentStore.fairUseConfig?.enableAudioFairUse ?? true)
-            );
-            (mediaVideo as any).preservesPitch = !isAudioFairUse;
-            (mediaVideo as any).mozPreservesPitch = !isAudioFairUse;
-            (mediaVideo as any).webkitPreservesPitch = !isAudioFairUse;
-
-            const baseRate = isAudioFairUse ? (currentStore.fairUseConfig?.playbackRate || 1.04) : 1.0;
-            const isTempoVar = Boolean(
-              currentStore.fairUseConfig?.enabled &&
-              (currentStore.fairUseConfig?.dynamicTempoVariance ?? true)
-            );
-            const irrationalMod = (isAudioFairUse && isTempoVar)
-              ? (Math.sin(timestamp / 2200) + Math.cos(timestamp / 3600)) * 0.015
-              : 0;
-            const targetRate = Number(Math.max(0.5, Math.min(2.0, baseRate + irrationalMod)).toFixed(3));
-            if (Math.abs(mediaVideo.playbackRate - targetRate) > 0.005) {
-              mediaVideo.playbackRate = targetRate;
-            }
-          } catch {}
+        if (((!isFullBleed && !isMediaFullCover) || isFloatingPipTile) && !tile.isTransparentCard) {
+          const radius =
+            currentStore.activeLayout === "custom" &&
+              currentStore.customLayoutConfig?.borderRadius !== undefined
+              ? currentStore.customLayoutConfig.borderRadius
+              : 14;
+          if (radius > 0) {
+            this.drawRoundedRect(ctx, x, y, w, h, radius);
+            ctx.clip();
+          }
         }
 
-        if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
-          ctx.save();
-          if (currentStore.fairUseConfig?.enabled) {
-            if (currentStore.fairUseConfig?.visualTransformFilter) {
-              ctx.filter = "contrast(1.06) saturate(1.05)";
-            }
-            const cx = x + w / 2;
-            const cy = y + h / 2;
-            if (breathTilt !== 0) {
-              ctx.translate(cx, cy);
-              ctx.rotate((breathTilt * Math.PI) / 180);
-              ctx.translate(-cx, -cy);
-            }
-            if (currentStore.fairUseConfig.mirrorMediaVideo) {
+        const isChromaStageTransparent =
+          !isMedia &&
+          !tile.isScreen &&
+          currentStore.chromaKeyConfig?.enabled &&
+          currentStore.chromaKeyConfig?.backdropType === "stage";
+
+        if (!tile.isTransparentCard && !isChromaStageTransparent) {
+          ctx.fillStyle = "#0a0a14";
+          ctx.fillRect(x, y, w, h);
+        }
+
+        if (isMedia) {
+          const mediaMapCanvas = el.querySelector("#livestudio-tactical-map-canvas") as HTMLCanvasElement | null;
+          const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
+          const mediaImg = el.querySelector("img") as HTMLImageElement | null;
+
+          const defaultMediaFit = currentStore.isStageCropped ? "cover" : "contain";
+          const mediaTf = currentStore.tileTransforms["active-media"] || { fitMode: defaultMediaFit, zoom: 1, panX: 0, panY: 0, rotation: 0 };
+          const isCover = (tile.fitMode === "cover" || mediaTf.fitMode === "cover");
+          const bIntensity = currentStore.fairUseConfig?.breathIntensity || "medium";
+          const maxBreathDelta = bIntensity === "subtle" ? 0.06 : bIntensity === "strong" ? 0.18 : 0.11;
+          const breathFactor =
+            currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.zoomBreathing ?? true)
+              ? 1 + maxBreathDelta * ((1 + Math.sin(timestamp / 520)) / 2)
+              : 1;
+          const zoom = Math.max(1, (mediaTf.zoom || 1) * breathFactor);
+          const panX = Math.max(-50, Math.min(50, mediaTf.panX || 0));
+          const panY = Math.max(-50, Math.min(50, mediaTf.panY || 0));
+
+          if (mediaMapCanvas && mediaMapCanvas.width > 0 && mediaMapCanvas.height > 0) {
+            const mRatio = mediaMapCanvas.width / mediaMapCanvas.height;
+            const tRatio = w / h;
+            const objectPosX = Math.max(0, Math.min(100, 50 + panX));
+            const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+            ctx.save();
+            if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.mirrorMediaVideo) {
+              const cx = x + w / 2;
               ctx.translate(cx, 0);
               ctx.scale(-1, 1);
               ctx.translate(-cx, 0);
             }
-          }
-
-          const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
-          const tRatio = w / h;
-          let objectPosX = Math.max(0, Math.min(100, 50 + panX + breathPanX));
-          let objectPosY = Math.max(0, Math.min(100, 50 + panY + breathPanY));
-          if (mediaVideo.style.objectPosition) {
-            const parts = mediaVideo.style.objectPosition.split(" ");
-            if (parts.length >= 2) {
-              const px = parseFloat(parts[0]);
-              const py = parseFloat(parts[1]);
-              if (!isNaN(px)) objectPosX = px;
-              if (!isNaN(py)) objectPosY = py;
-            }
-          }
-
-          if (isCover) {
-            let sw = mediaVideo.videoWidth;
-            let sh = mediaVideo.videoHeight;
-            if (vRatio > tRatio) {
-              sw = mediaVideo.videoHeight * tRatio;
+            if (isCover) {
+              let sw = mediaMapCanvas.width;
+              let sh = mediaMapCanvas.height;
+              if (mRatio > tRatio) {
+                sw = mediaMapCanvas.height * tRatio;
+              } else {
+                sh = mediaMapCanvas.width / tRatio;
+              }
+              sw = sw / zoom;
+              sh = sh / zoom;
+              const sx = Math.max(0, Math.min(mediaMapCanvas.width - sw, (mediaMapCanvas.width - sw) * (objectPosX / 100)));
+              const sy = Math.max(0, Math.min(mediaMapCanvas.height - sh, (mediaMapCanvas.height - sh) * (objectPosY / 100)));
+              try {
+                ctx.drawImage(mediaMapCanvas, sx, sy, sw, sh, x, y, w, h);
+              } catch { }
             } else {
-              sh = mediaVideo.videoWidth / tRatio;
+              let dw = w, dh = h, dx = x, dy = y;
+              if (mRatio > tRatio) {
+                dh = w / mRatio;
+                dy = y + (h - dh) / 2;
+              } else {
+                dw = h * mRatio;
+                dx = x + (w - dw) / 2;
+              }
+              try {
+                ctx.drawImage(mediaMapCanvas, 0, 0, mediaMapCanvas.width, mediaMapCanvas.height, dx, dy, dw, dh);
+              } catch { }
             }
-            sw = sw / effectiveZoom;
-            sh = sh / effectiveZoom;
-            let sx = (mediaVideo.videoWidth - sw) * (objectPosX / 100);
-            let sy = (mediaVideo.videoHeight - sh) * (objectPosY / 100);
-            sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
-            sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
-            try {
-              ctx.drawImage(mediaVideo, sx, sy, sw, sh, x, y, w, h);
-            } catch {}
-          } else {
-            let dw = w, dh = h, dx = x, dy = y;
-            if (vRatio > tRatio) {
-              dh = w / vRatio;
-              dy = y + (h - dh) / 2;
-            } else {
-              dw = h * vRatio;
-              dx = x + (w - dw) / 2;
+            ctx.restore();
+          } else if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
+            ctx.save();
+            if (currentStore.fairUseConfig?.enabled) {
+              if (currentStore.fairUseConfig?.visualTransformFilter) {
+                ctx.filter = "contrast(1.05) saturate(1.06)";
+              }
+              if (currentStore.fairUseConfig.mirrorMediaVideo) {
+                const cx = x + w / 2;
+                ctx.translate(cx, 0);
+                ctx.scale(-1, 1);
+                ctx.translate(-cx, 0);
+              }
             }
-            if (effectiveZoom > 1) {
-              let sw = mediaVideo.videoWidth / effectiveZoom;
-              let sh = mediaVideo.videoHeight / effectiveZoom;
+
+            const vRatio = mediaVideo.videoWidth / mediaVideo.videoHeight;
+            const tRatio = w / h;
+            let objectPosX = Math.max(0, Math.min(100, 50 + panX));
+            let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+            if (mediaVideo.style.objectPosition) {
+              const parts = mediaVideo.style.objectPosition.split(" ");
+              if (parts.length >= 2) {
+                const px = parseFloat(parts[0]);
+                const py = parseFloat(parts[1]);
+                if (!isNaN(px)) objectPosX = px;
+                if (!isNaN(py)) objectPosY = py;
+              }
+            }
+
+            if (isCover) {
+              let sw = mediaVideo.videoWidth;
+              let sh = mediaVideo.videoHeight;
+              if (vRatio > tRatio) {
+                sw = mediaVideo.videoHeight * tRatio;
+              } else {
+                sh = mediaVideo.videoWidth / tRatio;
+              }
+              sw = sw / zoom;
+              sh = sh / zoom;
               let sx = (mediaVideo.videoWidth - sw) * (objectPosX / 100);
               let sy = (mediaVideo.videoHeight - sh) * (objectPosY / 100);
               sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
               sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
               try {
-                ctx.drawImage(mediaVideo, sx, sy, sw, sh, dx, dy, dw, dh);
-              } catch {}
+                ctx.drawImage(mediaVideo, sx, sy, sw, sh, x, y, w, h);
+              } catch { }
             } else {
-              try {
-                ctx.drawImage(mediaVideo, dx, dy, dw, dh);
-              } catch {}
+              let dw = w, dh = h, dx = x, dy = y;
+              if (vRatio > tRatio) {
+                dh = w / vRatio;
+                dy = y + (h - dh) / 2;
+              } else {
+                dw = h * vRatio;
+                dx = x + (w - dw) / 2;
+              }
+              if (zoom > 1 || Math.abs(panX) > 0.5 || Math.abs(panY) > 0.5) {
+                let sw = mediaVideo.videoWidth / zoom;
+                let sh = mediaVideo.videoHeight / zoom;
+                let sx = (mediaVideo.videoWidth - sw) * (objectPosX / 100);
+                let sy = (mediaVideo.videoHeight - sh) * (objectPosY / 100);
+                sx = Math.max(0, Math.min(mediaVideo.videoWidth - sw, sx));
+                sy = Math.max(0, Math.min(mediaVideo.videoHeight - sh, sy));
+                const shiftDx = zoom <= 1 ? (-panX / 100) * w * 0.45 : 0;
+                const shiftDy = zoom <= 1 ? (-panY / 100) * h * 0.45 : 0;
+                try {
+                  ctx.drawImage(mediaVideo, sx, sy, sw, sh, dx + shiftDx, dy + shiftDy, dw, dh);
+                } catch { }
+              } else {
+                try {
+                  ctx.drawImage(mediaVideo, dx, dy, dw, dh);
+                } catch { }
+              }
             }
-          }
-          ctx.restore();
-
-          // Dynamic Corner Vignette (defeating frame-border edge hashing)
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vignetteOverlay ?? true)) {
-            ctx.save();
-            const cx = x + w / 2;
-            const cy = y + h / 2;
-            const rMin = Math.min(w, h) * 0.38;
-            const rMax = Math.max(w, h) * 0.72;
-            const vigGrad = ctx.createRadialGradient(cx, cy, rMin, cx, cy, rMax);
-            vigGrad.addColorStop(0, "rgba(0, 0, 0, 0)");
-            vigGrad.addColorStop(0.65, "rgba(0, 0, 0, 0.08)");
-            vigGrad.addColorStop(1, "rgba(0, 0, 0, 0.42)");
-            ctx.fillStyle = vigGrad;
-            ctx.fillRect(x, y, w, h);
             ctx.restore();
-          }
 
-          // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
-            this.drawFilmGrainOverlay(ctx, x, y, w, h);
-          }
-
-          // Vintage Old-Movie Scratches & Traveling Lines Overlay (Breaks video visual hash & edge maps)
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
-            this.drawVintageFilmLinesOverlay(
-              ctx,
-              x,
-              y,
-              w,
-              h,
-              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
-            );
-          }
-
-          // Fair-Use Commentary Badge on Media
-          if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
-            const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
-            ctx.save();
-            ctx.font = "bold 11px Inter, system-ui, sans-serif";
-            const bw = ctx.measureText(badgeTxt).width + 24;
-            ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
-            this.drawRoundedRect(ctx, x + 12, y + h - 34, bw, 22, 6);
-            ctx.fill();
-            ctx.fillStyle = "#38bdf8";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.fillText(badgeTxt, x + 24, y + h - 23);
-            ctx.restore();
-          }
-        } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
-          const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
-          const tRatio = w / h;
-          let objectPosX = Math.max(0, Math.min(100, 50 + panX));
-          let objectPosY = Math.max(0, Math.min(100, 50 + panY));
-          if (mediaImg.style.objectPosition) {
-            const parts = mediaImg.style.objectPosition.split(" ");
-            if (parts.length >= 2) {
-              const px = parseFloat(parts[0]);
-              const py = parseFloat(parts[1]);
-              if (!isNaN(px)) objectPosX = px;
-              if (!isNaN(py)) objectPosY = py;
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+              this.drawFilmGrainOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.grainIntensity || "random"
+              );
             }
-          }
 
-          if (isCover) {
-            let sw = mediaImg.naturalWidth;
-            let sh = mediaImg.naturalHeight;
-            if (iRatio > tRatio) {
-              sw = mediaImg.naturalHeight * tRatio;
-            } else {
-              sh = mediaImg.naturalWidth / tRatio;
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+              this.drawVintageFilmLinesOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+              );
             }
-            sw = sw / effectiveZoom;
-            sh = sh / effectiveZoom;
-            let sx = (mediaImg.naturalWidth - sw) * (objectPosX / 100);
-            let sy = (mediaImg.naturalHeight - sh) * (objectPosY / 100);
-            sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
-            sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
-            try {
-              ctx.drawImage(mediaImg, sx, sy, sw, sh, x, y, w, h);
-            } catch {}
-          } else {
-            let dw = w, dh = h, dx = x, dy = y;
-            if (iRatio > tRatio) {
-              dh = w / iRatio;
-              dy = y + (h - dh) / 2;
-            } else {
-              dw = h * iRatio;
-              dx = x + (w - dw) / 2;
+
+            if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
+              const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
+              ctx.save();
+              ctx.font = "bold 11px Inter, system-ui, sans-serif";
+              const bw = ctx.measureText(badgeTxt).width + 24;
+              ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+              this.drawRoundedRect(ctx, x + 12, y + h - 34, bw, 22, 6);
+              ctx.fill();
+              ctx.fillStyle = "#38bdf8";
+              ctx.textAlign = "left";
+              ctx.textBaseline = "middle";
+              ctx.fillText(badgeTxt, x + 24, y + h - 23);
+              ctx.restore();
             }
-            if (effectiveZoom > 1) {
-              let sw = mediaImg.naturalWidth / effectiveZoom;
-              let sh = mediaImg.naturalHeight / effectiveZoom;
+          } else if (mediaImg && mediaImg.complete && mediaImg.naturalWidth > 0) {
+            const iRatio = mediaImg.naturalWidth / mediaImg.naturalHeight;
+            const tRatio = w / h;
+            let objectPosX = Math.max(0, Math.min(100, 50 + panX));
+            let objectPosY = Math.max(0, Math.min(100, 50 + panY));
+            if (mediaImg.style.objectPosition) {
+              const parts = mediaImg.style.objectPosition.split(" ");
+              if (parts.length >= 2) {
+                const px = parseFloat(parts[0]);
+                const py = parseFloat(parts[1]);
+                if (!isNaN(px)) objectPosX = px;
+                if (!isNaN(py)) objectPosY = py;
+              }
+            }
+
+            if (isCover) {
+              let sw = mediaImg.naturalWidth;
+              let sh = mediaImg.naturalHeight;
+              if (iRatio > tRatio) {
+                sw = mediaImg.naturalHeight * tRatio;
+              } else {
+                sh = mediaImg.naturalWidth / tRatio;
+              }
+              sw = sw / zoom;
+              sh = sh / zoom;
               let sx = (mediaImg.naturalWidth - sw) * (objectPosX / 100);
               let sy = (mediaImg.naturalHeight - sh) * (objectPosY / 100);
               sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
               sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
               try {
-                ctx.drawImage(mediaImg, sx, sy, sw, sh, dx, dy, dw, dh);
-              } catch {}
+                ctx.drawImage(mediaImg, sx, sy, sw, sh, x, y, w, h);
+              } catch { }
             } else {
-              try {
-                ctx.drawImage(mediaImg, dx, dy, dw, dh);
-              } catch {}
+              let dw = w, dh = h, dx = x, dy = y;
+              if (iRatio > tRatio) {
+                dh = w / iRatio;
+                dy = y + (h - dh) / 2;
+              } else {
+                dw = h * iRatio;
+                dx = x + (w - dw) / 2;
+              }
+              if (zoom > 1) {
+                let sw = mediaImg.naturalWidth / zoom;
+                let sh = mediaImg.naturalHeight / zoom;
+                let sx = (mediaImg.naturalWidth - sw) * (objectPosX / 100);
+                let sy = (mediaImg.naturalHeight - sh) * (objectPosY / 100);
+                sx = Math.max(0, Math.min(mediaImg.naturalWidth - sw, sx));
+                sy = Math.max(0, Math.min(mediaImg.naturalHeight - sh, sy));
+                try {
+                  ctx.drawImage(mediaImg, sx, sy, sw, sh, dx, dy, dw, dh);
+                } catch { }
+              } else {
+                try {
+                  ctx.drawImage(mediaImg, dx, dy, dw, dh);
+                } catch { }
+              }
+            }
+
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+              this.drawFilmGrainOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.grainIntensity || "random"
+              );
+            }
+
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+              this.drawVintageFilmLinesOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+              );
+            }
+          } else if (currentStore.activeMedia) {
+            const activeM = currentStore.activeMedia;
+            const posterCandidate =
+              activeM.thumbnail ||
+              (activeM.youtubeId ? `https://i.ytimg.com/vi/${activeM.youtubeId}/hqdefault.jpg` : null);
+
+            if (posterCandidate) {
+              if (this.cachedMediaPosterUrl !== posterCandidate) {
+                this.cachedMediaPosterUrl = posterCandidate;
+                this.mediaPosterImage = new Image();
+                this.mediaPosterImage.crossOrigin = "anonymous";
+                this.mediaPosterImage.src = posterCandidate;
+              }
+              if (
+                this.mediaPosterImage &&
+                this.mediaPosterImage.complete &&
+                this.mediaPosterImage.naturalWidth > 0
+              ) {
+                const pImg = this.mediaPosterImage;
+                const iRatio = pImg.naturalWidth / pImg.naturalHeight;
+                const tRatio = w / h;
+                const objectPosX = Math.max(0, Math.min(100, 50 + panX));
+                const objectPosY = Math.max(0, Math.min(100, 50 + panY));
+
+                ctx.save();
+                if (currentStore.fairUseConfig?.enabled) {
+                  if (currentStore.fairUseConfig?.visualTransformFilter) {
+                    ctx.filter = "contrast(1.05) saturate(1.06)";
+                  }
+                  if (currentStore.fairUseConfig.mirrorMediaVideo) {
+                    const cx = x + w / 2;
+                    ctx.translate(cx, 0);
+                    ctx.scale(-1, 1);
+                    ctx.translate(-cx, 0);
+                  }
+                }
+
+                if (isCover) {
+                  let sw = pImg.naturalWidth;
+                  let sh = pImg.naturalHeight;
+                  if (iRatio > tRatio) {
+                    sw = pImg.naturalHeight * tRatio;
+                  } else {
+                    sh = pImg.naturalWidth / tRatio;
+                  }
+                  sw = sw / zoom;
+                  sh = sh / zoom;
+                  const sx = Math.max(0, Math.min(pImg.naturalWidth - sw, (pImg.naturalWidth - sw) * (objectPosX / 100)));
+                  const sy = Math.max(0, Math.min(pImg.naturalHeight - sh, (pImg.naturalHeight - sh) * (objectPosY / 100)));
+                  try {
+                    ctx.drawImage(pImg, sx, sy, sw, sh, x, y, w, h);
+                  } catch { }
+                } else {
+                  let dw = w, dh = h, dx = x, dy = y;
+                  if (iRatio > tRatio) {
+                    dh = w / iRatio;
+                    dy = y + (h - dh) / 2;
+                  } else {
+                    dw = h * iRatio;
+                    dx = x + (w - dw) / 2;
+                  }
+                  try {
+                    ctx.drawImage(pImg, 0, 0, pImg.naturalWidth, pImg.naturalHeight, dx, dy, dw, dh);
+                  } catch { }
+                }
+                ctx.restore();
+
+                if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+                  this.drawFilmGrainOverlay(
+                    ctx,
+                    x,
+                    y,
+                    w,
+                    h,
+                    currentStore.fairUseConfig?.grainIntensity || "random"
+                  );
+                }
+                if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+                  this.drawVintageFilmLinesOverlay(
+                    ctx,
+                    x,
+                    y,
+                    w,
+                    h,
+                    currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+                  );
+                }
+              }
+            } else if (activeM.type === "website") {
+              ctx.save();
+              const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+              grad.addColorStop(0, "#0b1120");
+              grad.addColorStop(1, "#1e1b4b");
+              ctx.fillStyle = grad;
+              ctx.fillRect(x, y, w, h);
+              ctx.fillStyle = "#38bdf8";
+              ctx.font = "bold 18px Inter, system-ui, sans-serif";
+              ctx.textAlign = "center";
+              ctx.fillText(activeM.name || "LIVE WEBSITE", x + w / 2, y + h / 2 - 10);
+              ctx.fillStyle = "#94a3b8";
+              ctx.font = "13px monospace";
+              ctx.fillText(activeM.websiteConfig?.url || activeM.url || "", x + w / 2, y + h / 2 + 18);
+              ctx.restore();
             }
           }
 
-          // Dynamic Film Grain / Micro-Noise Adjustment Layer (Anti-Fingerprint Hash Mutator)
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
-            this.drawFilmGrainOverlay(ctx, x, y, w, h);
+          const webPtr = typeof window !== "undefined" ? (window as any).__livestudioWebPointer : null;
+          if (webPtr && webPtr.visible) {
+            const px = x + (Math.max(0, Math.min(100, webPtr.xPct || 50)) / 100) * w;
+            const py = y + (Math.max(0, Math.min(100, webPtr.yPct || 50)) / 100) * h;
+            const pColor = webPtr.color || "#ef4444";
+            ctx.save();
+            if (webPtr.style === "spotlight") {
+              ctx.strokeStyle = pColor;
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.arc(px, py, 48, 0, Math.PI * 2);
+              ctx.stroke();
+            } else if (webPtr.style === "crosshair") {
+              ctx.strokeStyle = pColor;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(px, py, 20, 0, Math.PI * 2);
+              ctx.moveTo(px - 26, py);
+              ctx.lineTo(px + 26, py);
+              ctx.moveTo(px, py - 26);
+              ctx.lineTo(px, py + 26);
+              ctx.stroke();
+            } else {
+              const pulseR = webPtr.isClicking ? 24 : 14 + Math.sin(timestamp / 90) * 4;
+              ctx.fillStyle = `${pColor}55`;
+              ctx.beginPath();
+              ctx.arc(px, py, pulseR, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.fillStyle = pColor;
+              ctx.beginPath();
+              ctx.arc(px, py, 7, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = "#ffffff";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+            ctx.restore();
           }
 
-          // Vintage Old-Movie Scratches & Traveling Lines Overlay (Breaks video visual hash & edge maps)
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
-            this.drawVintageFilmLinesOverlay(
-              ctx,
-              x,
-              y,
-              w,
-              h,
-              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+          if (currentStore.isMediaTransitioning && !currentStore.isSceneTransitioning) {
+            ctx.save();
+            ctx.fillStyle = "rgba(7, 7, 13, 0.28)";
+            ctx.fillRect(x, y, w, h);
+            ctx.restore();
+          }
+        } else {
+          // Participant Tile
+          const video = el.querySelector("video") as HTMLVideoElement | null;
+          const canvas = el.querySelector("canvas") as HTMLCanvasElement | null;
+          const hasVideo =
+            tile.camOn &&
+            video &&
+            video.readyState >= 2 &&
+            video.videoWidth > 0 &&
+            !video.classList.contains("opacity-0");
+          const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
+
+          if (hasChroma && canvas) {
+            if (
+              store.chromaKeyConfig?.enabled &&
+              store.chromaKeyConfig?.backdropType === "image"
+            ) {
+              const cBgUrl =
+                store.chromaKeyConfig.backdropUrl ||
+                "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80";
+              if (this.cachedChromaBgUrl !== cBgUrl) {
+                this.cachedChromaBgUrl = cBgUrl;
+                this.chromaBgImage = new Image();
+                this.chromaBgImage.crossOrigin = "anonymous";
+                this.chromaBgImage.src = cBgUrl;
+              }
+              if (this.chromaBgImage && this.chromaBgImage.complete && this.chromaBgImage.naturalWidth > 0) {
+                try {
+                  ctx.drawImage(this.chromaBgImage, x, y, w, h);
+                } catch { }
+              }
+            }
+            try {
+              ctx.drawImage(canvas, x, y, w, h);
+            } catch { }
+          } else if (hasVideo && video) {
+            const vRatio = video.videoWidth / video.videoHeight;
+            const tRatio = w / h;
+            const isContain =
+              tile.fitMode === "contain" ||
+              tile.isScreen ||
+              (video.videoHeight > video.videoWidth * 1.05 && tile.fitMode !== "cover");
+
+            const pTransform =
+              (tile.participantId ? store.tileTransforms[tile.participantId] : null) ||
+              (tile.isLocal ? store.tileTransforms["local-host"] : null);
+            const zoom = Math.max(1, pTransform?.zoom || 1);
+            const panX = pTransform?.panX || 0;
+            const panY = pTransform?.panY || 0;
+            const flipH = pTransform?.flipH !== undefined ? pTransform.flipH : (tile.isLocal && !tile.isScreen);
+            const flipV = pTransform?.flipV || false;
+
+            if (isContain) {
+              let dw = w, dh = h, dx = x, dy = y;
+              if (vRatio > tRatio) {
+                dh = w / vRatio;
+                dy = y + (h - dh) / 2;
+              } else {
+                dw = h * vRatio;
+                dx = x + (w - dw) / 2;
+              }
+
+              let sw = video.videoWidth / zoom;
+              let sh = video.videoHeight / zoom;
+              let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
+              let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
+              sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
+              sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
+
+              try {
+                ctx.save();
+                if (flipH || flipV) {
+                  ctx.translate(dx + (flipH ? dw : 0), dy + (flipV ? dh : 0));
+                  ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+                  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+                } else {
+                  ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
+                }
+                ctx.restore();
+              } catch { }
+            } else {
+              let sw = video.videoWidth;
+              let sh = video.videoHeight;
+              if (vRatio > tRatio) {
+                sw = video.videoHeight * tRatio;
+              } else {
+                sh = video.videoWidth / tRatio;
+              }
+              sw = sw / zoom;
+              sh = sh / zoom;
+              let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
+              let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
+              sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
+              sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
+
+              try {
+                ctx.save();
+                if (flipH || flipV) {
+                  ctx.translate(x + (flipH ? w : 0), y + (flipV ? h : 0));
+                  ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+                  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
+                } else {
+                  ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+                }
+                ctx.restore();
+              } catch { }
+            }
+          } else {
+            const centerX = x + w / 2;
+            const centerY = y + h / 2 - 12;
+            const radius = Math.max(18, Math.min(36, Math.min(w, h) * 0.22));
+
+            const grad = ctx.createLinearGradient(
+              centerX - radius,
+              centerY - radius,
+              centerX + radius,
+              centerY + radius
             );
-          }
-        } else if (mediaCanvas && mediaCanvas.width > 0 && mediaCanvas.height > 0) {
-          try {
-            ctx.drawImage(mediaCanvas, x, y, w, h);
-          } catch {}
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
-            this.drawFilmGrainOverlay(ctx, x, y, w, h);
-          }
-          if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
-            this.drawVintageFilmLinesOverlay(
-              ctx,
-              x,
-              y,
-              w,
-              h,
-              currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
-            );
-          }
-        } else if (currentStore.activeMedia?.type === "website") {
-          // Dedicated High-Fidelity Website Renderer for Broadcast & Recording
-          const webItem = currentStore.activeMedia;
-          const displayUrl = webItem.url || "https://google.com";
-          let domainName = "Live Website";
-          try {
-            domainName = new URL(displayUrl).hostname;
-          } catch {
-            domainName = webItem.name || "Webpage";
+            grad.addColorStop(0, "#4f46e5");
+            grad.addColorStop(1, "#9333ea");
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = "#ffffff";
+            const fontSize = tile.initials.length > 1 ? Math.round(radius * 0.78) : Math.round(radius * 1.05);
+            ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(tile.initials, centerX, centerY + 1);
+
+            const pillY = centerY + radius + 14;
+            ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+            this.drawRoundedRect(ctx, centerX - 42, pillY - 9, 84, 18, 9);
+            ctx.fill();
+            ctx.fillStyle = "#94a3b8";
+            ctx.font = "500 10px Inter, system-ui, sans-serif";
+            ctx.fillText("Camera Off", centerX, pillY);
           }
 
-          ctx.save();
-          // Clean white page background
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(x, y, w, h);
+          const cleanName = (tile.name || "Guest").replace(/\s*\(You\)\s*/gi, "").trim();
+          const displayName = cleanName || "Guest";
+          ctx.font = "bold 11px Inter, system-ui, sans-serif";
+          const pillW = Math.min(180, displayName.length * 7 + 36);
+          const pillH = 24;
+          const pillX = x + 12;
+          const pillY = y + h - pillH - 12;
 
-          // Top Browser Navigation Bar Header
-          const barH = Math.min(38, Math.max(26, h * 0.065));
-          ctx.fillStyle = "#0c0e1a";
-          ctx.fillRect(x, y, w, barH);
-
-          // Window action dots
-          ctx.fillStyle = "#ef4444";
-          ctx.beginPath();
-          ctx.arc(x + 14, y + barH / 2, 4, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+          this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
           ctx.fill();
-
-          ctx.fillStyle = "#f59e0b";
-          ctx.beginPath();
-          ctx.arc(x + 26, y + barH / 2, 4, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = "#10b981";
-          ctx.beginPath();
-          ctx.arc(x + 38, y + barH / 2, 4, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Address pill inside top bar
-          const pillW = Math.min(w - 140, 480);
-          const pillX = x + (w - pillW) / 2;
-          ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-          this.drawRoundedRect(ctx, pillX, y + 4, pillW, barH - 8, 6);
-          ctx.fill();
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+          ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}50`;
+          ctx.lineWidth = 1;
           ctx.stroke();
 
-          // Green secure lock + URL text
-          ctx.fillStyle = "#10b981";
-          ctx.font = "bold 11px Inter, sans-serif";
+          ctx.fillStyle = store.activeThemeColor || "#6366f1";
+          ctx.beginPath();
+          ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#ffffff";
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
-          ctx.fillText("🔒", pillX + 8, y + barH / 2);
+          ctx.fillText(displayName.slice(0, 20), pillX + 16, pillY + pillH / 2);
 
-          ctx.fillStyle = "#e2e8f0";
-          ctx.font = "500 11px Inter, system-ui, sans-serif";
-          ctx.fillText(displayUrl.slice(0, 52), pillX + 24, y + barH / 2);
-
-          // Central Webpage Hero Content (e.g. Google / Webpage Card)
-          const bodyY = y + barH;
-          const bodyH = h - barH;
-          const midX = x + w / 2;
-          const midY = bodyY + bodyH * 0.42;
-
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-
-          // Title / Brand
-          if (domainName.includes("google")) {
-            const gParts = [
-              { ch: "G", col: "#4285f4" },
-              { ch: "o", col: "#ea4335" },
-              { ch: "o", col: "#fbbc05" },
-              { ch: "g", col: "#4285f4" },
-              { ch: "l", col: "#34a853" },
-              { ch: "e", col: "#ea4335" },
-            ];
-            let startTextX = midX - 60;
-            ctx.font = "bold 36px Inter, system-ui, sans-serif";
-            for (const p of gParts) {
-              ctx.fillStyle = p.col;
-              ctx.fillText(p.ch, startTextX, midY - 30);
-              startTextX += ctx.measureText(p.ch).width + 1.5;
-            }
-          } else {
-            ctx.fillStyle = "#0f172a";
-            ctx.font = "bold 32px Inter, system-ui, sans-serif";
-            ctx.fillText(domainName, midX, midY - 30);
-          }
-
-          // Search Bar / URL Card simulation
-          const cardW = Math.min(w * 0.72, 480);
-          const cardH = 42;
-          ctx.fillStyle = "#f8fafc";
-          this.drawRoundedRect(ctx, midX - cardW / 2, midY + 12, cardW, cardH, 21);
-          ctx.fill();
-          ctx.strokeStyle = "#cbd5e1";
-          ctx.lineWidth = 1.2;
-          ctx.stroke();
-
-          ctx.fillStyle = "#64748b";
-          ctx.font = "13px Inter, system-ui, sans-serif";
-          ctx.fillText(`Search or interact on ${domainName} live...`, midX, midY + 33);
-
-          // Live Broadcast Badge
-          ctx.fillStyle = "rgba(14, 165, 233, 0.12)";
-          const badgeW = 240;
-          this.drawRoundedRect(ctx, midX - badgeW / 2, midY + 80, badgeW, 24, 12);
-          ctx.fill();
-          ctx.fillStyle = "#0284c7";
-          ctx.font = "bold 10.5px Inter, sans-serif";
-          ctx.fillText("🌐 LIVE WEBPAGE • BROADCAST ACTIVE", midX, midY + 92);
-
-          ctx.restore();
-        } else if (currentStore.activeMedia) {
-          // Fallback: If YouTube is buffering or DRM-restricted video is using <iframe>,
-          // render high-resolution poster (maxresdefault.jpg / hqdefault.jpg) with exact isCover/contain crop math,
-          // zoom breathing, film grain, and vintage lines so Record to PC never records an empty black box!
-          const activeItem = currentStore.activeMedia;
-          const posterUrl =
-            activeItem.thumbnail ||
-            (activeItem.youtubeId ? `https://i.ytimg.com/vi/${activeItem.youtubeId}/maxresdefault.jpg` : null) ||
-            (activeItem.type === "youtube" && activeItem.url ? `https://i.ytimg.com/vi/${extractYouTubeVideoId(activeItem.url)}/hqdefault.jpg` : null);
-
-          if (posterUrl) {
-            let pImg = this.youtubePosterCache.get(posterUrl);
-            if (!pImg) {
-              pImg = new Image();
-              pImg.crossOrigin = "anonymous";
-              pImg.src = posterUrl;
-              this.youtubePosterCache.set(posterUrl, pImg);
-            }
-            if (pImg.complete && pImg.naturalWidth > 0) {
-              const iRatio = pImg.naturalWidth / pImg.naturalHeight;
-              const tRatio = w / h;
-              let objectPosX = Math.max(0, Math.min(100, 50 + panX));
-              let objectPosY = Math.max(0, Math.min(100, 50 + panY));
-
-              if (isCover) {
-                let sw = pImg.naturalWidth;
-                let sh = pImg.naturalHeight;
-                if (iRatio > tRatio) {
-                  sw = pImg.naturalHeight * tRatio;
-                } else {
-                  sh = pImg.naturalWidth / tRatio;
-                }
-                sw = sw / effectiveZoom;
-                sh = sh / effectiveZoom;
-                let sx = (pImg.naturalWidth - sw) * (objectPosX / 100);
-                let sy = (pImg.naturalHeight - sh) * (objectPosY / 100);
-                sx = Math.max(0, Math.min(pImg.naturalWidth - sw, sx));
-                sy = Math.max(0, Math.min(pImg.naturalHeight - sh, sy));
-                try {
-                  ctx.drawImage(pImg, sx, sy, sw, sh, x, y, w, h);
-                } catch {}
-              } else {
-                let dw = w, dh = h, dx = x, dy = y;
-                if (iRatio > tRatio) {
-                  dh = w / iRatio;
-                  dy = y + (h - dh) / 2;
-                } else {
-                  dw = h * iRatio;
-                  dx = x + (w - dw) / 2;
-                }
-                if (effectiveZoom > 1) {
-                  let sw = pImg.naturalWidth / effectiveZoom;
-                  let sh = pImg.naturalHeight / effectiveZoom;
-                  let sx = (pImg.naturalWidth - sw) * (objectPosX / 100);
-                  let sy = (pImg.naturalHeight - sh) * (objectPosY / 100);
-                  sx = Math.max(0, Math.min(pImg.naturalWidth - sw, sx));
-                  sy = Math.max(0, Math.min(pImg.naturalHeight - sh, sy));
-                  try {
-                    ctx.drawImage(pImg, sx, sy, sw, sh, dx, dy, dw, dh);
-                  } catch {}
-                } else {
-                  try {
-                    ctx.drawImage(pImg, dx, dy, dw, dh);
-                  } catch {}
-                }
-              }
-
-              // Dynamic Film Grain / Micro-Noise Adjustment Layer
-              if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
-                this.drawFilmGrainOverlay(ctx, x, y, w, h);
-              }
-
-              // Vintage Old-Movie Scratches & Traveling Lines Overlay
-              if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
-                this.drawVintageFilmLinesOverlay(
-                  ctx,
-                  x,
-                  y,
-                  w,
-                  h,
-                  currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
-                );
-              }
-            }
-          }
-        }
-
-        // Draw Fair Use Canvas Overlay directly from DOM if present
-        if (typeof document !== "undefined" && currentStore.fairUseConfig?.enabled) {
-          const domFairUseCanvas = document.getElementById("livestudio-fairuse-overlay-canvas") as HTMLCanvasElement | null;
-          if (domFairUseCanvas && domFairUseCanvas.width > 0 && domFairUseCanvas.height > 0) {
-            try {
-              ctx.drawImage(domFairUseCanvas, x, y, w, h);
-            } catch {}
-          }
-        }
-
-        // Draw Live Broadcast Web Pointer if active over website scene
-        if (typeof window !== "undefined" && (window as any).__livestudioWebPointer && (window as any).__livestudioWebPointer.visible) {
-          const ptr = (window as any).__livestudioWebPointer;
-          const ptrX = x + (w * ptr.xPct) / 100;
-          const ptrY = y + (h * ptr.yPct) / 100;
-          this.drawBroadcastPointer(
-            ctx,
-            ptrX,
-            ptrY,
-            ptr.style || "laser",
-            ptr.color || "#ef4444",
-            Boolean(ptr.isClicking),
-            timestamp
-          );
-        }
-
-        // Clean broadcast video output (StreamYard parity: raw file names like 'Intro Video.mp4' are never burned onto the live stream or recording)
-      } else {
-        // ── Participant Tile ──
-        const video = el.querySelector("video") as HTMLVideoElement | null;
-        const canvas = el.querySelector("canvas") as HTMLCanvasElement | null;
-        const hasVideo =
-          tile.camOn &&
-          video &&
-          video.readyState >= 2 &&
-          video.videoWidth > 0 &&
-          !video.classList.contains("opacity-0");
-        const hasChroma = canvas && canvas.width > 0 && canvas.height > 0;
-
-        if (hasChroma && canvas) {
-          try {
-            ctx.drawImage(canvas, x, y, w, h);
-          } catch {}
-        } else if (hasVideo && video) {
-          const vRatio = video.videoWidth / video.videoHeight;
-          const tRatio = w / h;
-          const isContain =
-            tile.fitMode === "contain" ||
-            tile.isScreen ||
-            (video.videoHeight > video.videoWidth * 1.05 && tile.fitMode !== "cover");
-
-          const pTransform =
-            (tile.participantId ? store.tileTransforms[tile.participantId] : null) ||
-            (tile.isLocal ? store.tileTransforms["local-host"] : null);
-          const zoom = Math.max(1, pTransform?.zoom || 1);
-          const panX = pTransform?.panX || 0;
-          const panY = pTransform?.panY || 0;
-          const flipH = pTransform?.flipH !== undefined ? pTransform.flipH : (tile.isLocal && !tile.isScreen);
-          const flipV = pTransform?.flipV || false;
-
-          if (isContain) {
-            // Auto-adjust Fit / Pillarbox (StreamYard standard for vertical mobile phones & screen shares):
-            // Preserves 100% of the video without chopping off heads, chins, or content
-            let dw = w, dh = h, dx = x, dy = y;
-            if (vRatio > tRatio) {
-              dh = w / vRatio;
-              dy = y + (h - dh) / 2;
-            } else {
-              dw = h * vRatio;
-              dx = x + (w - dw) / 2;
-            }
-
-            let sw = video.videoWidth / zoom;
-            let sh = video.videoHeight / zoom;
-            let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
-            let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
-            sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
-            sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
-
-            try {
-              ctx.save();
-              if (flipH || flipV) {
-                ctx.translate(dx + (flipH ? dw : 0), dy + (flipV ? dh : 0));
-                ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
-              } else {
-                ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
-              }
-              ctx.restore();
-            } catch {}
-          } else {
-            // Fill / Cover mode: crop center to fill slot with zoom and pan
-            let sw = video.videoWidth;
-            let sh = video.videoHeight;
-            if (vRatio > tRatio) {
-              sw = video.videoHeight * tRatio;
-            } else {
-              sh = video.videoWidth / tRatio;
-            }
-            sw = sw / zoom;
-            sh = sh / zoom;
-            let sx = (video.videoWidth - sw) * (Math.max(0, Math.min(100, 50 + panX)) / 100);
-            let sy = (video.videoHeight - sh) * (Math.max(0, Math.min(100, 50 + panY)) / 100);
-            sx = Math.max(0, Math.min(video.videoWidth - sw, sx));
-            sy = Math.max(0, Math.min(video.videoHeight - sh, sy));
-
-            try {
-              ctx.save();
-              if (flipH || flipV) {
-                ctx.translate(x + (flipH ? w : 0), y + (flipV ? h : 0));
-                ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
-              } else {
-                ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
-              }
-              ctx.restore();
-            } catch {}
-          }
-        } else {
-          // Camera is OFF: Avatar Circle + Initials + "Camera Off"
-          const centerX = x + w / 2;
-          const centerY = y + h / 2 - 12;
-          const radius = Math.max(18, Math.min(36, Math.min(w, h) * 0.22));
-
-          const grad = ctx.createLinearGradient(
-            centerX - radius,
-            centerY - radius,
-            centerX + radius,
-            centerY + radius
-          );
-          grad.addColorStop(0, "#4f46e5");
-          grad.addColorStop(1, "#9333ea");
+          const micDotX = pillX + pillW - 9;
           ctx.beginPath();
-          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-          ctx.fillStyle = grad;
+          ctx.arc(micDotX, pillY + pillH / 2, 3, 0, Math.PI * 2);
+          ctx.fillStyle = tile.micOn ? "#10b981" : "#f43f5e";
           ctx.fill();
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-
-          ctx.fillStyle = "#ffffff";
-          const fontSize = tile.initials.length > 1 ? Math.round(radius * 0.78) : Math.round(radius * 1.05);
-          ctx.font = `bold ${fontSize}px Inter, system-ui, sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(tile.initials, centerX, centerY + 1);
-
-          const pillY = centerY + radius + 14;
-          ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-          this.drawRoundedRect(ctx, centerX - 42, pillY - 9, 84, 18, 9);
-          ctx.fill();
-          ctx.fillStyle = "#94a3b8";
-          ctx.font = "500 10px Inter, system-ui, sans-serif";
-          ctx.fillText("Camera Off", centerX, pillY);
-        }
-
-        // Participant Name Pill (Clean name for broadcast stream, no '(You)')
-        const cleanName = (tile.name || "Guest").replace(/\s*\(You\)\s*/gi, "").trim();
-        const displayName = cleanName || "Guest";
-        ctx.font = "bold 11px Inter, system-ui, sans-serif";
-        const pillW = Math.min(180, displayName.length * 7 + 36);
-        const pillH = 24;
-        const pillX = x + 12;
-        const pillY = y + h - pillH - 12;
-
-        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-        this.drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
-        ctx.fill();
-        ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}50`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Theme dot
-        ctx.fillStyle = store.activeThemeColor || "#6366f1";
-        ctx.beginPath();
-        ctx.arc(pillX + 9, pillY + pillH / 2, 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Name text
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText(displayName.slice(0, 20), pillX + 16, pillY + pillH / 2);
-
-        // Mic dot
-        const micDotX = pillX + pillW - 9;
-        ctx.beginPath();
-        ctx.arc(micDotX, pillY + pillH / 2, 3, 0, Math.PI * 2);
-        ctx.fillStyle = tile.micOn ? "#10b981" : "#f43f5e";
-        ctx.fill();
-      }
-
-      ctx.restore();
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 2.5. Interactive Stage Overlay (Circle Avatar, Sponsor Graphics, Floating Video)
-    // ─────────────────────────────────────────────────────────────
-    if (store.activeStageOverlay && store.activeStageOverlay.isShowing && store.activeStageOverlay.url) {
-      const overlay = store.activeStageOverlay;
-      const overlayEl = container.querySelector("[data-stage-overlay]") as HTMLElement | null;
-
-      let ox = 0, oy = 0, ow = 0, oh = 0;
-      let hasCoords = false;
-
-      if (overlayEl) {
-        const containerRect = container.getBoundingClientRect();
-        const oRect = overlayEl.getBoundingClientRect();
-        if (containerRect.width > 0 && containerRect.height > 0 && oRect.width > 0 && oRect.height > 0) {
-          const scaleX = W / containerRect.width;
-          const scaleY = H / containerRect.height;
-          ox = (oRect.left - containerRect.left) * scaleX;
-          oy = (oRect.top - containerRect.top) * scaleY;
-          ow = oRect.width * scaleX;
-          oh = oRect.height * scaleY;
-          hasCoords = true;
-        }
-      }
-
-      if (!hasCoords) {
-        const scalePct = (overlay.scale || 35) / 100;
-        ow = W * scalePct;
-        oh = overlay.cropMode === "circle" || overlay.cropMode === "square" ? ow : ow * 0.5625;
-        if (overlay.position === "custom" && overlay.customCoords) {
-          ox = (overlay.customCoords.x / 100) * W;
-          oy = (overlay.customCoords.y / 100) * H;
-        } else if (overlay.position === "top-left") {
-          ox = W * 0.04;
-          oy = H * 0.04;
-        } else if (overlay.position === "top-right") {
-          ox = W * 0.96 - ow;
-          oy = H * 0.04;
-        } else if (overlay.position === "bottom-left") {
-          ox = W * 0.04;
-          oy = H * 0.93 - oh;
-        } else if (overlay.position === "bottom-right") {
-          ox = W * 0.96 - ow;
-          oy = H * 0.93 - oh;
-        } else {
-          ox = (W - ow) / 2;
-          oy = (H - oh) / 2;
-        }
-      }
-
-      if (ow > 0 && oh > 0) {
-        ctx.save();
-        if (overlay.opacity !== undefined) {
-          ctx.globalAlpha = Math.max(0.05, Math.min(1, overlay.opacity / 100));
-        }
-
-        if (overlay.cropMode === "circle") {
-          const radius = Math.min(ow, oh) / 2;
-          ctx.beginPath();
-          ctx.arc(ox + ow / 2, oy + oh / 2, radius, 0, Math.PI * 2);
-          ctx.clip();
-        } else if (overlay.borderRadius) {
-          this.drawRoundedRect(ctx, ox, oy, ow, oh, overlay.borderRadius);
-          ctx.clip();
-        }
-
-        if (overlay.showBackdrop) {
-          ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-          ctx.fillRect(ox, oy, ow, oh);
-        }
-
-        const vidEl = overlayEl?.querySelector("video") as HTMLVideoElement | null;
-        const imgEl = overlayEl?.querySelector("img") as HTMLImageElement | null;
-
-        if (vidEl && vidEl.readyState >= 2) {
-          try {
-            ctx.drawImage(vidEl, ox, oy, ow, oh);
-          } catch {}
-        } else if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
-          try {
-            ctx.drawImage(imgEl, ox, oy, ow, oh);
-          } catch {}
-        } else {
-          if (this.cachedOverlayUrl !== overlay.url) {
-            this.cachedOverlayUrl = overlay.url;
-            this.overlayImage = new Image();
-            this.overlayImage.crossOrigin = "anonymous";
-            this.overlayImage.src = overlay.url;
-          }
-          if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
-            try {
-              ctx.drawImage(this.overlayImage, ox, oy, ow, oh);
-            } catch {}
-          }
         }
 
         ctx.restore();
       }
-    }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2.8 Interactive Telestrator & Live On-Screen Drawing Layer
-    // ─────────────────────────────────────────────────────────────
-    if (store.isDrawingVisible !== false) {
-      const drawCanvas = container.querySelector("#livestudio-draw-canvas") as HTMLCanvasElement | null;
-      if (drawCanvas && drawCanvas.width > 0 && drawCanvas.height > 0) {
-        try {
-          ctx.drawImage(drawCanvas, 0, 0, W, H);
-        } catch (drawErr) {
-          // Canvas capture safety fallback
+      // 2.5. Interactive Stage Overlay
+      if (store.activeStageOverlay && store.activeStageOverlay.isShowing && store.activeStageOverlay.url) {
+        const overlay = store.activeStageOverlay;
+        const overlayEl = container.querySelector("[data-stage-overlay]") as HTMLElement | null;
+
+        let ox = 0, oy = 0, ow = 0, oh = 0;
+        let hasCoords = false;
+
+        if (overlayEl) {
+          const containerRect = container.getBoundingClientRect();
+          const oRect = overlayEl.getBoundingClientRect();
+          if (containerRect.width > 0 && containerRect.height > 0 && oRect.width > 0 && oRect.height > 0) {
+            const scaleX = W / containerRect.width;
+            const scaleY = H / containerRect.height;
+            ox = (oRect.left - containerRect.left) * scaleX;
+            oy = (oRect.top - containerRect.top) * scaleY;
+            ow = oRect.width * scaleX;
+            oh = oRect.height * scaleY;
+            hasCoords = true;
+          }
+        }
+
+        if (!hasCoords) {
+          const scalePct = (overlay.scale || 35) / 100;
+          ow = W * scalePct;
+          oh = overlay.cropMode === "circle" || overlay.cropMode === "square" ? ow : ow * 0.5625;
+          if (overlay.position === "custom" && overlay.customCoords) {
+            ox = (overlay.customCoords.x / 100) * W;
+            oy = (overlay.customCoords.y / 100) * H;
+          } else if (overlay.position === "top-left") {
+            ox = W * 0.04;
+            oy = H * 0.04;
+          } else if (overlay.position === "top-right") {
+            ox = W * 0.96 - ow;
+            oy = H * 0.04;
+          } else if (overlay.position === "bottom-left") {
+            ox = W * 0.04;
+            oy = H * 0.93 - oh;
+          } else if (overlay.position === "bottom-right") {
+            ox = W * 0.96 - ow;
+            oy = H * 0.93 - oh;
+          } else {
+            ox = (W - ow) / 2;
+            oy = (H - oh) / 2;
+          }
+        }
+
+        if (ow > 0 && oh > 0) {
+          ctx.save();
+          if (overlay.opacity !== undefined) {
+            ctx.globalAlpha = Math.max(0.05, Math.min(1, overlay.opacity / 100));
+          }
+
+          if (overlay.cropMode === "circle") {
+            const radius = Math.min(ow, oh) / 2;
+            ctx.beginPath();
+            ctx.arc(ox + ow / 2, oy + oh / 2, radius, 0, Math.PI * 2);
+            ctx.clip();
+          } else if (overlay.borderRadius) {
+            this.drawRoundedRect(ctx, ox, oy, ow, oh, overlay.borderRadius);
+            ctx.clip();
+          }
+
+          if (overlay.showBackdrop) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+            ctx.fillRect(ox, oy, ow, oh);
+          }
+
+          const vidEl = overlayEl?.querySelector("video") as HTMLVideoElement | null;
+          const imgEl = overlayEl?.querySelector("img") as HTMLImageElement | null;
+
+          if (vidEl && vidEl.readyState >= 2) {
+            try {
+              ctx.drawImage(vidEl, ox, oy, ow, oh);
+            } catch { }
+          } else if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+            try {
+              ctx.drawImage(imgEl, ox, oy, ow, oh);
+            } catch { }
+          } else {
+            if (this.cachedOverlayUrl !== overlay.url) {
+              this.cachedOverlayUrl = overlay.url;
+              this.overlayImage = new Image();
+              this.overlayImage.crossOrigin = "anonymous";
+              this.overlayImage.src = overlay.url;
+            }
+            if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
+              try {
+                ctx.drawImage(this.overlayImage, ox, oy, ow, oh);
+              } catch { }
+            }
+          }
+
+          ctx.restore();
         }
       }
-    }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2.5 Stage Full-Frame 16:9 PNG Frame Overlay (StreamYard Parity)
-    // ─────────────────────────────────────────────────────────────
-    if (store.activeOverlayUrl) {
-      if (this.cachedOverlayUrl !== store.activeOverlayUrl) {
-        this.cachedOverlayUrl = store.activeOverlayUrl;
-        this.overlayImage = new Image();
-        this.overlayImage.crossOrigin = "anonymous";
-        this.overlayImage.src = store.activeOverlayUrl;
-      }
-      if (this.overlayImage && this.overlayImage.complete && this.overlayImage.naturalWidth > 0) {
-        try {
-          ctx.drawImage(this.overlayImage, 0, 0, W, H);
-        } catch {}
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 3. Lower-Third Banner (4 Styles: Classic, Minimal, Block, Bubble)
-    // ─────────────────────────────────────────────────────────────
-    if (store.activeBanner && store.activeBanner.isShowing && store.activeBanner.title) {
-      const banner = store.activeBanner;
-      const bannerStyle = banner.style || "classic";
-      const themeColor = banner.themeColor || store.activeThemeColor || "#6366f1";
-      ctx.save();
-      const bX = 36;
-      const bY = H - 116;
-
-      if (bannerStyle === "block") {
-        // Block style: high-contrast solid theme badge + crisp rectangular block
-        const titleW = Math.max(260, banner.title.length * 14 + 40);
-        ctx.fillStyle = themeColor;
-        ctx.fillRect(bX, bY, titleW, 36);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "900 17px Inter, system-ui, sans-serif";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText(banner.title.toUpperCase(), bX + 16, bY + 18);
-
-        if (banner.subtitle) {
-          const subW = Math.max(280, banner.subtitle.length * 10 + 36);
-          ctx.fillStyle = "rgba(10, 10, 18, 0.94)";
-          ctx.fillRect(bX, bY + 36, subW, 30);
-          ctx.fillStyle = "#f1f5f9";
-          ctx.font = "bold 13px Inter, system-ui, sans-serif";
-          ctx.fillText(banner.subtitle, bX + 16, bY + 51);
+      // 2.8 Interactive Telestrator & Live On-Screen Drawing Layer
+      if (store.isDrawingVisible !== false) {
+        const drawCanvas = container.querySelector("#livestudio-draw-canvas") as HTMLCanvasElement | null;
+        if (drawCanvas && drawCanvas.width > 0 && drawCanvas.height > 0) {
+          try {
+            ctx.drawImage(drawCanvas, 0, 0, W, H);
+          } catch { }
         }
-      } else if (bannerStyle === "bubble") {
-        // Bubble style: pill capsule with soft gradient and rounded corners
-        const bW = Math.max(340, Math.max(banner.title.length * 13, (banner.subtitle?.length || 0) * 9) + 48);
-        const bH = banner.subtitle ? 64 : 44;
-        ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
-        this.drawRoundedRect(ctx, bX, bY, bW, bH, 24);
+      }
+
+      // 2.6. Full-Frame 16:9 Transparent PNG Frame Overlay
+      if (store.activeOverlayUrl) {
+        if (this.cachedFullFrameOverlayUrl !== store.activeOverlayUrl) {
+          this.cachedFullFrameOverlayUrl = store.activeOverlayUrl;
+          this.fullFrameOverlayImage = new Image();
+          this.fullFrameOverlayImage.crossOrigin = "anonymous";
+          this.fullFrameOverlayImage.src = store.activeOverlayUrl;
+        }
+        if (
+          this.fullFrameOverlayImage &&
+          this.fullFrameOverlayImage.complete &&
+          this.fullFrameOverlayImage.naturalWidth > 0
+        ) {
+          try {
+            ctx.drawImage(this.fullFrameOverlayImage, 0, 0, W, H);
+          } catch { }
+        }
+      }
+
+      // 3. Lower-Third Banner
+      if (store.activeBanner && store.activeBanner.isShowing && store.activeBanner.title) {
+        const banner = store.activeBanner;
+        const bStyle = banner.style || "default";
+        const accent = banner.themeColor || store.activeThemeColor || "#6366f1";
+        ctx.save();
+        const bX = 36;
+        const bY = store.showTicker ? H - 122 : H - 96;
+        ctx.font = "bold 17px Inter, system-ui, sans-serif";
+        const titleW = ctx.measureText(banner.title).width;
+        ctx.font = "600 12px Inter, system-ui, sans-serif";
+        const subW = banner.subtitle ? ctx.measureText(banner.subtitle).width : 0;
+        const bW = Math.max(280, Math.min(620, Math.max(titleW, subW) + 56));
+        const bH = banner.subtitle ? 64 : 46;
+
+        if (bStyle === "minimal") {
+          ctx.fillStyle = "rgba(8, 8, 14, 0.78)";
+          ctx.fillRect(bX, bY, bW, bH);
+          ctx.fillStyle = accent;
+          ctx.fillRect(bX, bY, 5, bH);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 17px Inter, system-ui, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(banner.title, bX + 18, bY + 26);
+          if (banner.subtitle) {
+            ctx.fillStyle = accent;
+            ctx.font = "bold 11px Inter, system-ui, sans-serif";
+            ctx.fillText(banner.subtitle.toUpperCase(), bX + 18, bY + 48);
+          }
+        } else if (bStyle === "block") {
+          const topH = 36;
+          ctx.fillStyle = accent;
+          this.drawRoundedRect(ctx, bX, bY, bW, topH, 6);
+          ctx.fill();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 16px Inter, system-ui, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillText(banner.title.toUpperCase(), bX + 18, bY + topH / 2 + 1);
+          if (banner.subtitle) {
+            ctx.fillStyle = "rgba(10, 12, 22, 0.95)";
+            this.drawRoundedRect(ctx, bX, bY + topH, bW, 28, 6);
+            ctx.fill();
+            ctx.fillStyle = "#e2e8f0";
+            ctx.font = "600 12px Inter, system-ui, sans-serif";
+            ctx.fillText(banner.subtitle, bX + 18, bY + topH + 15);
+          }
+        } else if (bStyle === "bubble") {
+          ctx.fillStyle = "rgba(9, 10, 20, 0.92)";
+          this.drawRoundedRect(ctx, bX, bY, bW, bH, bH / 2);
+          ctx.fill();
+          ctx.strokeStyle = accent;
+          ctx.lineWidth = 2.5;
+          this.drawRoundedRect(ctx, bX, bY, bW, bH, bH / 2);
+          ctx.stroke();
+
+          ctx.fillStyle = accent;
+          ctx.beginPath();
+          ctx.arc(bX + 24, bY + bH / 2, 6, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 16px Inter, system-ui, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(banner.title, bX + 40, bY + (banner.subtitle ? 27 : 29));
+          if (banner.subtitle) {
+            ctx.fillStyle = accent;
+            ctx.font = "600 12px Inter, system-ui, sans-serif";
+            ctx.fillText(banner.subtitle, bX + 40, bY + 47);
+          }
+        } else {
+          ctx.fillStyle = "rgba(10, 10, 18, 0.92)";
+          this.drawRoundedRect(ctx, bX, bY, bW, bH, 12);
+          ctx.fill();
+
+          ctx.fillStyle = accent;
+          this.drawRoundedRect(ctx, bX, bY, 8, bH, 4);
+          ctx.fill();
+
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 16px Inter, system-ui, sans-serif";
+          ctx.textAlign = "left";
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(banner.title, bX + 22, bY + (banner.subtitle ? 28 : 29));
+
+          if (banner.subtitle) {
+            ctx.fillStyle = accent;
+            ctx.font = "500 12px Inter, system-ui, sans-serif";
+            ctx.fillText(banner.subtitle, bX + 22, bY + 50);
+          }
+        }
+        ctx.restore();
+      }
+
+      // 3.5 Featured Live Comment Overlay
+      if (store.pinnedMessage && store.pinnedMessage.message) {
+        const pm = store.pinnedMessage;
+        ctx.save();
+        const cardW = Math.min(620, W * 0.72);
+        const cardH = 72;
+        const cX = (W - cardW) / 2;
+        const isTop = store.commentConfig?.position === "top";
+        const cY = isTop
+          ? 28
+          : store.showTicker
+            ? H - cardH - 62
+            : H - cardH - 24;
+
+        ctx.shadowColor = "rgba(0, 0, 0, 0.75)";
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 8;
+
+        ctx.fillStyle = "rgba(9, 9, 18, 0.95)";
+        this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
         ctx.fill();
-        ctx.strokeStyle = `${themeColor}99`;
-        ctx.lineWidth = 2;
-        this.drawRoundedRect(ctx, bX, bY, bW, bH, 24);
+
+        ctx.shadowColor = "transparent";
+        ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}80`;
+        ctx.lineWidth = 1.5;
+        this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
         ctx.stroke();
 
-        ctx.fillStyle = themeColor;
+        const avR = 19;
+        const avX = cX + 30;
+        const avY = cY + cardH / 2;
+        ctx.fillStyle = store.activeThemeColor || "#6366f1";
         ctx.beginPath();
-        ctx.arc(bX + 22, bY + (banner.subtitle ? 24 : bH / 2), 6, 0, Math.PI * 2);
+        ctx.arc(avX, avY, avR, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 16px Inter, system-ui, sans-serif";
-        ctx.textAlign = "left";
+        ctx.font = "bold 15px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(banner.title, bX + 38, bY + (banner.subtitle ? 24 : bH / 2));
+        ctx.fillText((pm.author[0] || "U").toUpperCase(), avX, avY);
 
-        if (banner.subtitle) {
-          ctx.fillStyle = "#cbd5e1";
-          ctx.font = "500 12px Inter, system-ui, sans-serif";
-          ctx.fillText(banner.subtitle, bX + 38, bY + 46);
-        }
-      } else if (bannerStyle === "minimal") {
-        // Minimal style: translucent strip with bottom gradient border
-        const bW = Math.max(320, Math.max(banner.title.length * 12, (banner.subtitle?.length || 0) * 8.5) + 36);
-        const bH = banner.subtitle ? 58 : 38;
-        ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
-        this.drawRoundedRect(ctx, bX, bY, bW, bH, 6);
-        ctx.fill();
-        ctx.fillStyle = themeColor;
-        ctx.fillRect(bX, bY + bH - 3, bW, 3);
+        const textStartX = avX + avR + 14;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
 
+        ctx.font = "bold 13px Inter, system-ui, sans-serif";
         ctx.fillStyle = "#ffffff";
-        ctx.font = "600 15px Inter, system-ui, sans-serif";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText(banner.title, bX + 16, bY + (banner.subtitle ? 20 : bH / 2));
+        ctx.fillText(pm.author, textStartX, cY + 27);
 
-        if (banner.subtitle) {
-          ctx.fillStyle = "#94a3b8";
-          ctx.font = "400 12px Inter, system-ui, sans-serif";
-          ctx.fillText(banner.subtitle, bX + 16, bY + 40);
-        }
-      } else {
-        // Classic style (default)
-        const bW = Math.max(340, Math.max(banner.title.length * 12, (banner.subtitle?.length || 0) * 8.5) + 40);
-        const bH = banner.subtitle ? 64 : 44;
+        const nameW = ctx.measureText(pm.author).width;
 
-        ctx.fillStyle = "rgba(10, 10, 18, 0.92)";
-        this.drawRoundedRect(ctx, bX, bY, bW, bH, 12);
+        const isYouTube = pm.platform?.toLowerCase() === "youtube";
+        const isTwitch = pm.platform?.toLowerCase() === "twitch";
+        const badgeX = textStartX + nameW + 10;
+        const badgeColor = isYouTube ? "#ff0000" : isTwitch ? "#9146ff" : (store.activeThemeColor || "#6366f1");
+
+        ctx.fillStyle = `${badgeColor}33`;
+        this.drawRoundedRect(ctx, badgeX, cY + 14, 62, 16, 4);
         ctx.fill();
 
-        ctx.fillStyle = themeColor;
-        this.drawRoundedRect(ctx, bX, bY, 8, bH, 4);
-        ctx.fill();
+        ctx.font = "bold 9px Inter, sans-serif";
+        ctx.fillStyle = isYouTube ? "#ff6666" : isTwitch ? "#c499ff" : "#a5b4fc";
+        ctx.fillText((pm.platform || "CHAT").toUpperCase(), badgeX + 6, cY + 26);
 
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 16px Inter, system-ui, sans-serif";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText(banner.title, bX + 22, bY + (banner.subtitle ? 24 : bH / 2));
-
-        if (banner.subtitle) {
-          ctx.fillStyle = themeColor;
-          ctx.font = "500 12px Inter, system-ui, sans-serif";
-          ctx.fillText(banner.subtitle, bX + 22, bY + 48);
-        }
-      }
-      ctx.restore();
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 3.5 Featured Live Comment Overlay (StreamYard Lower-Third Style)
-    // ─────────────────────────────────────────────────────────────
-    if (store.pinnedMessage && store.pinnedMessage.message) {
-      const pm = store.pinnedMessage;
-      ctx.save();
-      const cardW = Math.min(620, W * 0.72);
-      const cardH = 72;
-      const cX = (W - cardW) / 2;
-      const isTop = store.commentConfig?.position === "top";
-      const cY = isTop
-        ? 28
-        : store.showTicker
-        ? H - cardH - 62
-        : H - cardH - 24;
-
-      // Card drop shadow
-      ctx.shadowColor = "rgba(0, 0, 0, 0.75)";
-      ctx.shadowBlur = 24;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 8;
-
-      // Card background
-      ctx.fillStyle = "rgba(9, 9, 18, 0.95)";
-      this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
-      ctx.fill();
-
-      // Card border
-      ctx.shadowColor = "transparent";
-      ctx.strokeStyle = `${store.activeThemeColor || "#6366f1"}80`;
-      ctx.lineWidth = 1.5;
-      this.drawRoundedRect(ctx, cX, cY, cardW, cardH, 14);
-      ctx.stroke();
-
-      // Avatar Circle
-      const avR = 19;
-      const avX = cX + 30;
-      const avY = cY + cardH / 2;
-      ctx.fillStyle = store.activeThemeColor || "#6366f1";
-      ctx.beginPath();
-      ctx.arc(avX, avY, avR, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Avatar Initial
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 15px Inter, system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText((pm.author[0] || "U").toUpperCase(), avX, avY);
-
-      // Text Section
-      const textStartX = avX + avR + 14;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-
-      // Author Name
-      ctx.font = "bold 13px Inter, system-ui, sans-serif";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(pm.author, textStartX, cY + 27);
-
-      const nameW = ctx.measureText(pm.author).width;
-
-      // Platform badge
-      const isYouTube = pm.platform?.toLowerCase() === "youtube";
-      const isTwitch = pm.platform?.toLowerCase() === "twitch";
-      const badgeX = textStartX + nameW + 10;
-      const badgeColor = isYouTube ? "#ff0000" : isTwitch ? "#9146ff" : (store.activeThemeColor || "#6366f1");
-
-      ctx.fillStyle = `${badgeColor}33`;
-      this.drawRoundedRect(ctx, badgeX, cY + 14, 62, 16, 4);
-      ctx.fill();
-
-      ctx.font = "bold 9px Inter, sans-serif";
-      ctx.fillStyle = isYouTube ? "#ff6666" : isTwitch ? "#c499ff" : "#a5b4fc";
-      ctx.fillText((pm.platform || "CHAT").toUpperCase(), badgeX + 6, cY + 26);
-
-      // Message text
-      ctx.font = "500 13px Inter, system-ui, sans-serif";
-      ctx.fillStyle = "#f1f5f9";
-      const maxMsgW = cardW - (textStartX - cX) - 20;
-      let msgText = pm.message;
-      if (ctx.measureText(msgText).width > maxMsgW) {
-        while (msgText.length > 0 && ctx.measureText(msgText + "...").width > maxMsgW) {
-          msgText = msgText.slice(0, -1);
-        }
-        msgText += "...";
-      }
-      ctx.fillText(msgText, textStartX, cY + 50);
-
-      ctx.restore();
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 4. Watermark Logo (Text Badge, Image PNG, or Both)
-    // ─────────────────────────────────────────────────────────────
-    if (store.showLogo && (store.logoConfig?.text || store.logoConfig?.imageUrl || store.logoUrl)) {
-      const mode = store.logoConfig?.mode || "text";
-      const imageUrl = store.logoConfig?.imageUrl;
-      const logoText = store.logoConfig?.text || store.logoUrl || "LIVE";
-      const heightPx = Math.max(24, Math.min(88, store.logoConfig?.heightPx || 42));
-
-      ctx.save();
-      let lX = W - 220;
-      let lY = 32;
-      if (store.logoPosition === "top-left") {
-        lX = 32;
-        lY = 32;
-      } else if (store.logoPosition === "bottom-left") {
-        lX = 32;
-        lY = H - heightPx - 48;
-      } else if (store.logoPosition === "bottom-right") {
-        lX = W - 220;
-        lY = H - heightPx - 48;
-      }
-
-      if ((mode === "image" || mode === "both") && imageUrl) {
-        if (!this.cachedLogoImage || this.cachedLogoUrl !== imageUrl) {
-          this.cachedLogoUrl = imageUrl;
-          this.cachedLogoImage = new Image();
-          this.cachedLogoImage.crossOrigin = "anonymous";
-          this.cachedLogoImage.src = imageUrl;
-        }
-        if (this.cachedLogoImage && this.cachedLogoImage.complete && this.cachedLogoImage.naturalWidth > 0) {
-          const aspect = this.cachedLogoImage.naturalWidth / this.cachedLogoImage.naturalHeight;
-          const logoW = heightPx * aspect;
-          if (store.logoPosition === "top-right" || store.logoPosition === "bottom-right" || !store.logoPosition) {
-            lX = W - logoW - 32;
+        ctx.font = "500 13px Inter, system-ui, sans-serif";
+        ctx.fillStyle = "#f1f5f9";
+        const maxMsgW = cardW - (textStartX - cX) - 20;
+        let msgText = pm.message;
+        if (ctx.measureText(msgText).width > maxMsgW) {
+          while (msgText.length > 0 && ctx.measureText(msgText + "...").width > maxMsgW) {
+            msgText = msgText.slice(0, -1);
           }
-          if (mode === "both") {
-            // Draw image + text badge side by side
-            ctx.drawImage(this.cachedLogoImage, lX, lY, logoW, heightPx);
-            ctx.font = "bold 13px Inter, monospace, sans-serif";
-            const pillW = logoText.length * 8 + 24;
-            const textX = lX - pillW - 12;
-            if (!store.logoConfig?.isTransparentBg) {
-              ctx.fillStyle = store.logoConfig?.bgColor ? `${store.logoConfig.bgColor}cc` : "rgba(0, 0, 0, 0.8)";
-              this.drawRoundedRect(ctx, textX, lY + (heightPx - 30) / 2, pillW, 30, 8);
-              ctx.fill();
-            }
-            ctx.fillStyle = store.logoConfig?.textColor || "#ffffff";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.fillText(logoText.toUpperCase(), textX + 12, lY + heightPx / 2);
-          } else {
-            ctx.drawImage(this.cachedLogoImage, lX, lY, logoW, heightPx);
+          msgText += "...";
+        }
+        ctx.fillText(msgText, textStartX, cY + 50);
+
+        ctx.restore();
+      }
+
+      // 4. Watermark Logo
+      if (store.showLogo && (store.logoConfig?.imageUrl || store.logoConfig?.text || store.logoUrl)) {
+        const logoMode = store.logoConfig?.mode || "text";
+        const hasLogoImg = Boolean((logoMode === "image" || logoMode === "both") && store.logoConfig?.imageUrl);
+        if (hasLogoImg && store.logoConfig?.imageUrl) {
+          if (this.cachedLogoImgUrl !== store.logoConfig.imageUrl) {
+            this.cachedLogoImgUrl = store.logoConfig.imageUrl;
+            this.logoImageEl = new Image();
+            this.logoImageEl.crossOrigin = "anonymous";
+            this.logoImageEl.src = store.logoConfig.imageUrl;
           }
         }
-      } else {
-        // Text Badge Mode
+        const imgReady = Boolean(
+          hasLogoImg && this.logoImageEl && this.logoImageEl.complete && this.logoImageEl.naturalWidth > 0
+        );
+        const targetImgH = store.logoConfig?.scale || 40;
+        const targetImgW = imgReady && this.logoImageEl
+          ? Math.round((this.logoImageEl.naturalWidth / Math.max(1, this.logoImageEl.naturalHeight)) * targetImgH)
+          : 0;
+
+        const showTextPart = logoMode !== "image" || !imgReady;
+        const logoText = store.logoConfig?.text || store.logoUrl || "LIVE";
+        ctx.save();
         ctx.font = "bold 13px Inter, monospace, sans-serif";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        const pillW = logoText.length * 8 + 36;
-        const pillH = Math.max(30, Math.min(heightPx, 50));
-        if (store.logoPosition === "top-right" || store.logoPosition === "bottom-right" || !store.logoPosition) {
+        const textPartW = showTextPart ? ctx.measureText(logoText.toUpperCase()).width + 18 : 0;
+        const pillW = Math.max(36, (imgReady ? targetImgW + 16 : 24) + textPartW);
+        const pillH = Math.max(30, imgReady ? targetImgH + 12 : 30);
+
+        let lX = W - pillW - 32;
+        let lY = 28;
+        if (store.logoPosition === "top-left") {
+          lX = 32;
+          lY = 28;
+        } else if (store.logoPosition === "bottom-left") {
+          lX = 32;
+          lY = H - pillH - 48;
+        } else if (store.logoPosition === "bottom-right") {
           lX = W - pillW - 32;
+          lY = H - pillH - 48;
         }
+
         if (!store.logoConfig?.isTransparentBg) {
-          ctx.fillStyle = store.logoConfig?.bgColor ? `${store.logoConfig.bgColor}cc` : "rgba(0, 0, 0, 0.8)";
+          ctx.fillStyle = store.logoConfig?.bgColor
+            ? `${store.logoConfig.bgColor}cc`
+            : "rgba(0, 0, 0, 0.8)";
           this.drawRoundedRect(ctx, lX, lY, pillW, pillH, 8);
           ctx.fill();
         }
-        // Indicator dot
-        ctx.fillStyle = store.activeThemeColor || "#6366f1";
-        ctx.beginPath();
-        ctx.arc(lX + 14, lY + pillH / 2, 4, 0, Math.PI * 2);
-        ctx.fill();
-        // Text
-        ctx.fillStyle = store.logoConfig?.textColor || "#ffffff";
-        ctx.fillText(logoText.toUpperCase(), lX + 24, lY + pillH / 2);
+
+        let cursorX = lX + 10;
+        if (imgReady && this.logoImageEl) {
+          try {
+            ctx.drawImage(this.logoImageEl, cursorX, lY + (pillH - targetImgH) / 2, targetImgW, targetImgH);
+            cursorX += targetImgW + 8;
+          } catch { }
+        } else {
+          ctx.fillStyle = store.activeThemeColor || "#6366f1";
+          ctx.beginPath();
+          ctx.arc(lX + 14, lY + pillH / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+          cursorX = lX + 24;
+        }
+
+        if (showTextPart) {
+          ctx.fillStyle = store.logoConfig?.textColor || "#ffffff";
+          ctx.fillText(logoText.toUpperCase(), cursorX, lY + pillH / 2);
+        }
+        ctx.restore();
       }
-      ctx.restore();
-    }
 
-    // ─────────────────────────────────────────────────────────────
-    // 5. News Ticker Crawl
-    // ─────────────────────────────────────────────────────────────
-    if (store.showTicker && store.tickerText) {
-      const delta = (timestamp - this.lastTickerTime) / 1000;
-      this.lastTickerTime = timestamp;
+      // 5. News Ticker Crawl
+      if (store.showTicker && store.tickerText) {
+        const delta = (timestamp - this.lastTickerTime) / 1000;
+        this.lastTickerTime = timestamp;
 
-      // Slower, smoother scroll speed as requested by user
-      let tickerSpeed = 65; // pixels per second (was 120)
-      if (store.tickerConfig?.speed === "slow") tickerSpeed = 45;
-      else if (store.tickerConfig?.speed === "fast") tickerSpeed = 100;
+        let tickerSpeed = 65;
+        if (store.tickerConfig?.speed === "slow") tickerSpeed = 45;
+        else if (store.tickerConfig?.speed === "fast") tickerSpeed = 100;
 
-      this.tickerOffset += tickerSpeed * Math.min(delta, 0.1);
+        this.tickerOffset += tickerSpeed * Math.min(delta, 0.1);
 
-      ctx.save();
-      const tH = 50; // Increased height/width for prominent broadcast banner (was 38)
-      const tY = H - tH;
+        ctx.save();
+        const tH = 50;
+        const tY = H - tH;
 
-      ctx.fillStyle = store.tickerConfig?.bgColor || "#050508";
-      ctx.fillRect(0, tY, W, tH);
+        ctx.fillStyle = store.tickerConfig?.bgColor || "#050508";
+        ctx.fillRect(0, tY, W, tH);
 
-      // Top border accent
-      ctx.fillStyle = store.activeThemeColor || "#6366f1";
-      ctx.fillRect(0, tY, W, 2);
+        ctx.fillStyle = store.activeThemeColor || "#6366f1";
+        ctx.fillRect(0, tY, W, 2);
 
-      // ── Live Updates Badge on Left (matching Studio UI) ──
-      const badgeText = store.tickerConfig?.badgeText || "LIVE UPDATES";
-      ctx.font = "bold 13px Inter, system-ui, sans-serif";
-      const badgeWidth = ctx.measureText(badgeText).width + 32;
-      ctx.fillStyle = store.tickerConfig?.badgeBgColor || "#e11d48";
-      ctx.fillRect(0, tY, badgeWidth, tH);
+        const badgeText = store.tickerConfig?.badgeText || "LIVE UPDATES";
+        ctx.font = "bold 13px Inter, system-ui, sans-serif";
+        const badgeWidth = ctx.measureText(badgeText).width + 32;
+        ctx.fillStyle = store.tickerConfig?.badgeBgColor || "#e11d48";
+        ctx.fillRect(0, tY, badgeWidth, tH);
 
-      ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(badgeText, badgeWidth / 2, tY + tH / 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(badgeText, badgeWidth / 2, tY + tH / 2);
 
-      // ── Crawling Text Area (Clipped to right of badge) ──
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(badgeWidth, tY, W - badgeWidth, tH);
-      ctx.clip();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(badgeWidth, tY, W - badgeWidth, tH);
+        ctx.clip();
 
-      let fontSizePx = 18;
-      if (store.tickerConfig?.fontSize === "small") fontSizePx = 14;
-      else if (store.tickerConfig?.fontSize === "large") fontSizePx = 22;
-      else if (store.tickerConfig?.fontSize === "xlarge") fontSizePx = 26;
+        let fontSizePx = 18;
+        if (store.tickerConfig?.fontSize === "small") fontSizePx = 14;
+        else if (store.tickerConfig?.fontSize === "large") fontSizePx = 22;
+        else if (store.tickerConfig?.fontSize === "xlarge") fontSizePx = 26;
 
-      ctx.font = `bold ${fontSizePx}px Inter, system-ui, sans-serif`;
-      ctx.fillStyle = store.tickerConfig?.textColor || "#ffffff";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
+        ctx.font = `bold ${fontSizePx}px Inter, system-ui, sans-serif`;
+        ctx.fillStyle = store.tickerConfig?.textColor || "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
 
-      const textWidth = ctx.measureText(store.tickerText).width;
-      const crawlAreaW = W - badgeWidth;
-      const totalSpan = textWidth + crawlAreaW;
-      const currentX = W - (this.tickerOffset % totalSpan);
+        const textWidth = ctx.measureText(store.tickerText).width;
+        const crawlAreaW = W - badgeWidth;
+        const totalSpan = textWidth + crawlAreaW;
+        const currentX = W - (this.tickerOffset % totalSpan);
 
-      ctx.fillText(store.tickerText, currentX, tY + tH / 2);
-      ctx.restore();
+        ctx.fillText(store.tickerText, currentX, tY + tH / 2);
+        ctx.restore();
 
-      ctx.restore();
-    }
+        ctx.restore();
+      }
 
-      // 6. Scene Custom Text / Title Card (StreamYard Paid Plan)
+      // 6. Scene Custom Text / Title Card
       if (store.activeTextCard && store.activeTextCard.enabled && store.activeTextCard.heading) {
         const card = store.activeTextCard;
         ctx.save();
@@ -2224,7 +2065,6 @@ class StageBroadcaster {
     }
   }
 
-
   private drawRoundedRect(
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -2246,34 +2086,7 @@ class StageBroadcaster {
     ctx.closePath();
   }
 
-  /**
-   * Initializes a lightweight procedural monochrome micro-noise texture
-   */
-  private initFilmGrainPattern() {
-    if (typeof document === "undefined") return;
-    try {
-      this.grainCanvas = document.createElement("canvas");
-      this.grainCanvas.width = 160;
-      this.grainCanvas.height = 160;
-      const gctx = this.grainCanvas.getContext("2d");
-      if (!gctx) return;
-      const idata = gctx.createImageData(160, 160);
-      const d = idata.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const v = (Math.random() * 255) | 0;
-        d[i] = v;
-        d[i + 1] = v;
-        d[i + 2] = v;
-        d[i + 3] = (Math.random() * 80 + 35) | 0; // Prominently visible random particle alpha
-      }
-      gctx.putImageData(idata, 0, 0);
-    } catch {}
-  }
-
-  /**
-   * Dynamically regenerates RGB Chroma + Luma noise every 12 frames in Random mode
-   */
-  private initDynamicFilmGrainPattern() {
+  private initFilmGrainPattern(isColorRandom: boolean = false) {
     if (typeof document === "undefined") return;
     try {
       if (!this.grainCanvas) {
@@ -2286,57 +2099,52 @@ class StageBroadcaster {
       const idata = gctx.createImageData(160, 160);
       const d = idata.data;
       for (let i = 0; i < d.length; i += 4) {
-        const luma = (Math.random() * 255) | 0;
-        const rJitter = ((Math.random() - 0.5) * 40) | 0;
-        const gJitter = ((Math.random() - 0.5) * 40) | 0;
-        const bJitter = ((Math.random() - 0.5) * 40) | 0;
-        d[i] = Math.max(0, Math.min(255, luma + rJitter));
-        d[i + 1] = Math.max(0, Math.min(255, luma + gJitter));
-        d[i + 2] = Math.max(0, Math.min(255, luma + bJitter));
-        d[i + 3] = (Math.random() * 95 + 45) | 0;
+        const v = (Math.random() * 255) | 0;
+        if (isColorRandom && Math.random() < 0.35) {
+          d[i] = Math.min(255, Math.max(0, v + ((Math.random() * 44 - 22) | 0)));
+          d[i + 1] = v;
+          d[i + 2] = Math.min(255, Math.max(0, v + ((Math.random() * 44 - 22) | 0)));
+        } else {
+          d[i] = v;
+          d[i + 1] = v;
+          d[i + 2] = v;
+        }
+        d[i + 3] = (Math.random() * 85 + 25) | 0;
       }
       gctx.putImageData(idata, 0, 0);
-    } catch {}
+    } catch { }
   }
 
-  /**
-   * Draws dynamic moving microscopic film grain over media rectangle to mutate video perceptual hashes
-   */
   private drawFilmGrainOverlay(
     ctx: CanvasRenderingContext2D,
     x: number,
     y: number,
     w: number,
-    h: number
+    h: number,
+    intensity: "light" | "medium" | "strong" | "random" = "random"
   ) {
-    const store = useStudioStore.getState();
-    const intensity = store.fairUseConfig?.grainIntensity || "random";
-    this.grainFrameCount++;
-
-    if (intensity === "random" && this.grainFrameCount % 10 === 0) {
-      this.initDynamicFilmGrainPattern();
-    } else if (!this.grainCanvas) {
-      this.initFilmGrainPattern();
+    this.grainFrameTick++;
+    if (!this.grainCanvas || (intensity === "random" && this.grainFrameTick % 8 === 0)) {
+      this.initFilmGrainPattern(intensity === "random");
     }
     if (!this.grainCanvas) return;
+
+    const alpha =
+      intensity === "light"
+        ? 0.06
+        : intensity === "medium"
+          ? 0.1
+          : intensity === "strong"
+            ? 0.15
+            : 0.08 + Math.random() * 0.06;
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.clip();
-
-    let alpha = 0.28;
-    if (intensity === "light") alpha = 0.18;
-    else if (intensity === "medium") alpha = 0.28;
-    else if (intensity === "strong") alpha = 0.44;
-    else if (intensity === "random") {
-      alpha = 0.24 + Math.sin(this.grainFrameCount / 14) * 0.14; // 10% to 38%
-    }
-
     ctx.globalAlpha = alpha;
-    ctx.globalCompositeOperation = "source-over";
+    ctx.globalCompositeOperation = "overlay";
 
-    // Random UV jitter per frame to animate grain particles continuously at 60 FPS
     const jitterX = (Math.random() * 160) | 0;
     const jitterY = (Math.random() * 160) | 0;
 
@@ -2345,23 +2153,12 @@ class StageBroadcaster {
         ctx.drawImage(this.grainCanvas, px, py);
       }
     }
-
-    // Dynamic High-Contrast Micro Specular Flecks (2.0px - 4.2px) to mutate video macroblocks
-    const fleckCount = intensity === "strong" ? 14 : intensity === "light" ? 6 : 10;
-    for (let f = 0; f < fleckCount; f++) {
-      const fx = x + Math.random() * w;
-      const fy = y + Math.random() * h;
-      const size = 2.0 + Math.random() * 2.2;
-      const fleckAlpha = Math.min(0.92, 0.40 + Math.random() * 0.50);
-      ctx.fillStyle = `rgba(255, 255, 255, ${fleckAlpha})`;
-      ctx.fillRect(fx, fy, size, size);
-    }
     ctx.restore();
   }
 
   /**
-   * Draws Old-Movie Projector Fine Vertical Scratches, Flickering Hairlines & Micro-Scanlines.
-   * Solid, bold dual-core strokes engineered to survive H.264/VP9/WebM video encoding & defeat Content-ID DCT hashes.
+   * Draws refined 35mm cinema vertical scratches (`0.8px / 1.4px / 2.2px`) that look authentic
+   * without blocking the speaker's face while breaking video DCT macroblock hashes.
    */
   private drawVintageFilmLinesOverlay(
     ctx: CanvasRenderingContext2D,
@@ -2376,178 +2173,60 @@ class StageBroadcaster {
     ctx.rect(x, y, w, h);
     ctx.clip();
 
-    const lineCount = intensity === "light" ? 5 : intensity === "strong" ? 11 : 8;
-    const baseAlpha = intensity === "light" ? 0.65 : intensity === "strong" ? 0.95 : 0.82;
-    const targetWidth = intensity === "light" ? 2.8 : intensity === "strong" ? 5.2 : 3.8;
+    const baseWidth = intensity === "light" ? 0.8 : intensity === "strong" ? 2.1 : 1.35;
+    const baseAlpha = intensity === "light" ? 0.18 : intensity === "strong" ? 0.34 : 0.25;
+    const activeCount = intensity === "light" ? 2 : intensity === "strong" ? 4 : 3;
 
-    // 1. Dual-Core Vertical & Slightly Tilted Cinema Projector Scratches
-    for (let i = 0; i < lineCount; i++) {
-      const lx = x + Math.random() * w;
-      const tilt = (Math.random() - 0.5) * 6;
-      const isDarkLine = Math.random() > 0.5;
-      const alpha = Math.min(1.0, baseAlpha * (0.8 + Math.random() * 0.4));
+    for (let i = 0; i < activeCount; i++) {
+      const tr = this.vintageScratchTracks[i];
+      tr.xNorm += tr.vx + (Math.random() - 0.5) * 0.0012;
+      if (tr.xNorm < 0.05) tr.xNorm = 0.93;
+      if (tr.xNorm > 0.95) tr.xNorm = 0.07;
+      if (Math.random() < 0.03) {
+        tr.xNorm = 0.08 + Math.random() * 0.84;
+      }
 
-      const startY = Math.random() < 0.6 ? y : y + Math.random() * (h * 0.4);
-      const endY = Math.random() < 0.6 ? y + h : startY + h * (0.4 + Math.random() * 0.5);
+      const lx = x + tr.xNorm * w;
+      const startY = y + tr.yStartNorm * h;
+      const endY = Math.min(y + h, startY + tr.lenNorm * h);
 
-      // Outer glow / contrast boundary (thick outer stroke ensures encoder preserves the line edge)
+      ctx.lineWidth = baseWidth * tr.weight;
+      ctx.strokeStyle = tr.isDark
+        ? `rgba(15, 18, 28, ${baseAlpha * 0.85})`
+        : `rgba(255, 248, 225, ${baseAlpha})`;
+
       ctx.beginPath();
-      ctx.lineWidth = targetWidth + 2.0;
-      ctx.strokeStyle = isDarkLine
-        ? `rgba(255, 255, 255, ${Math.min(1.0, alpha * 0.85)})`
-        : `rgba(0, 0, 0, ${Math.min(1.0, alpha * 0.90)})`;
       ctx.moveTo(lx, startY);
-      ctx.lineTo(lx + tilt, Math.min(y + h, endY));
-      ctx.stroke();
-
-      // Inner sharp core line
-      ctx.beginPath();
-      ctx.lineWidth = targetWidth;
-      ctx.strokeStyle = isDarkLine
-        ? `rgba(10, 10, 15, ${alpha})`
-        : `rgba(255, 250, 230, ${alpha})`;
-      ctx.moveTo(lx, startY);
-      ctx.lineTo(lx + tilt, Math.min(y + h, endY));
+      ctx.lineTo(lx + tr.tilt * 3, endY);
       ctx.stroke();
     }
 
-    // 2. Traveling Cinema Reel Dust Flecks (3.2px x 2.4px)
-    const speckCount = intensity === "strong" ? 8 : intensity === "light" ? 3 : 5;
-    for (let s = 0; s < speckCount; s++) {
+    // Subtle film dust specks
+    for (let s = 0; s < 3; s++) {
       const sx = x + Math.random() * w;
       const sy = y + Math.random() * h;
-      ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1.0, baseAlpha * 0.9)})`;
-      ctx.fillRect(sx, sy, 3.2, 2.4);
+      ctx.fillStyle = `rgba(255, 252, 235, ${baseAlpha * 0.85})`;
+      ctx.fillRect(sx, sy, 1.6, 1.6);
     }
 
     ctx.restore();
   }
 
-  /**
-   * Draws Live Broadcast Pointer (Laser, Cursor, Crosshair, Spotlight) over composite video frame
-   */
-  private drawBroadcastPointer(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    style: string,
-    color: string,
-    isClicking: boolean,
-    timestamp: number
-  ) {
-    ctx.save();
-    const effectiveColor = color || "#ef4444";
-
-    if (style === "cursor") {
-      // Broadcast Arrow Cursor
-      ctx.translate(x, y);
-      if (isClicking) ctx.scale(1.25, 1.25);
-      ctx.fillStyle = effectiveColor;
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      // Draw cursor arrow inside
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.moveTo(-4, -6);
-      ctx.lineTo(6, 0);
-      ctx.lineTo(0, 3);
-      ctx.lineTo(2, 7);
-      ctx.lineTo(-1, 8);
-      ctx.lineTo(-3, 4);
-      ctx.closePath();
-      ctx.fill();
-    } else if (style === "crosshair") {
-      // Tactical Crosshair
-      const size = isClicking ? 20 : 16;
-      ctx.strokeStyle = effectiveColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(x - size - 4, y);
-      ctx.lineTo(x + size + 4, y);
-      ctx.moveTo(x, y - size - 4);
-      ctx.lineTo(x, y + size + 4);
-      ctx.stroke();
-
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (style === "spotlight") {
-      // Spotlight Ring
-      const radius = isClicking ? 40 : 48;
-      ctx.strokeStyle = effectiveColor;
-      ctx.lineWidth = 3;
-      ctx.shadowColor = effectiveColor;
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // subtle inner tint
-      ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-      ctx.fill();
-    } else {
-      // "laser" (default)
-      const pulseProgress = (timestamp % 900) / 900;
-      const pulseRadius = 8 + pulseProgress * (isClicking ? 24 : 16);
-      const pulseAlpha = Math.max(0, 1 - pulseProgress);
-
-      // Pulse ring
-      ctx.strokeStyle = effectiveColor;
-      ctx.globalAlpha = pulseAlpha * 0.75;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, pulseRadius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Main laser dot with shadow
-      ctx.globalAlpha = 1.0;
-      ctx.shadowColor = effectiveColor;
-      ctx.shadowBlur = 14;
-      ctx.fillStyle = effectiveColor;
-      ctx.beginPath();
-      ctx.arc(x, y, isClicking ? 9 : 7, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Inner white core
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  /**
-   * Enqueue chunk into strict sequential FIFO queue to guarantee ordered delivery
-   */
   private enqueueChunk(chunk: Blob) {
     this.chunkQueue.push(chunk);
     this.processUploadQueue();
   }
 
-  /**
-   * Process queue sequentially one chunk at a time (prevents out-of-order WebM chunks)
-   */
   private async processUploadQueue() {
     if (this.isUploading || this.chunkQueue.length === 0 || !this.activeBroadcastId) return;
     this.isUploading = true;
 
-    while (this.chunkQueue.length > 0 && this.isStreamingRtmp && this.activeBroadcastId) {
+    while (this.chunkQueue.length > 0 && this.isBroadcasting && this.activeBroadcastId) {
       const chunk = this.chunkQueue[0];
       let uploaded = false;
       let retries = 0;
 
-      while (!uploaded && retries < 3 && this.isStreamingRtmp && this.activeBroadcastId) {
+      while (!uploaded && retries < 3 && this.isBroadcasting && this.activeBroadcastId) {
         retries++;
         try {
           let token = "";
@@ -2565,25 +2244,19 @@ class StageBroadcaster {
           if (res.ok) {
             uploaded = true;
           } else {
-            console.error(`[StageBroadcaster] Chunk upload HTTP ${res.status}:`, await res.text().catch(() => ""));
             await new Promise((r) => setTimeout(r, 200));
           }
-        } catch (err) {
-          console.warn(`[StageBroadcaster] Chunk upload network retry #${retries}:`, err);
+        } catch {
           await new Promise((r) => setTimeout(r, 200));
         }
       }
 
-      // Dequeue only after success or max retries
       this.chunkQueue.shift();
     }
 
     this.isUploading = false;
   }
 
-  /**
-   * Stop RTMP broadcast
-   */
   public stop() {
     this.isStreamingRtmp = false;
     this.activeBroadcastId = null;
@@ -2593,16 +2266,15 @@ class StageBroadcaster {
     if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
       try {
         this.mediaRecorder.stop();
-      } catch {
-        // ignore
-      }
+      } catch { }
     }
     this.mediaRecorder = null;
 
-    if (!this.isLocalRecordingActive) {
-      this.stopStageComposite();
+    if (this.isLocalRecordingActive) {
+      return;
     }
-    console.log("[StageBroadcaster] RTMP live stream stopped.");
+
+    this.stopStageComposite(true);
   }
 }
 

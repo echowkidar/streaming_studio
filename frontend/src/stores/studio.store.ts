@@ -1,22 +1,22 @@
 import { create } from "zustand";
 import { Participant, LowerThirdBanner, ChatMessage, Destination, StageOverlayAsset } from "@/types";
 
-export type StudioLayout = 
-  | "solo" 
-  | "side-by-side" 
+export type StudioLayout =
+  | "solo"
+  | "side-by-side"
   | "fit"
   | "cropped"
-  | "speaker-large" 
-  | "three-equal" 
-  | "four-grid" 
-  | "five-grid" 
-  | "six-grid" 
-  | "nine-grid" 
-  | "pip" 
-  | "screen-speaker" 
-  | "screen-full" 
-  | "presentation" 
-  | "podcast" 
+  | "speaker-large"
+  | "three-equal"
+  | "four-grid"
+  | "five-grid"
+  | "six-grid"
+  | "nine-grid"
+  | "pip"
+  | "screen-speaker"
+  | "screen-full"
+  | "presentation"
+  | "podcast"
   | "interview"
   | "stacked"
   | "cinema"
@@ -62,22 +62,23 @@ export type TacticalRouteAssetType =
   | "custom-image";
 
 export type TacticalTargetEffect =
-  | "explosion"
-  | "landing"
-  | "naval-cruise"
-  | "ship-launch-missile"
-  | "jet-airstrike"
-  | "intercept"
-  | "hover-patrol"
-  | "airdrop"
-  | "none";
+  | "explosion"           // 💥 Missile / Bomb Strike Blast & Shockwave
+  | "landing"             // 🛬 Safe Landing / Touchdown (Airliner / Helicopter / VIP Flight)
+  | "naval-cruise"        // ⚓ Sea Voyage / Port Arrival / Naval Patrol (No explosion)
+  | "ship-launch-missile" // 🚢🚀 Ship Sails & Launches Missile at Target Ship / Coastal Target
+  | "jet-airstrike"       // ✈️🚀 Aircraft Flies Partway & Launches Stand-Off Missile at Target
+  | "intercept"           // 🛡️ Air Defense Mid-Air Intercept (Counter-missile destroys threat in sky)
+  | "hover-patrol"        // 🔄 Orbit / Loiter Surveillance Patrol over Target Zone
+  | "airdrop"             // 🪂 Paratrooper / Relief Supply Airdrop over Target
+  | "none";               // 📍 Clean Arrival / Flyby
 
 export type TacticalTargetMarkerType =
   | "default"
   | "warship"
   | "cargo-ship"
   | "airbase"
-  | "radar-site";
+  | "radar-site"
+  | "port";
 
 export interface TacticalMapPoint {
   name: string;
@@ -87,53 +88,64 @@ export interface TacticalMapPoint {
 
 export interface TacticalMapRoute {
   id: string;
+  label?: string;
   from: TacticalMapPoint;
   to: TacticalMapPoint;
   assetType: TacticalRouteAssetType;
-  color: string;
-  arcHeight: number;
-  speed: number;
-  showImpactShockwave: boolean;
-  showDistanceKm: boolean;
-  customIconUrl?: string;
   targetEffect?: TacticalTargetEffect;
   targetMarkerType?: TacticalTargetMarkerType;
   curveDirection?: "up" | "straight" | "down";
+  customIconUrl?: string;
+  color: string;
+  arcHeight: number; // 0.0 to 0.65 (0 = straight line, 0.35 = ballistic arc)
+  speed: number; // 0.5 to 3.0 (default 1.0)
+  showImpactShockwave: boolean;
+  showDistanceKm: boolean;
 }
 
 export interface TacticalMapConfig {
   title: string;
   subtitle?: string;
-  mapStyle: "dark-radar" | "satellite" | "ocean" | "political" | "vector-grid";
+  mapStyle: "dark-radar" | "satellite" | "political" | "ocean" | "vector-grid";
+  /** 2D flat map, 3D tilted terrain perspective (with elevated 3D arcs & altitude drop-lines), or 3D interactive rotating globe */
+  viewMode?: "2d" | "3d-perspective" | "3d-globe";
+  /** 3D camera tilt pitch angle in degrees (0 to 62, default 45 in 3D perspective) */
+  pitchDeg?: number;
+  /** 3D camera compass heading / yaw rotation in degrees (-180 to 180, default 0) */
+  yawDeg?: number;
+  /** 3D Globe size multiplier (0.65 to 1.85, default 1.15; >= 1.45 fills full screen) */
+  globeScale?: number;
+  /** Interactive Tactical Simulator Mode: click on stage/map in real-time to launch missiles, interceptors, jets, or naval strikes */
+  simulatorEnabled?: boolean;
+  /** Dynamic live simulator spawned routes synced between Modal & Stage */
+  simRoutes?: TacticalMapRoute[];
+  /** Show live telemetry HUD (Mach speed, Altitude KM, Heading, Radar lock) */
+  showTelemetryHud?: boolean;
+  /** 3D arc altitude multiplier (0.5 to 2.5, default 1.2) */
+  altitudeScale?: number;
   centerLat: number;
   centerLon: number;
-  zoom: number;
+  zoom: number; // 2 to 11
   loopAnimation: boolean;
   showRadarSweep: boolean;
   showGridLines: boolean;
   routes: TacticalMapRoute[];
-  viewMode?: "2d" | "3d-perspective" | "3d-globe";
-  pitchDeg?: number;
-  yawDeg?: number;
-  altitudeScale?: number;
-  simulatorEnabled?: boolean;
-  showTelemetryHud?: boolean;
 }
 
 export type WebsitePointerStyle = "laser" | "cursor" | "crosshair" | "spotlight";
+export type WebsiteProxyMode = "web-proxy" | "reader" | "api-proxy" | "direct";
 
 export interface WebsiteSceneConfig {
   url: string;
-  title?: string;
-  useProxy?: boolean;
-  proxyMode?: "web-proxy" | "reader" | "api-proxy" | "direct";
-  interactiveMode?: boolean;
-  showBroadcastPointer?: boolean;
-  pointerStyle?: WebsitePointerStyle;
-  pointerColor?: string;
+  title: string;
+  useProxy: boolean;
+  proxyMode?: WebsiteProxyMode;
+  interactiveMode: boolean;
+  showBroadcastPointer: boolean;
+  pointerStyle: WebsitePointerStyle;
+  pointerColor: string;
   scrollYPercent?: number;
   areaZoom?: number;
-  focusArea?: "top" | "mid" | "btm" | "left" | "right";
 }
 
 export interface MediaFileItem {
@@ -145,24 +157,28 @@ export interface MediaFileItem {
   durationSeconds?: number;
   thumbnail?: string;
   loop?: boolean;
-  playbackRate?: number;
   isUploaded?: boolean;
   desc?: string;
   isMuted?: boolean;
+  /** Normalized percentage 0 to 200 (default 100) */
   volume?: number;
+  /** Custom playback speed (0.5x to 2.0x) */
+  playbackRate?: number;
+  /** Direct YouTube Playback without YouTube API Key */
+  youtubeId?: string;
+  youtubeUrl?: string;
+  /** Optional Start Time in seconds (if > 0, starts here on scene switch; otherwise 0) */
+  startTimeSec?: number;
+  /** Optional End Time in seconds (if > 0, stops/loops/advances here; otherwise full duration) */
+  endTimeSec?: number;
+  /** Broadcast News Tactical Map & Missile/Airplane Trajectory Config */
+  mapConfig?: TacticalMapConfig;
+  /** Interactive Website Scene & Live Broadcast Pointer Config */
+  websiteConfig?: WebsiteSceneConfig;
   /** StreamYard Paid Plan: Multi-page Slide Deck URLs & Speaker Notes */
   slides?: string[];
   currentSlideIndex?: number;
   speakerNotes?: Record<number, string>;
-  /** YouTube Zero-Key Playback & Fair-Use Start/End Time */
-  youtubeId?: string;
-  youtubeUrl?: string;
-  startTimeSec?: number;
-  endTimeSec?: number;
-  /** Tactical Map Trajectory Animator */
-  mapConfig?: TacticalMapConfig;
-  /** Interactive Website & Live Pointer Config */
-  websiteConfig?: WebsiteSceneConfig;
 }
 
 export type ActiveMedia = MediaFileItem;
@@ -180,46 +196,24 @@ export interface SceneTextCard {
 
 export interface FairUseConfig {
   enabled: boolean;
-  /** Forces host camera in corner PiP when playing full-screen videos */
   enforceReactionPiP: boolean;
-  /** Automatically lowers media volume when host/guest speaks */
   autoAudioDucking: boolean;
-  /** Target media volume (0-100) while someone is speaking */
   duckingVolumePct: number;
-  /** Dynamic toggle to allow host to temporarily bypass ducking */
-  duckingActive?: boolean;
-  /** Applies subtle scale/contrast/frame transform to avoid raw visual hash match */
   visualTransformFilter: boolean;
-  /** Mirrors video horizontally in canvas output */
   mirrorMediaVideo: boolean;
-  /** Adjusts video playback speed (e.g., 1.04) to bypass audio fingerprinting */
   playbackRate: number;
-  /** Auto-pauses video every X seconds (0 = disabled, 8 = Random 8-12s interval, 10 = 10s, 15 = 15s) */
   autoPauseIntervalSec: number;
-  /** "jerk-skip" = skips 0.28s frames + 180ms jerk, "micro-pause" = 350ms pause, "pause" = 2.2s pause */
   antiMatchMode?: "jerk-skip" | "micro-pause" | "pause";
-  /** Displays Fair-Use Commentary watermark badge over media */
   showFairUseBadge: boolean;
   badgeText: string;
-  /** Dynamic procedural film-grain / micro-noise layer mutating pixel hashes */
   filmGrainOverlay: boolean;
-  grainIntensity?: "random" | "light" | "medium" | "strong";
-  /** Subtle zoom breathing effect (1.00x-1.04x) defeating DCT hash match */
-  isBreathingEnabled?: boolean;
+  grainIntensity?: "light" | "medium" | "strong" | "random";
   zoomBreathing?: boolean;
   breathIntensity?: "subtle" | "medium" | "strong";
-  dynamicTempoVariance?: boolean;
-  keepReactionLocked?: boolean;
   audioEqProtection?: boolean;
-  breathingIntensity?: "subtle" | "medium" | "strong";
-  /** Enable audio fair-use spectral transformation on MP3/audio files */
-  enableAudioFairUse?: boolean;
-  /** Purani movies jaisi random bareek vertical scratches & traveling lines */
+  dynamicTempoVariance?: boolean;
   vintageLinesOverlay?: boolean;
   vintageLinesIntensity?: "light" | "medium" | "strong";
-  /** Dynamic Corner Vignette gradient to defeat edge and frame hash matching */
-  vignetteOverlay?: boolean;
-  /** Switches back to host scene if host mic & cam are off for too long during media playback */
   idleMediaGuardSec: number;
 }
 
@@ -228,34 +222,21 @@ export interface StudioScene {
   name: string;
   layout: StudioLayout;
   splitRatio?: number;
-  /** Universal Full-Bleed Cropped Mode: true = 100% top-to-bottom edge-to-edge fill in ANY layout (2, 3, 4, 6 grid) */
   isStageCropped?: boolean;
-  /** Media kis slot me dikhega: 0 = Left/Top-Left/Hero, 1 = Right/Middle/Top-Right, 2 = Right/Bottom-Left, 3 = Bottom-Right */
   mediaSlotIndex?: number;
-  /** Per-Scene saved Zoom, Pan, Fit/Cover, Flip & Transparent card states */
   tileTransforms?: Record<string, TileTransform>;
-  /** Per-Scene saved Freeform / PiP bounds */
   participantBounds?: Record<string, ParticipantBounds>;
-  /** Per-Scene saved Custom Layout Config */
   customLayoutConfig?: CustomLayoutConfig;
   onStageParticipantIds?: (string | number)[];
-  /** Fixed seat assignments: slotIndex -> participantId */
   slotAssignments?: Record<number, string | number>;
-  /** StreamYard Pre-Booked Guest Slots (e.g. 1, 2, 3) when no guest is connected yet */
   expectedGuestSlots?: number;
-  /** Automatically promote connecting guests into this scene's open guest slots */
   autoAddGuestsToStage?: boolean;
-  /** Jab Guest connect ho to 2-window/media scene me Host ki jagah Guest aa jaye */
   replaceHostOnGuestJoin?: boolean;
   activeMedia?: MediaFileItem | null;
-  /** StreamYard Paid Plan: Auto-switch to another scene when video ends */
   nextSceneIdOnMediaEnd?: string | null;
-  /** Scene Transition effect when switching into this scene */
   transitionType?: "cut" | "fade" | "wipe" | "stinger";
   stingerVideoUrl?: string | null;
-  /** StreamYard Paid Plan: Extra / Secondary Camera Device ID bound to this scene */
   extraCameraDeviceId?: string | null;
-  /** Rich Text / Title Card inside Scene */
   textCard?: SceneTextCard | null;
   isTransparentMedia?: boolean;
   backgroundUrl?: string | null;
@@ -278,21 +259,21 @@ export type DrawingTool = "pen" | "highlighter" | "arrow" | "rect" | "circle" | 
 
 export interface TileTransform {
   fitMode: "contain" | "cover";
-  zoom: number; // 1 to 2.5
-  panX: number; // % offset (-50 to 50)
-  panY: number; // % offset (-50 to 50)
-  rotation: number; // 0, 90, 180, 270
+  zoom: number;
+  panX: number;
+  panY: number;
+  rotation: number;
   flipH: boolean;
   flipV: boolean;
   isTransparentBg?: boolean;
 }
 
 export interface ParticipantBounds {
-  x: number; // percentage left: 0 to 100
-  y: number; // percentage top: 0 to 100
-  width: number; // percentage width: 10 to 100
-  height: number; // percentage height: 10 to 100
-  zIndex?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
   isLockedRatio?: boolean;
 }
 
@@ -308,23 +289,23 @@ export interface TickerConfig {
 
 export interface LogoConfig {
   text: string;
+  imageUrl?: string;
+  mode?: "text" | "image" | "both";
+  scale?: number;
   textColor: string;
   bgColor: string;
   bgOpacity: number;
   isTransparentBg: boolean;
   fontSize: "small" | "medium" | "large";
   position?: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-  mode?: "text" | "image" | "both";
-  imageUrl?: string;
-  heightPx?: number; // 24 to 88
 }
 
 export interface ChromaKeyConfig {
   enabled: boolean;
-  keyColor: string; // e.g. '#00b140' or '#0047bb'
-  tolerance: number; // 0.1 to 0.8
-  smoothness: number; // 0.0 to 0.4
-  spill: number; // 0.0 to 1.0
+  keyColor: string;
+  tolerance: number;
+  smoothness: number;
+  spill: number;
   backdropType: "stage" | "blur" | "image";
   backdropUrl?: string;
 }
@@ -342,18 +323,16 @@ interface StudioState {
   liveDuration: number;
   viewerCount: number;
   connectionQuality: "EXCELLENT" | "GOOD" | "FAIR" | "POOR";
-  
-  // Layout
+
   activeLayout: StudioLayout;
   setLayout: (layout: StudioLayout) => void;
   isStageCropped: boolean;
   setIsStageCropped: (cropped: boolean) => void;
-  layoutSplitRatio: number; // 20 to 80 (default 50)
+  layoutSplitRatio: number;
   setLayoutSplitRatio: (ratio: number) => void;
   customLayoutConfig: CustomLayoutConfig;
   setCustomLayoutConfig: (config: Partial<CustomLayoutConfig>) => void;
 
-  // Freeform Window Bounds & Selection Tool (StreamYard parity)
   participantBounds: Record<string, ParticipantBounds>;
   setParticipantBounds: (id: string | number, bounds: Partial<ParticipantBounds>) => void;
   resetParticipantBounds: (id: string | number) => void;
@@ -366,7 +345,6 @@ interface StudioState {
   bringToFront: (id: string | number) => void;
   sendToBack: (id: string | number) => void;
 
-  // Audio / Video device states for local user
   micEnabled: boolean;
   camEnabled: boolean;
   screenShareEnabled: boolean;
@@ -374,7 +352,6 @@ interface StudioState {
   toggleCam: () => void;
   toggleScreenShare: () => void;
 
-  // Participants & StreamYard Pre-Booked Guest Slots
   participants: Participant[];
   setParticipants: (participants: Participant[]) => void;
   addParticipant: (participant: Participant) => void;
@@ -390,7 +367,6 @@ interface StudioState {
   setReplaceHostOnGuestJoin: (enabled: boolean, sceneId?: string) => void;
   assignParticipantToSlot: (slotIndex: number, participantId: string | number | null, sceneId?: string) => void;
 
-  // Branding & Overlays
   showLogo: boolean;
   logoPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   logoUrl: string;
@@ -419,12 +395,8 @@ interface StudioState {
   setBackground: (url: string | null, type?: "image" | "video") => void;
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
-  bannerPresets: LowerThirdBanner[];
-  addBannerPreset: (preset: LowerThirdBanner) => void;
-  removeBannerPreset: (id: string) => void;
   setTicker: (text: string, show: boolean) => void;
 
-  // Stage Live Overlay & Floating Assets (StreamYard parity)
   activeStageOverlay: StageOverlayAsset | null;
   overlayHistory: StageOverlayAsset[];
   setStageOverlay: (overlay: StageOverlayAsset | null) => void;
@@ -436,7 +408,6 @@ interface StudioState {
   removeFromOverlayHistory: (id: string) => void;
   restoreDefaultOverlays: () => void;
 
-  // Media playback on stage
   activeMedia: MediaFileItem | null;
   setActiveMedia: (media: MediaFileItem | null) => void;
   toggleMediaMute: () => void;
@@ -447,28 +418,23 @@ interface StudioState {
   goToSlide: (index: number) => void;
   triggerMediaEnded: () => void;
 
-  // YouTube Fair-Use & Anti-Reused Content Protection
   fairUseConfig: FairUseConfig;
   setFairUseConfig: (updates: Partial<FairUseConfig>) => void;
 
-  // Scene Transition State
   isSceneTransitioning: boolean;
   isMediaTransitioning: boolean;
-  setMediaTransitioning: (val: boolean) => void;
+  newlyAddedParticipantIds: string[];
   activeTransitionType: "cut" | "fade" | "wipe" | "stinger";
 
-  // StreamYard Extra Camera Scene Binding
   activeExtraCameraDeviceId: string | null;
   setActiveExtraCameraDeviceId: (id: string | null) => void;
 
-  // Unified Media Library
   mediaLibrary: MediaFileItem[];
   addMediaLibraryItem: (item: MediaFileItem) => void;
   updateMediaLibraryItem: (id: string, updates: Partial<MediaFileItem>) => void;
   removeMediaLibraryItem: (id: string) => void;
   cleanupMediaLibrary: () => number;
 
-  // Chat
   messages: ChatMessage[];
   addMessage: (msg: ChatMessage) => void;
   pinnedMessage: ChatMessage | null;
@@ -476,25 +442,20 @@ interface StudioState {
   commentConfig: CommentConfig;
   setCommentConfig: (config: Partial<CommentConfig>) => void;
 
-  // Private Backstage Chat (Host <-> Guests)
   privateMessages: Array<{ id: string; sender: string; role: string; text: string; timestamp: string }>;
   addPrivateMessage: (msg: { id?: string; sender: string; role?: string; text: string; timestamp?: string }, broadcast?: boolean) => void;
 
-  // Media Slot Position & Participant Reordering
   mediaSlotIndex: number;
   setMediaSlotIndex: (slotIndex: number) => void;
   moveParticipantOrder: (id: string | number, direction: "left" | "right") => void;
 
-  // 1-Click Solo / Spotlight Memory State
   soloTargetId: string | number | null;
   preSoloSnapshot: { layout: StudioLayout; onStageIds: (string | number)[] } | null;
   toggleSoloParticipant: (id: string | number) => void;
 
-  // Destinations
   destinations: Destination[];
   toggleDestination: (id: string) => void;
 
-  // Telestrator & On-Screen Drawing Tool
   isDrawingMode: boolean;
   setIsDrawingMode: (enabled: boolean) => void;
   drawingTool: DrawingTool;
@@ -506,7 +467,6 @@ interface StudioState {
   isDrawingVisible: boolean;
   setIsDrawingVisible: (visible: boolean) => void;
 
-  // Actions
   startLive: () => void;
   endLive: () => void;
   startRecord: () => void;
@@ -514,7 +474,6 @@ interface StudioState {
   pauseRecord: () => void;
   resumeRecord: () => void;
 
-  // StreamYard Scenes System
   scenes: StudioScene[];
   activeSceneId: string | null;
   isScenesPanelOpen: boolean;
@@ -528,7 +487,6 @@ interface StudioState {
   switchScene: (id: string) => void;
   saveCurrentStageToScene: (id: string) => void;
 
-  // Studio Scoping & Isolation
   currentStudioId: string | null;
   initStudio: (studioId: string) => void;
 }
@@ -668,13 +626,7 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
     autoAddGuestsToStage: false,
     nextSceneIdOnMediaEnd: "scene-interview",
     transitionType: "fade",
-    activeMedia: {
-      id: "media-intro-1",
-      name: "Intro Video.mp4",
-      type: "video",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      loop: false,
-    },
+    activeMedia: null,
     thumbnailColor: "#ec4899",
   },
   {
@@ -714,66 +666,101 @@ export const DEFAULT_STUDIO_SCENES: StudioScene[] = [
 
 export const DEFAULT_STUDIO_MEDIA: MediaFileItem[] = [];
 
-const DUMMY_MEDIA_NAMES = new Set([
-  "intro_countdown_30s.mp4",
-  "product_demo_highlights.mp4",
-  "product_architecture_2026.pdf",
-  "background_lofi_stream.mp3",
-  "livestudio intro video.mp4",
-  "bigbuckbunny.mp4",
-  "forbiggerblazes.mp4",
-]);
-
-const DUMMY_MEDIA_IDS = new Set([
+const LEGACY_DUMMY_MEDIA_IDS = new Set([
   "media-slides",
   "media-countdown",
   "media-keynote-clip",
   "media-lofi",
-  "media-intro",
+  "media-intro-1",
+  "media-sponsor-pdf",
+  "m1",
+  "m2",
+  "m3",
+  "m4",
+  "media-1",
+  "media-2",
+  "media-3",
+  "media-4",
+  "media-5",
+]);
+
+const LEGACY_DUMMY_MEDIA_NAMES = new Set([
+  "product_architecture_2026.pdf",
+  "intro_countdown_30s.mp4",
+  "intro_countdown_30s_1080p.mp4",
+  "product_demo_highlights.mp4",
+  "background_lofi_stream.mp3",
+  "intro video.mp4",
+  "sponsor_pitch_2026.pdf",
+  "livestudio intro video.mp4",
+  "livestudio_intro_video.mp4",
+  "livestudio intro",
+  "outro_credits_theme.mp4",
+  "product_roadmap_slide_deck.pdf",
+  "ambient_chillhop_background.mp3",
+  "sponsor_banner_lowerthird.png",
 ]);
 
 export function isDummyOrBrokenMediaItem(item: MediaFileItem | null | undefined): boolean {
-  if (!item) return true;
-  if (!item.id || !item.name) return true;
-  const lowerName = item.name.toLowerCase().trim();
-  const lowerId = item.id.toLowerCase().trim();
-  if (DUMMY_MEDIA_IDS.has(lowerId)) return true;
-  if (DUMMY_MEDIA_NAMES.has(lowerName)) return true;
+  if (!item || !item.id || !item.url) return true;
+  if (LEGACY_DUMMY_MEDIA_IDS.has(String(item.id))) return true;
+  const lowerName = String(item.name || "").trim().toLowerCase();
+  if (!lowerName) return true;
   if (
-    lowerName.includes("intro_countdown_30s") ||
-    lowerName.includes("product_demo_highlights") ||
-    lowerName.includes("product_architecture_2026") ||
-    lowerName.includes("background_lofi_stream")
+    LEGACY_DUMMY_MEDIA_NAMES.has(lowerName) ||
+    lowerName.startsWith("livestudio intro") ||
+    lowerName.startsWith("livestudio_intro")
   ) {
     return true;
   }
-  if (!item.url && !item.mapConfig && !item.websiteConfig && !item.slides && !item.youtubeId) {
+  const urlStr = String(item.url || "");
+  if (
+    urlStr.includes("commondatastorage.googleapis.com/gtv-videos-bucket/sample/") ||
+    urlStr.includes("actions.google.com/sounds/v1/weather/rain_heavy.ogg") ||
+    (item.type === "pdf" && urlStr.includes("images.unsplash.com/photo-1551288049-bebda4e38f71"))
+  ) {
     return true;
   }
   return false;
 }
 
+export function getMediaDeduplicationSignature(item: MediaFileItem): string {
+  const lowerName = String(item.name || "").trim().toLowerCase();
+  const type = String(item.type || "video");
+  if (type === "youtube" || item.youtubeId) {
+    return `yt:${item.youtubeId || item.url}:${item.startTimeSec || 0}:${item.endTimeSec || 0}`;
+  }
+  if (type === "map" || item.mapConfig) {
+    return `map:${lowerName}`;
+  }
+  if (type === "website" || item.websiteConfig) {
+    return `web:${(item.websiteConfig?.url || item.url || "").trim().toLowerCase()}`;
+  }
+  if (type === "pdf" && item.slides && item.slides.length > 0) {
+    return `slides:${lowerName}:${item.slides.length}`;
+  }
+  return `${type}:${lowerName}:${item.url}`;
+}
+
 export function sanitizeAndDeduplicateMediaList(
   items: MediaFileItem[],
-  removeBlobIfExpired: boolean = false
+  allowBlobUrls: boolean = false
 ): MediaFileItem[] {
   if (!Array.isArray(items)) return [];
-  const seenIds = new Set<string>();
-  const seenKey = new Set<string>();
   const result: MediaFileItem[] = [];
+  const seenIds = new Set<string>();
+  const seenSignatures = new Set<string>();
 
   for (const item of items) {
     if (isDummyOrBrokenMediaItem(item)) continue;
-    if (seenIds.has(item.id)) continue;
-
-    const key = `${item.type}:${item.url || item.name}`.toLowerCase();
-    if (seenKey.has(key)) continue;
-
-    seenIds.add(item.id);
-    seenKey.add(key);
+    if (!allowBlobUrls && item.url.startsWith("blob:")) continue;
+    const idStr = String(item.id);
+    const sig = getMediaDeduplicationSignature(item);
+    if (seenIds.has(idStr) || seenSignatures.has(sig)) continue;
+    seenIds.add(idStr);
+    seenSignatures.add(sig);
     result.push(item);
   }
-
   return result;
 }
 
@@ -786,11 +773,17 @@ function loadSavedMediaLibrary(): MediaFileItem[] {
     const raw = localStorage.getItem(STUDIO_MEDIA_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return sanitizeAndDeduplicateMediaList(parsed, true);
+      if (Array.isArray(parsed)) {
+        const cleaned = sanitizeAndDeduplicateMediaList(parsed, false);
+        if (cleaned.length !== parsed.length) {
+          try {
+            localStorage.setItem(STUDIO_MEDIA_STORAGE_KEY, JSON.stringify(cleaned.slice(0, 40)));
+          } catch { }
+        }
+        return cleaned;
       }
     }
-  } catch {}
+  } catch { }
   return [];
 }
 
@@ -828,7 +821,6 @@ export interface SavedStudioLayoutState {
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
   commentConfig?: CommentConfig;
-  bannerPresets?: LowerThirdBanner[];
   scenes?: StudioScene[];
   activeSceneId?: string | null;
   isScenesPanelOpen?: boolean;
@@ -847,7 +839,6 @@ export function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayo
   try {
     const key = getStudioStorageKey(studioId);
     let raw = localStorage.getItem(key);
-    // Backward compatibility: fallback to global key if studio-specific key not yet saved
     if (!raw && (!studioId || studioId.includes("main"))) {
       raw = localStorage.getItem(STUDIO_LAYOUT_STORAGE_KEY);
     }
@@ -868,7 +859,6 @@ export function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
     const next = { ...current, ...updates };
     localStorage.setItem(key, JSON.stringify(next));
 
-    // Debounced sync to Backend Database for Cross-Device & Cross-Browser Persistence
     if (targetStudioId) {
       if (persistCloudTimeout) clearTimeout(persistCloudTimeout);
       persistCloudTimeout = setTimeout(() => {
@@ -880,7 +870,7 @@ export function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
               defaultLayout: next.activeLayout || "solo",
               name: next.broadcastTitle,
             },
-          }).catch(() => {});
+          }).catch(() => { });
         });
       }, 1200);
     }
@@ -899,11 +889,6 @@ const initialActiveSceneId: string | null =
     ? savedLayout.activeSceneId
     : initialScenes[0]?.id || null;
 
-/**
- * Helper: Reconciles connecting/existing participants with StreamYard Scene rules.
- * If a scene has `expectedGuestSlots > 0` and `autoAddGuestsToStage !== false`,
- * newly connected guests automatically fill open stage slots!
- */
 function reconcileParticipantsWithScene(
   incomingParticipants: Participant[],
   existingParticipants: Participant[],
@@ -917,14 +902,12 @@ function reconcileParticipantsWithScene(
 
   const rawExpectedGuests = activeScene?.expectedGuestSlots ?? 0;
   const shouldAutoAdd = activeScene?.autoAddGuestsToStage ?? (rawExpectedGuests > 0);
-  // Agar Auto-Stage ON hai to chahe Guest Slots 0 bhi likha ho, kam se kam 1 Guest zaroor stage par aayega!
   const effectiveExpectedGuests = shouldAutoAdd
     ? Math.max(1, rawExpectedGuests)
     : rawExpectedGuests;
 
   const shouldReplaceHost = Boolean(activeScene?.replaceHostOnGuestJoin);
 
-  // Count how many remote guests are already on stage
   let currentOnStageGuests = 0;
   incomingParticipants.forEach((p) => {
     const isHostOrScreen = p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen;
@@ -940,18 +923,15 @@ function reconcileParticipantsWithScene(
     effectiveExpectedGuests === 0 &&
     !shouldAutoAdd;
 
-  // Step 1: Pehle sabhi participants (Guests + Host) ka status decide karein
   const interim = incomingParticipants.map((p) => {
     const idStr = String(p.id);
     const isHostOrScreen = p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen;
     const existingStatus = existingStatusMap.get(idStr);
 
-    // Agar naya Guest connect hua hai (ya user ne abhi Auto-Stage ON kiya hai)
     if (!isHostOrScreen) {
       if (existingStatus === "ON_STAGE" || explicitSceneIds?.has(idStr)) {
         return { ...p, status: "ON_STAGE" as const };
       }
-      // Naya guest hai (!existingStatus) ya forceEvaluateBackstageGuests true hai
       if (shouldAutoAdd && (!existingStatus || forceEvaluateBackstageGuests) && currentOnStageGuests < effectiveExpectedGuests) {
         currentOnStageGuests++;
         return { ...p, status: "ON_STAGE" as const };
@@ -959,16 +939,12 @@ function reconcileParticipantsWithScene(
       return { ...p, status: (existingStatus || p.status || "BACKSTAGE") as any };
     }
 
-    // Host ya Screen Share ke liye
     if (existingStatus && !forceEvaluateBackstageGuests) {
       return { ...p, status: existingStatus };
     }
     return { ...p, status: isMediaOnlyScene ? ("BACKSTAGE" as const) : ("ON_STAGE" as const) };
   });
 
-  // Step 2: "Guest Replaces Host" Logic
-  // Agar koi Remote Guest ON_STAGE hai aur replaceHostOnGuestJoin ON hai, to Host ko BACKSTAGE karein.
-  // Aur agar saare Guests chale gaye (0 guests on stage), to Host ko wapas ON_STAGE le aayein!
   const anyRemoteGuestOnStage = interim.some(
     (p) => !(p.role === "host" || p.role === "HOST" || p.isLocal || p.isScreen) && p.status === "ON_STAGE"
   );
@@ -984,7 +960,6 @@ function reconcileParticipantsWithScene(
     return p;
   });
 
-  // Step 3: Sort on-stage participants according to fixed slotAssignments if defined
   const slotMap = activeScene?.slotAssignments;
   if (slotMap && Object.keys(slotMap).length > 0) {
     const assignedSlotByParticipant = new Map<string, number>();
@@ -1001,6 +976,29 @@ function reconcileParticipantsWithScene(
   }
 
   return reconciled;
+}
+
+/**
+ * Ensures any YouTube or Video media item starts UNMUTED at full audible volume (100%)
+ * unless the user explicitly muted it during the active session.
+ */
+function ensureAudibleMediaDefaults(item: MediaFileItem | null | undefined): MediaFileItem | null {
+  if (!item) return null;
+  if (item.type === "youtube" || item.type === "video" || item.type === "audio") {
+    const rawVol = item.volume;
+    const validVol =
+      typeof rawVol === "number" && !Number.isNaN(rawVol) && rawVol >= 15
+        ? rawVol > 0 && rawVol <= 1 && !Number.isInteger(rawVol)
+          ? Math.round(rawVol * 100)
+          : Math.round(rawVol)
+        : 100;
+    return {
+      ...item,
+      isMuted: false,
+      volume: validVol,
+    };
+  }
+  return item;
 }
 
 const initialActiveScene = initialScenes.find((s) => s.id === initialActiveSceneId);
@@ -1041,12 +1039,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           name: "Sponsor Graphic",
           layout: "presentation",
           splitRatio: 65,
-          activeMedia: {
-            id: "media-sponsor-pdf",
-            name: "Sponsor_Pitch_2026.pdf",
-            type: "pdf",
-            url: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1600&q=80",
-          },
+          activeMedia: null,
           thumbnailColor: "#f59e0b",
         },
         {
@@ -1120,7 +1113,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     const savedMediaLib = loadSavedMediaLibrary();
     const healMediaItem = (item: MediaFileItem | null | undefined): MediaFileItem | null => {
-      if (!item) return null;
+      if (!item || isDummyOrBrokenMediaItem(item)) return null;
+      let resolved = item;
       if (!item.url || item.url.startsWith("blob:")) {
         const found = savedMediaLib.find(
           (m) =>
@@ -1129,10 +1123,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
             (m.id === item.id || m.name === item.name)
         );
         if (found) {
-          return { ...item, id: found.id, url: found.url };
+          resolved = { ...item, id: found.id, url: found.url };
         }
       }
-      return item;
+      return ensureAudibleMediaDefaults(resolved);
     };
 
     let nextScenes = (hasSavedScenes ? saved.scenes! : studioScenes).map((sc) => ({
@@ -1150,8 +1144,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       saved.isStageCropped !== undefined
         ? saved.isStageCropped
         : nextActiveScene?.isStageCropped !== undefined
-        ? nextActiveScene.isStageCropped
-        : nextLayout === "cropped" || nextLayout === "podcast";
+          ? nextActiveScene.isStageCropped
+          : nextLayout === "cropped" || nextLayout === "podcast";
     const nextSplit = saved.layoutSplitRatio || nextActiveScene?.splitRatio || studioSplitRatio;
     const initialActiveMedia = healMediaItem(
       saved.activeMedia !== undefined ? saved.activeMedia : nextActiveScene?.activeMedia || null
@@ -1199,15 +1193,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         isTransparentBg: false,
         fontSize: "medium",
         position: "top-right",
-        mode: "text",
-        imageUrl: "",
-        heightPx: 42,
       },
       showLogo: saved.showLogo ?? true,
       logoPosition: saved.logoPosition || "top-right",
       activeBanner: saved.activeBanner ?? null,
       activeTextCard: saved.activeTextCard ?? nextActiveScene?.textCard ?? null,
-      fairUseConfig: saved.fairUseConfig || get().fairUseConfig,
+      fairUseConfig: {
+        ...get().fairUseConfig,
+        ...(saved.fairUseConfig || {}),
+        autoAudioDucking: false,
+      },
       chromaKeyConfig: saved.chromaKeyConfig || {
         enabled: false,
         keyColor: "#00b140",
@@ -1230,9 +1225,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       isScenesPanelOpen: saved.isScenesPanelOpen ?? true,
     });
 
-    // Background Cloud Sync & Auto-Heal Permanent Media Assets
     if (typeof window !== "undefined") {
-      // 1. Fetch uploaded permanent media assets to heal any remaining blob or missing URLs
+      // Pre-warm all YouTube scenes in background so switching scenes has 0ms lag!
+      nextScenes.forEach((sc) => {
+        if (sc.activeMedia?.type === "youtube" && sc.activeMedia.youtubeId) {
+          fetch(`/api/media/youtube/info?videoId=${encodeURIComponent(sc.activeMedia.youtubeId)}`).catch(() => { });
+        }
+      });
+
       const token = localStorage.getItem("livestudio_token");
       fetch(`/api/media?studioId=${encodeURIComponent(studioId)}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1258,12 +1258,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
                   hasRepairs = true;
                   return {
                     ...sc,
-                    activeMedia: {
+                    activeMedia: ensureAudibleMediaDefaults({
                       ...target,
                       id: match.id,
                       url: match.url,
                       name: target.name || match.name || "Media File",
-                    },
+                    }),
                   };
                 }
               }
@@ -1281,12 +1281,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
               );
               if (match && match.url) {
                 hasRepairs = true;
-                repairedActiveMedia = {
+                repairedActiveMedia = ensureAudibleMediaDefaults({
                   ...target,
                   id: match.id,
                   url: match.url,
                   name: target.name || match.name || "Media File",
-                };
+                });
               }
             }
 
@@ -1302,7 +1302,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
             }
           }
         })
-        .catch(() => {});
+        .catch(() => { });
+
       import("@/lib/api").then(({ apiRequest }) => {
         apiRequest<any>(`/api/studios/${studioId}`)
           .then((res) => {
@@ -1312,7 +1313,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
                 try {
                   const key = getStudioStorageKey(studioId);
                   localStorage.setItem(key, JSON.stringify(cloud));
-                } catch {}
+                } catch { }
 
                 const cloudActiveScene =
                   cloud.scenes.find((s) => s.id === cloud.activeSceneId) || cloud.scenes[0];
@@ -1324,12 +1325,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
                     cloud.isStageCropped !== undefined
                       ? cloud.isStageCropped
                       : cloudActiveScene?.isStageCropped !== undefined
-                      ? cloudActiveScene.isStageCropped
-                      : resolvedLayout === "cropped" || resolvedLayout === "podcast"
-                      ? true
-                      : state.isStageCropped;
+                        ? cloudActiveScene.isStageCropped
+                        : resolvedLayout === "cropped" || resolvedLayout === "podcast"
+                          ? true
+                          : state.isStageCropped;
+                  const healedCloudScenes = (cloud.scenes || state.scenes).map((sc) => ({
+                    ...sc,
+                    activeMedia: ensureAudibleMediaDefaults(sc.activeMedia),
+                  }));
                   return {
-                    scenes: cloud.scenes || state.scenes,
+                    scenes: healedCloudScenes,
                     activeSceneId: cloud.activeSceneId || state.activeSceneId,
                     activeLayout: resolvedLayout,
                     isStageCropped: resolvedCropped,
@@ -1341,15 +1346,21 @@ export const useStudioStore = create<StudioState>((set, get) => ({
                     showLogo: cloud.showLogo !== undefined ? cloud.showLogo : state.showLogo,
                     activeBanner: cloud.activeBanner !== undefined ? cloud.activeBanner : state.activeBanner,
                     activeTextCard: cloud.activeTextCard !== undefined ? cloud.activeTextCard : (cloudActiveScene?.textCard ?? state.activeTextCard),
-                    fairUseConfig: cloud.fairUseConfig || state.fairUseConfig,
+                    fairUseConfig: {
+                      ...state.fairUseConfig,
+                      ...(cloud.fairUseConfig || {}),
+                      autoAudioDucking: false,
+                    },
                     activeStageOverlay: cloud.activeStageOverlay !== undefined ? cloud.activeStageOverlay : state.activeStageOverlay,
-                    activeMedia: cloud.activeMedia !== undefined ? cloud.activeMedia : state.activeMedia,
+                    activeMedia: ensureAudibleMediaDefaults(
+                      cloud.activeMedia !== undefined ? cloud.activeMedia : state.activeMedia
+                    ),
                   };
                 });
               }
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       });
     }
   },
@@ -1365,32 +1376,32 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   isSceneTransitioning: false,
   isMediaTransitioning: false,
-  setMediaTransitioning: (val) => set({ isMediaTransitioning: val }),
+  newlyAddedParticipantIds: [],
   activeTransitionType: "fade",
 
   fairUseConfig: {
     enabled: true,
     enforceReactionPiP: true,
     autoAudioDucking: false,
-    duckingActive: false,
-    duckingVolumePct: 18,
+    duckingVolumePct: 25,
     visualTransformFilter: true,
     mirrorMediaVideo: false,
     playbackRate: 1.04,
-    autoPauseIntervalSec: 8, // Default 8-12s Random Active!
-    antiMatchMode: "jerk-skip", // Default Frame-Skip + Micro-Jerk!
+    autoPauseIntervalSec: 8,
+    antiMatchMode: "jerk-skip",
     showFairUseBadge: true,
     badgeText: "LIVE COMMENTARY & REVIEW • FAIR USE",
     filmGrainOverlay: true,
     grainIntensity: "random",
-    isBreathingEnabled: true,
-    breathingIntensity: "subtle",
-    enableAudioFairUse: true,
-    vintageLinesOverlay: true, // Default Old-Movie Bareek Lines ON!
+    zoomBreathing: true,
+    breathIntensity: "medium",
+    audioEqProtection: true,
+    dynamicTempoVariance: true,
+    vintageLinesOverlay: true,
     vintageLinesIntensity: "medium",
-    vignetteOverlay: true,
     idleMediaGuardSec: 60,
     ...(savedLayout.fairUseConfig || {}),
+    autoAudioDucking: false,
   },
   setFairUseConfig: (updates) =>
     set((s) => {
@@ -1443,15 +1454,15 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       layout === "three-equal"
         ? 33
         : layout === "speaker-large" || layout === "presentation"
-        ? 65
-        : 50;
+          ? 65
+          : 50;
 
     const nextCropped =
       layout === "cropped" || layout === "podcast"
         ? true
         : layout === "side-by-side" || layout === "fit"
-        ? false
-        : get().isStageCropped;
+          ? false
+          : get().isStageCropped;
 
     const currentTransforms = { ...get().tileTransforms };
     let hasTransformChanges = false;
@@ -1500,17 +1511,17 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
     const updatedScenes = activeSceneId
       ? get().scenes.map((s) =>
-          s.id === activeSceneId
-            ? {
-                ...s,
-                layout,
-                splitRatio: defaultSplit,
-                isStageCropped: nextCropped,
-                participantBounds: {},
-                ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
-              }
-            : s
-        )
+        s.id === activeSceneId
+          ? {
+            ...s,
+            layout,
+            splitRatio: defaultSplit,
+            isStageCropped: nextCropped,
+            participantBounds: {},
+            ...(hasTransformChanges ? { tileTransforms: currentTransforms } : {}),
+          }
+          : s
+      )
       : get().scenes;
 
     persistStudioLayout({
@@ -1547,7 +1558,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set({ layoutSplitRatio: clamped, scenes: updatedScenes, activeSceneId });
   },
 
-  // Freeform Window Bounds & Selection Tool (StreamYard parity)
   participantBounds: savedLayout.participantBounds || {},
   selectedParticipantId: null,
   isFreeformMode: savedLayout.isFreeformMode !== undefined ? savedLayout.isFreeformMode : false,
@@ -1568,7 +1578,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         isLockedRatio: true,
       };
       const merged = { ...existing, ...updates };
-      // Clamp bounds safely within stage
       merged.width = Math.max(10, Math.min(100, merged.width));
       merged.height = Math.max(8, Math.min(100, merged.height));
       merged.x = Math.max(0, Math.min(100 - merged.width, merged.x));
@@ -1578,7 +1587,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         [key]: merged,
       };
 
-      // Also persist under stable alias keys so positions remain valid across refreshes
       const p = s.participants.find((item) => String(item.id) === key);
       if (p?.isLocal || key.includes("host") || key.includes("local")) {
         nextBounds["local-host"] = merged;
@@ -1721,7 +1729,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       const nextMicOn = target ? !target.micOn : false;
       const isLocalUser = target?.isLocal || String(id).includes("host") || String(id).includes("local");
 
-      // Event dispatch karein taaki useLiveKit turant Guest ko LiveKit DataChannel se remote mute bhej de
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("livestudio-toggle-participant-mic", {
@@ -1776,7 +1783,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { participants: nextParticipants, scenes: nextScenes };
     }),
 
-  // StreamYard Pre-Show Guest Slot Management
   preAddGuestSlotToScene: (sceneId) =>
     set((s) => {
       const targetId = sceneId || s.activeSceneId;
@@ -1809,7 +1815,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       if (!targetId) return s;
       const nextScenes = s.scenes.map((sc) => {
         if (sc.id !== targetId) return sc;
-        // Jab Auto-Stage ON karein aur Guest Slots 0 ho, to automatically Guest Slots ko 1 kar dein!
         const nextSlots = enabled ? Math.max(1, sc.expectedGuestSlots || 1) : sc.expectedGuestSlots;
         return { ...sc, autoAddGuestsToStage: enabled, expectedGuestSlots: nextSlots };
       });
@@ -1825,11 +1830,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       const nextScenes = s.scenes.map((sc) =>
         sc.id === targetId
           ? {
-              ...sc,
-              replaceHostOnGuestJoin: enabled,
-              // Replace Host ON karne par Auto-Stage aur 1 Guest Slot bhi auto-enable kar dein
-              ...(enabled ? { autoAddGuestsToStage: true, expectedGuestSlots: Math.max(1, sc.expectedGuestSlots || 1) } : {}),
-            }
+            ...sc,
+            replaceHostOnGuestJoin: enabled,
+            ...(enabled ? { autoAddGuestsToStage: true, expectedGuestSlots: Math.max(1, sc.expectedGuestSlots || 1) } : {}),
+          }
           : sc
       );
       const updatedActive = nextScenes.find((sc) => sc.id === s.activeSceneId);
@@ -1915,12 +1919,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       const nextScenes = s.scenes.map((sc) =>
         sc.id === s.activeSceneId
           ? {
-              ...sc,
-              tileTransforms: nextTransforms,
-              ...(key === "active-media" && updates.isTransparentBg !== undefined
-                ? { isTransparentMedia: Boolean(updates.isTransparentBg) }
-                : {}),
-            }
+            ...sc,
+            tileTransforms: nextTransforms,
+            ...(key === "active-media" && updates.isTransparentBg !== undefined
+              ? { isTransparentMedia: Boolean(updates.isTransparentBg) }
+              : {}),
+          }
           : sc
       );
       persistStudioLayout({ tileTransforms: nextTransforms, scenes: nextScenes });
@@ -1979,15 +1983,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   logoConfig: {
     text: "LiveStudio",
+    imageUrl: "",
+    mode: "text",
+    scale: 40,
     textColor: "#ffffff",
     bgColor: "#000000",
     bgOpacity: 75,
     isTransparentBg: false,
     fontSize: "medium",
-    position: "top-right",
-    mode: "text",
-    imageUrl: "",
-    heightPx: 42,
     ...(savedLayout.logoConfig || {}),
   },
   setLogoConfig: (updates) =>
@@ -2045,10 +2048,10 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       const resolvedType =
         type ||
         (url &&
-        (url.endsWith(".mp4") ||
-          url.endsWith(".webm") ||
-          url.includes("mixkit") ||
-          url.includes("video"))
+          (url.endsWith(".mp4") ||
+            url.endsWith(".webm") ||
+            url.includes("mixkit") ||
+            url.includes("video"))
           ? "video"
           : "image");
       const nextScenes = s.scenes.map((sc) =>
@@ -2085,52 +2088,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       );
       persistStudioLayout({ activeBanner: banner, scenes: nextScenes });
       return { activeBanner: banner, scenes: nextScenes };
-    }),
-  bannerPresets: savedLayout.bannerPresets || [
-    {
-      id: "preset-breaking-news",
-      title: "BREAKING NEWS",
-      subtitle: "Live coverage and real-time updates",
-      themeColor: "#ef4444",
-      style: "block",
-      isShowing: false,
-    },
-    {
-      id: "preset-welcome",
-      title: "WELCOME TO THE STREAM",
-      subtitle: "Drop your questions & comments in the chat!",
-      themeColor: "#3b82f6",
-      style: "classic",
-      isShowing: false,
-    },
-    {
-      id: "preset-minimal-topic",
-      title: "TODAY'S SPECIAL GUEST",
-      subtitle: "Deep-dive discussion & Q&A session",
-      themeColor: "#8b5cf6",
-      style: "minimal",
-      isShowing: false,
-    },
-    {
-      id: "preset-social",
-      title: "FOLLOW US @STREAMSTUDIO",
-      subtitle: "Subscribe for weekly technical live deep-dives",
-      themeColor: "#10b981",
-      style: "bubble",
-      isShowing: false,
-    },
-  ],
-  addBannerPreset: (preset) =>
-    set((s) => {
-      const next = [preset, ...s.bannerPresets.filter((b) => b.id !== preset.id)];
-      persistStudioLayout({ bannerPresets: next });
-      return { bannerPresets: next };
-    }),
-  removeBannerPreset: (id) =>
-    set((s) => {
-      const next = s.bannerPresets.filter((b) => b.id !== id);
-      persistStudioLayout({ bannerPresets: next });
-      return { bannerPresets: next };
     }),
   setTicker: (text, show) => {
     persistStudioLayout({ tickerText: text, showTicker: show });
@@ -2259,20 +2216,28 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { overlayHistory: DEFAULT_STUDIO_OVERLAYS };
     }),
 
-  // StreamYard Parity: activeMedia restored from saved layout or current scene on refresh
-  activeMedia:
+  activeMedia: ensureAudibleMediaDefaults(
     savedLayout.activeMedia !== undefined
       ? savedLayout.activeMedia
       : (savedLayout.activeSceneId
-          ? (savedLayout.scenes || DEFAULT_STUDIO_SCENES).find((s) => s.id === savedLayout.activeSceneId)?.activeMedia
-          : null) || null,
+        ? (savedLayout.scenes || DEFAULT_STUDIO_SCENES).find((s) => s.id === savedLayout.activeSceneId)?.activeMedia
+        : null) || null
+  ),
   setActiveMedia: (media) =>
     set((s) => {
+      const nextMedia = media
+        ? {
+          ...media,
+          // Guarantee new media activations default to unmuted 100% volume unless explicitly muted
+          isMuted: media.isMuted ?? false,
+          volume: typeof media.volume === "number" && media.volume > 0 ? media.volume : 100,
+        }
+        : null;
       const nextScenes = s.scenes.map((sc) =>
-        sc.id === s.activeSceneId ? { ...sc, activeMedia: media } : sc
+        sc.id === s.activeSceneId ? { ...sc, activeMedia: nextMedia } : sc
       );
-      persistStudioLayout({ activeMedia: media, scenes: nextScenes });
-      return { activeMedia: media, scenes: nextScenes };
+      persistStudioLayout({ activeMedia: nextMedia, scenes: nextScenes });
+      return { activeMedia: nextMedia, scenes: nextScenes };
     }),
   toggleMediaMute: () => {
     const current = get().activeMedia;
@@ -2306,7 +2271,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   setMediaVolume: (volume: number) => {
     const current = get().activeMedia;
     if (!current) return;
-    const updated = { ...current, volume };
+    const updated = { ...current, volume, isMuted: volume === 0 };
     persistStudioLayout({ activeMedia: updated });
     const activeSceneId = get().activeSceneId;
     const scenes = get().scenes.map((s) => {
@@ -2318,7 +2283,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set({ activeMedia: updated, scenes });
   },
 
-  // Multi-Slide Presentation Controls (StreamYard Paid Plan)
   nextSlide: () => {
     const media = get().activeMedia;
     if (!media || !media.slides || media.slides.length === 0) return;
@@ -2349,7 +2313,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     });
   },
 
-  // Auto-Advance Scene when Intro/Video Media Ends
   triggerMediaEnded: () => {
     const state = get();
     const activeScene = state.scenes.find((s) => s.id === state.activeSceneId);
@@ -2367,9 +2330,13 @@ export const useStudioStore = create<StudioState>((set, get) => ({
 
   mediaLibrary: loadSavedMediaLibrary(),
   addMediaLibraryItem: (item) => {
+    if (!item || isDummyOrBrokenMediaItem(item)) return;
     const current = get().mediaLibrary;
-    const filtered = current.filter((m) => m.id !== item.id && m.url !== item.url);
-    const next = [item, ...filtered];
+    const newSig = getMediaDeduplicationSignature(item);
+    const filtered = current.filter(
+      (m) => m.id !== item.id && getMediaDeduplicationSignature(m) !== newSig
+    );
+    const next = sanitizeAndDeduplicateMediaList([item, ...filtered], true);
     persistMediaLibrary(next);
     set({ mediaLibrary: next });
   },
@@ -2377,30 +2344,32 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const current = get().mediaLibrary;
     const next = current.map((m) => (m.id === id ? { ...m, ...updates } : m));
     persistMediaLibrary(next);
-    set({ mediaLibrary: next });
+    const state = get();
+    const updatedItem = next.find((m) => m.id === id) || null;
+    const nextScenes = state.scenes.map((s) =>
+      s.activeMedia?.id === id && updatedItem ? { ...s, activeMedia: updatedItem } : s
+    );
+    const nextActiveMedia =
+      state.activeMedia?.id === id && updatedItem ? updatedItem : state.activeMedia;
+    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia });
+    set({ mediaLibrary: next, scenes: nextScenes, activeMedia: nextActiveMedia });
   },
   removeMediaLibraryItem: (id) => {
-    const current = get().mediaLibrary;
-    const next = current.filter((m) => m.id !== id);
+    const state = get();
+    const targetItem = state.mediaLibrary.find((m) => m.id === id);
+    const next = state.mediaLibrary.filter((m) => m.id !== id);
     persistMediaLibrary(next);
 
-    // Remove from any Scene's activeMedia
-    const currentScenes = get().scenes;
-    const nextScenes = currentScenes.map((s) =>
-      s.activeMedia?.id === id ? { ...s, activeMedia: undefined } : s
+    const nextScenes = state.scenes.map((s) =>
+      s.activeMedia?.id === id ? { ...s, activeMedia: null } : s
     );
-
-    // Remove from live Stage activeMedia
-    const currentActiveMedia = get().activeMedia;
-    const nextActiveMedia = currentActiveMedia?.id === id ? null : currentActiveMedia;
-
-    // Remove from activeStageOverlay
-    const currentOverlay = get().activeStageOverlay;
-    const nextOverlay = currentOverlay?.id === id ? null : currentOverlay;
+    const nextActiveMedia = state.activeMedia?.id === id ? null : state.activeMedia;
+    const nextOverlay = state.activeStageOverlay?.id === id ? null : state.activeStageOverlay;
 
     persistStudioLayout({
       scenes: nextScenes,
-      ...(nextActiveMedia !== currentActiveMedia ? { activeMedia: nextActiveMedia || undefined } : {}),
+      activeMedia: nextActiveMedia,
+      activeStageOverlay: nextOverlay,
     });
 
     set({
@@ -2410,35 +2379,59 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       activeStageOverlay: nextOverlay,
     });
 
-    // Call DELETE /api/media/:id on the backend asynchronously
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("livestudio_token");
-      fetch(`/api/media/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      }).catch(() => {});
+    const isClientOnlyId = /^(yt-clip-|tactical-map-|website-|slides-deck-|screenshot-|local-)/.test(String(id));
+    if (!isClientOnlyId || (targetItem?.url && targetItem.url.includes("/api/media/"))) {
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("livestudio_token");
+        fetch(`/api/media/${id}`, {
+          method: "DELETE",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }).catch(() => { });
+      }
     }
   },
   cleanupMediaLibrary: () => {
-    const current = get().mediaLibrary || [];
-    const sanitized = sanitizeAndDeduplicateMediaList(current, true);
-    const removedCount = current.length - sanitized.length;
-    persistMediaLibrary(sanitized);
+    const state = get();
+    const beforeCount = state.mediaLibrary.length;
+    const cleaned = sanitizeAndDeduplicateMediaList(state.mediaLibrary, true);
+    const validIds = new Set(cleaned.map((m) => m.id));
 
-    // Also sanitize scenes
-    const scenes = get().scenes.map((s) => {
-      if (s.activeMedia && isDummyOrBrokenMediaItem(s.activeMedia)) {
-        return { ...s, activeMedia: undefined };
+    const nextScenes = state.scenes.map((s) => {
+      if (!s.activeMedia) return s;
+      if (isDummyOrBrokenMediaItem(s.activeMedia)) {
+        return { ...s, activeMedia: null };
+      }
+      if (!validIds.has(s.activeMedia.id)) {
+        const sigMatch = cleaned.find(
+          (c) => getMediaDeduplicationSignature(c) === getMediaDeduplicationSignature(s.activeMedia!)
+        );
+        return { ...s, activeMedia: sigMatch || s.activeMedia };
       }
       return s;
     });
 
-    const activeMedia = get().activeMedia;
-    const nextActiveMedia = activeMedia && isDummyOrBrokenMediaItem(activeMedia) ? null : activeMedia;
+    const nextActiveMedia =
+      state.activeMedia && isDummyOrBrokenMediaItem(state.activeMedia)
+        ? null
+        : state.activeMedia;
 
-    persistStudioLayout({ scenes, activeMedia: nextActiveMedia || undefined });
-    set({ mediaLibrary: sanitized, scenes, activeMedia: nextActiveMedia });
-    return removedCount;
+    persistMediaLibrary(cleaned);
+    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia });
+    set({
+      mediaLibrary: cleaned,
+      scenes: nextScenes,
+      activeMedia: nextActiveMedia,
+    });
+
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("livestudio_token");
+      fetch("/api/media/cleanup", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => { });
+    }
+
+    return Math.max(0, beforeCount - cleaned.length);
   },
 
   messages: [
@@ -2469,7 +2462,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   pinnedMessage: null,
   pinMessage: (msg) => set({ pinnedMessage: msg }),
   commentConfig: {
-    position: "bottom", // StreamYard broadcast standard: LOWER-THIRD!
+    position: "bottom",
     theme: "default",
     showAvatar: true,
     fontSize: "medium",
@@ -2482,7 +2475,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { commentConfig: nextConfig };
     }),
 
-  // Private Backstage Chat (Host <-> Guests)
   privateMessages: [
     {
       id: "priv-welcome",
@@ -2509,15 +2501,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { privateMessages: [...s.privateMessages, entry] };
     }),
 
-  // Media Stage Position / Slot Index (0 = Left/Top-Left/Hero, 1 = Right/Middle/Top-Right, etc.)
   mediaSlotIndex: savedLayout.scenes?.find((s) => s.id === savedLayout.activeSceneId)?.mediaSlotIndex ?? 0,
   setMediaSlotIndex: (slotIndex) =>
     set((s) => {
       const clamped = Math.max(0, Math.min(8, slotIndex));
       const prevSlot = s.mediaSlotIndex ?? 0;
 
-      // 2-Window Split (Cropped / Fit / Side-by-Side / Podcast / Interview) me Left <-> Right switch hone par
-      // layoutSplitRatio ko mirror (100 - ratio) karein taaki Media aur Guest ka size ulta na ho!
       const isTwoColumnSplit =
         s.activeLayout === "cropped" ||
         s.activeLayout === "podcast" ||
@@ -2549,7 +2538,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       const targetIdx = direction === "left" ? currentIdx - 1 : currentIdx + 1;
       if (targetIdx < 0 || targetIdx >= onStage.length) return s;
 
-      // Swap positions in the main participants array
       const idA = onStage[currentIdx].id;
       const idB = onStage[targetIdx].id;
       const fullList = [...s.participants];
@@ -2569,13 +2557,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       return { participants: fullList, scenes: nextScenes };
     }),
 
-  // 1-Click Solo / Spotlight Memory State
   soloTargetId: null,
   preSoloSnapshot: null,
   toggleSoloParticipant: (id) =>
     set((s) => {
       const targetStr = String(id);
-      // Agar pehle se Solo hai, toh wapas purana layout aur stage participants restore karein
       if (s.soloTargetId && String(s.soloTargetId) === targetStr && s.preSoloSnapshot) {
         const prevSet = new Set(s.preSoloSnapshot.onStageIds.map(String));
         const restoredParticipants = s.participants.map((p) => ({
@@ -2590,7 +2576,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         };
       }
 
-      // Naya Solo activate karein: current state snapshot me save karein
       const currentOnStageIds = s.participants.filter((p) => p.status === "ON_STAGE").map((p) => p.id);
       const snapshot = s.preSoloSnapshot || {
         layout: s.activeLayout,
@@ -2670,19 +2655,17 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     persistStudioLayout({ broadcastTitle: title });
   },
 
-  // Telestrator & On-Screen Drawing Tool
   isDrawingMode: false,
   setIsDrawingMode: (enabled) => set({ isDrawingMode: enabled }),
   drawingTool: "pen",
   setDrawingTool: (tool) => set({ drawingTool: tool }),
-  drawingColor: "#ef4444", // Neon Red default
+  drawingColor: "#ef4444",
   setDrawingColor: (color) => set({ drawingColor: color }),
   drawingWidth: 4,
   setDrawingWidth: (width) => set({ drawingWidth: width }),
   isDrawingVisible: true,
   setIsDrawingVisible: (visible) => set({ isDrawingVisible: visible }),
 
-  // StreamYard Scenes System
   scenes: initialScenes,
   activeSceneId: initialActiveSceneId,
   isScenesPanelOpen: savedLayout.isScenesPanelOpen !== undefined ? savedLayout.isScenesPanelOpen : true,
@@ -2710,11 +2693,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       autoAddGuestsToStage: custom?.autoAddGuestsToStage ?? true,
       transitionType: custom?.transitionType || "fade",
       textCard: custom?.textCard ?? null,
-      activeMedia: custom?.activeMedia !== undefined ? custom?.activeMedia : state.activeMedia,
-      backgroundUrl: custom?.backgroundUrl !== undefined ? custom?.backgroundUrl : state.activeBackgroundUrl,
+      activeMedia: custom?.activeMedia !== undefined ? custom.activeMedia : state.activeMedia,
+      backgroundUrl: custom?.backgroundUrl !== undefined ? custom.backgroundUrl : state.activeBackgroundUrl,
       backgroundType: custom?.backgroundType || state.activeBackgroundType,
-      stageOverlay: custom?.stageOverlay !== undefined ? custom?.stageOverlay : state.activeStageOverlay,
-      banner: custom?.banner !== undefined ? custom?.banner : state.activeBanner,
+      stageOverlay: custom?.stageOverlay !== undefined ? custom.stageOverlay : state.activeStageOverlay,
+      banner: custom?.banner !== undefined ? custom.banner : state.activeBanner,
       thumbnailColor: custom?.thumbnailColor || "#6366f1",
       ...custom,
     };
@@ -2748,14 +2731,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     }
   },
   duplicateScene: (id) => {
-    // Agar active scene duplicate ho raha hai, toh pehle stage ki har current setting usme save karein
     if (get().activeSceneId === id) {
       get().saveCurrentStageToScene(id);
     }
     const scene = get().scenes.find((s) => s.id === id);
     if (!scene) return;
 
-    // 100% Deep Clone taaki Media position, Zoom, Pan, Crop, Guest Slots sab exact copy hon
     const deepCloned: StudioScene = JSON.parse(JSON.stringify(scene));
     const copy: StudioScene = {
       ...deepCloned,
@@ -2778,37 +2759,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const scene = state.scenes.find((s) => s.id === id);
     if (!scene) return;
 
-    // Switch karne se pehle current active scene ka poora state auto-save karein (StreamYard standard)
     if (state.activeSceneId && state.activeSceneId !== id) {
       get().saveCurrentStageToScene(state.activeSceneId);
-    }
-
-    // StreamYard Scene Participant Reconciliation:
-    // Supports Media-Only scenes, auto-promoting connected guests, and replaceHostOnGuestJoin
-    const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
-
-    // Smart Delta Scene Transition: Compare current and upcoming on-stage participants
-    // If Host/Guest remain on stage across scenes, do NOT blur/flicker the entire stage!
-    // Instead, only trigger media transitioning for the changing 3rd tile.
-    const prevOnStageIds = state.participants
-      .filter((p) => p.status === "ON_STAGE")
-      .map((p) => String(p.id));
-    const nextOnStageIds = nextParticipants
-      .filter((p) => p.status === "ON_STAGE")
-      .map((p) => String(p.id));
-
-    const sharedOnStageIds = prevOnStageIds.filter((id) => nextOnStageIds.includes(id));
-    const isSmartDelta = sharedOnStageIds.length > 0;
-
-    const transition = scene.transitionType || "fade";
-    if (transition !== "cut") {
-      if (isSmartDelta) {
-        set({ isMediaTransitioning: true, activeTransitionType: transition });
-        setTimeout(() => set({ isMediaTransitioning: false }), 420);
-      } else {
-        set({ isSceneTransitioning: true, activeTransitionType: transition });
-        setTimeout(() => set({ isSceneTransitioning: false }), 420);
-      }
     }
 
     const targetLayout = scene.layout || "solo";
@@ -2822,10 +2774,60 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       (targetLayout === "three-equal"
         ? 33
         : targetLayout === "speaker-large" || targetLayout === "presentation"
-        ? 65
-        : 50);
+          ? 65
+          : 50);
 
-    // Restore scene-specific tileTransforms (Zoom, Pan, Fit/Cover, Transparent Media)
+    const nextParticipants = reconcileParticipantsWithScene(state.participants, [], scene, true);
+
+    const prevOnStageIds = state.participants
+      .filter((p) => p.status === "ON_STAGE")
+      .map((p) => String(p.id));
+    const nextOnStageIds = nextParticipants
+      .filter((p) => p.status === "ON_STAGE")
+      .map((p) => String(p.id));
+    const sharedOnStageIds = nextOnStageIds.filter((pid) => prevOnStageIds.includes(pid));
+    const newlyAddedIds = nextOnStageIds.filter((pid) => !prevOnStageIds.includes(pid));
+
+    // Ensure switched scene media is unmuted and at full audible volume (100%) by default!
+    const rawSceneMedia = scene.activeMedia !== undefined ? scene.activeMedia : null;
+    const nextMedia = ensureAudibleMediaDefaults(rawSceneMedia);
+
+    const prevMediaKey = state.activeMedia ? `${state.activeMedia.id}:${state.activeMedia.url}` : "";
+    const nextMediaKey = nextMedia ? `${nextMedia.id}:${nextMedia.url}` : "";
+    const didMediaChange = prevMediaKey !== nextMediaKey;
+
+    const transition = scene.transitionType || "fade";
+    if (transition !== "cut") {
+      if (sharedOnStageIds.length > 0) {
+        set({
+          isSceneTransitioning: false,
+          isMediaTransitioning: didMediaChange,
+          newlyAddedParticipantIds: newlyAddedIds,
+          activeTransitionType: transition,
+        });
+        setTimeout(
+          () => set({ isMediaTransitioning: false, newlyAddedParticipantIds: [] }),
+          360
+        );
+      } else {
+        set({
+          isSceneTransitioning: true,
+          isMediaTransitioning: didMediaChange,
+          newlyAddedParticipantIds: newlyAddedIds,
+          activeTransitionType: transition,
+        });
+        setTimeout(
+          () =>
+            set({
+              isSceneTransitioning: false,
+              isMediaTransitioning: false,
+              newlyAddedParticipantIds: [],
+            }),
+          420
+        );
+      }
+    }
+
     const currentTransforms: Record<string, TileTransform> = scene.tileTransforms
       ? JSON.parse(JSON.stringify(scene.tileTransforms))
       : { ...state.tileTransforms };
@@ -2851,13 +2853,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const nextStageOverlay = scene.stageOverlay !== undefined ? scene.stageOverlay : state.activeStageOverlay;
     const nextBanner = scene.banner !== undefined ? scene.banner : state.activeBanner;
     const nextTextCard = scene.textCard !== undefined ? scene.textCard : null;
-    const nextMedia = scene.activeMedia !== undefined ? scene.activeMedia : null;
     const nextBounds = scene.participantBounds ? JSON.parse(JSON.stringify(scene.participantBounds)) : {};
     const nextCustomConfig = scene.customLayoutConfig
       ? { ...state.customLayoutConfig, ...scene.customLayoutConfig }
       : { ...state.customLayoutConfig, heroParticipantId: scene.heroParticipantId ?? null };
 
-    // Single atomic state update (prevents UI flicker & layout overwrites)
     set({
       activeSceneId: id,
       activeLayout: targetLayout,
