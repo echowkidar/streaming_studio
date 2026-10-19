@@ -98,6 +98,7 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     micEnabled: lkMic,
     cameraEnabled: lkCam,
     screenEnabled: lkScreen,
+    localVideoTrack,
     toggleMicrophone,
     toggleCamera,
     flipCamera,
@@ -1472,6 +1473,9 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         onClose={() => setIsSettingsOpen(false)}
         onSelectAudioDevice={setAudioDevice}
         onSelectVideoDevice={setVideoDevice}
+        localVideoTrack={localVideoTrack}
+        isCameraEnabled={lkCam}
+        onToggleCamera={toggleCamera}
       />
 
       {/* Local Participant ISO Recording Manager Modal */}

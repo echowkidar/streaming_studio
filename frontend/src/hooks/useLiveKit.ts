@@ -73,8 +73,21 @@ export async function resolveLockedHardwareDevice(
 ): Promise<MediaDeviceInfo | null> {
   if (typeof window === "undefined" || !navigator.mediaDevices?.enumerateDevices) return null;
   try {
-    const all = await navigator.mediaDevices.enumerateDevices();
-    const list = all.filter((d) => d.kind === kind && d.deviceId);
+    let all = await navigator.mediaDevices.enumerateDevices();
+    let list = all.filter((d) => d.kind === kind && d.deviceId);
+
+    // If video devices have empty deviceId or list is empty, probe with getUserMedia to unlock permissions/labels
+    if (kind === "videoinput" && list.length === 0 && typeof navigator.mediaDevices?.getUserMedia === "function") {
+      try {
+        const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+        probe.getTracks().forEach((t) => t.stop());
+        all = await navigator.mediaDevices.enumerateDevices();
+        list = all.filter((d) => d.kind === kind && d.deviceId);
+      } catch {
+        // Probe may fail if camera locked or permission denied
+      }
+    }
+
     if (list.length === 0) return null;
 
     // 1. Exact hardware deviceId match (excluding virtual 'default' / 'communications' if concrete exists)
@@ -781,8 +794,14 @@ export function useLiveKit({
           savePreferredDevices({ videoDeviceId: lockedCam.deviceId, videoLabel: lockedCam.label });
         }
       } catch (camErr) {
-        console.warn("Camera unavailable, continuing in Audio-Only mode:", camErr);
-        camStarted = false;
+        console.warn("Primary camera setup failed, trying fallback generic video:", camErr);
+        try {
+          await newRoom.localParticipant.setCameraEnabled(true);
+          camStarted = newRoom.localParticipant.isCameraEnabled;
+        } catch (fallbackCamErr) {
+          console.warn("Camera unavailable or locked by another app, continuing in Audio-Only mode:", fallbackCamErr);
+          camStarted = false;
+        }
       }
 
       setMicEnabled(micStarted);
@@ -804,12 +823,24 @@ export function useLiveKit({
     if (!roomRef.current) return false;
     const nextState = !camEnabled;
     try {
-      await roomRef.current.localParticipant.setCameraEnabled(nextState);
+      const prefs = loadPreferredDevices();
+      const options = nextState && prefs.videoDeviceId ? { deviceId: prefs.videoDeviceId } : undefined;
+      await roomRef.current.localParticipant.setCameraEnabled(nextState, options);
       setCamEnabled(nextState);
       syncParticipants(roomRef.current);
       return nextState;
     } catch (err) {
-      console.error("Failed to toggle camera:", err);
+      console.error("Failed to toggle camera with options:", err);
+      if (nextState) {
+        try {
+          await roomRef.current.localParticipant.setCameraEnabled(true);
+          setCamEnabled(true);
+          syncParticipants(roomRef.current);
+          return true;
+        } catch (fallbackErr) {
+          console.error("Generic camera enable failed as well:", fallbackErr);
+        }
+      }
       return camEnabled;
     }
   }, [camEnabled, syncParticipants]);
@@ -932,13 +963,34 @@ export function useLiveKit({
       });
 
       if (roomRef.current) {
-        await roomRef.current.switchActiveDevice("videoinput", finalId);
+        const isCamActive = roomRef.current.localParticipant.isCameraEnabled;
+        if (!isCamActive || !camEnabled) {
+          try {
+            await roomRef.current.localParticipant.setCameraEnabled(true, { deviceId: finalId });
+            setCamEnabled(true);
+          } catch (switchErr) {
+            console.warn("Failed to enable camera with specific deviceId, trying generic:", switchErr);
+            try {
+              await roomRef.current.localParticipant.setCameraEnabled(true);
+              setCamEnabled(true);
+            } catch (fallbackErr) {
+              console.warn("Generic camera activation also failed:", fallbackErr);
+            }
+          }
+        } else {
+          try {
+            await roomRef.current.switchActiveDevice("videoinput", finalId);
+          } catch (switchErr) {
+            console.warn("switchActiveDevice failed, re-enabling camera track:", switchErr);
+            await roomRef.current.localParticipant.setCameraEnabled(true, { deviceId: finalId });
+          }
+        }
         syncParticipants(roomRef.current);
       }
     } catch (e) {
       console.warn("Failed to switch video device:", e);
     }
-  }, [syncParticipants]);
+  }, [camEnabled, syncParticipants]);
 
   // Anti-Bluetooth Hijack Guard: When Bluetooth connects/disconnects, keep the user's selected PC Mic locked!
   useEffect(() => {

@@ -15,7 +15,11 @@ import {
   Square,
   Headphones,
   RefreshCw,
+  AlertTriangle,
+  VideoOff,
+  Camera,
 } from "lucide-react";
+import type { LocalVideoTrack } from "livekit-client";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -35,6 +39,9 @@ interface DeviceSettingsModalProps {
   onClose: () => void;
   onSelectAudioDevice?: (deviceId: string) => Promise<void> | void;
   onSelectVideoDevice?: (deviceId: string) => Promise<void> | void;
+  localVideoTrack?: LocalVideoTrack | null;
+  isCameraEnabled?: boolean;
+  onToggleCamera?: () => Promise<boolean | void>;
 }
 
 export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
@@ -42,6 +49,9 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
   onClose,
   onSelectAudioDevice,
   onSelectVideoDevice,
+  localVideoTrack,
+  isCameraEnabled,
+  onToggleCamera,
 }) => {
   const [activeTab, setActiveTab] = useState<"devices" | "green-screen">("devices");
   const [resolution, setResolution] = useState<"1080p" | "720p" | "480p">("1080p");
@@ -62,6 +72,14 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
   // Dedicated real-time microphone test stream for the selected mic
   const [micTestStream, setMicTestStream] = useState<MediaStream | null>(null);
   const [micTestError, setMicTestError] = useState<string | null>(null);
+
+  // Live Camera preview state & diagnostics
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isCameraLocked, setIsCameraLocked] = useState(false);
+  const [isCameraBlocked, setIsCameraBlocked] = useState(false);
+  const [isScanningDevices, setIsScanningDevices] = useState(false);
+  const [deviceCameraPreviewStream, setDeviceCameraPreviewStream] = useState<MediaStream | null>(null);
+  const deviceVideoRef = useRef<HTMLVideoElement>(null);
 
   // Mic Check: Record 4s & Play Back + Live Loopback Monitor
   const [isRecordingTest, setIsRecordingTest] = useState(false);
@@ -89,18 +107,65 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
     return [];
   });
 
-  // Load and enumerate real hardware devices (filtering out Windows 'default'/'communications' duplicates when physical device exists)
-  const refreshDeviceList = useCallback(async () => {
+  // Load and enumerate real hardware devices with active permission probe
+  const refreshDeviceList = useCallback(async (forceProbe = false) => {
     if (typeof window === "undefined" || !navigator?.mediaDevices?.enumerateDevices) return;
+    setIsScanningDevices(true);
+    setCameraError(null);
+    setIsCameraLocked(false);
+    setIsCameraBlocked(false);
+
     try {
-      const all = await navigator.mediaDevices.enumerateDevices();
+      let all = await navigator.mediaDevices.enumerateDevices();
+      const hasIdentifiedCams = all.some((d) => d.kind === "videoinput" && (d.deviceId || d.label));
+
+      // If forceProbe is requested or no camera has been identified yet, actively probe getUserMedia
+      if (forceProbe || !hasIdentifiedCams) {
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+          // Immediately stop probe tracks so we don't hold the camera lock
+          probe.getTracks().forEach((t) => t.stop());
+          all = await navigator.mediaDevices.enumerateDevices();
+        } catch (probeErr: any) {
+          console.warn("[DeviceSettingsModal] Probe camera error:", probeErr);
+          const errName = probeErr?.name || "";
+          const errMsg = String(probeErr?.message || "").toLowerCase();
+
+          if (
+            errName === "NotReadableError" ||
+            errName === "TrackStartError" ||
+            errMsg.includes("could not start video source") ||
+            errMsg.includes("in use")
+          ) {
+            setIsCameraLocked(true);
+            setCameraError(
+              "Your camera is currently locked by another application or Chrome tab (such as webcamtests.com, Zoom, Teams, or Windows Camera). Please close the other tab/app and click Rescan Devices."
+            );
+          } else if (
+            errName === "NotAllowedError" ||
+            errName === "PermissionDeniedError" ||
+            errMsg.includes("permission denied")
+          ) {
+            setIsCameraBlocked(true);
+            setCameraError(
+              "Camera permission is blocked in your browser. Click the lock/settings icon (🔒) on the left of your URL bar, set Camera to 'Allow', then click Rescan Devices."
+            );
+          } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+            setCameraError("No physical camera detected on this system.");
+          }
+        }
+      }
+
       const prefs = loadPreferredDevices();
 
       setEchoCancellation(prefs.echoCancellation);
       setNoiseSuppression(prefs.noiseSuppression);
       setAutoGainControl(prefs.autoGainControl);
 
-      const rawCams = all.filter((d) => d.kind === "videoinput" && d.deviceId);
+      const rawCams = all.filter((d) => d.kind === "videoinput");
       const rawMics = all.filter((d) => d.kind === "audioinput" && d.deviceId);
       const rawSpks = all.filter((d) => d.kind === "audiooutput" && d.deviceId);
 
@@ -115,7 +180,20 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
       );
       const finalSpks = physicalSpks.length > 0 ? physicalSpks : rawSpks;
 
-      setCameraDevices(rawCams);
+      // Provide robust fallback labels for cameras so user never gets an empty/blank option
+      const finalCams = rawCams.map((c, idx) => {
+        let label = c.label;
+        if (!label) {
+          label = idx === 0 ? "Integrated Webcam / Primary Camera" : `Camera ${idx + 1}`;
+        }
+        return {
+          ...c,
+          deviceId: c.deviceId || `camera-${idx + 1}`,
+          label,
+        };
+      });
+
+      setCameraDevices(finalCams);
       setMicDevices(finalMics);
       setSpeakerDevices(finalSpks);
 
@@ -139,8 +217,8 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
       );
       if (lockedCam) {
         setSelectedCamId(lockedCam.deviceId);
-      } else if (rawCams[0]) {
-        setSelectedCamId(rawCams[0].deviceId);
+      } else if (finalCams[0]) {
+        setSelectedCamId(finalCams[0].deviceId);
       }
 
       // Resolve locked Speaker
@@ -156,15 +234,18 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
       }
     } catch (e) {
       console.warn("Failed to enumerate devices:", e);
+    } finally {
+      setIsScanningDevices(false);
     }
   }, []);
 
   useEffect(() => {
     if (!isOpen) return;
     refreshDeviceList();
-    navigator.mediaDevices?.addEventListener?.("devicechange", refreshDeviceList);
+    const handleDeviceChange = () => refreshDeviceList(false);
+    navigator.mediaDevices?.addEventListener?.("devicechange", handleDeviceChange);
     return () => {
-      navigator.mediaDevices?.removeEventListener?.("devicechange", refreshDeviceList);
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handleDeviceChange);
     };
   }, [isOpen, refreshDeviceList]);
 
@@ -247,6 +328,75 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
       audio.srcObject = null;
     };
   }, [isLiveMonitoringMic, micTestStream, selectedSpeakerId]);
+
+  // Live Camera preview for "Audio & Video Devices" Tab
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let isCancelled = false;
+
+    if (isOpen && activeTab === "devices") {
+      // 1. If LiveKit already has an active local video track, re-use its MediaStreamTrack directly!
+      // This avoids Windows DirectShow failing with NotReadableError due to single-app exclusive hardware locking.
+      if (localVideoTrack?.mediaStreamTrack && localVideoTrack.mediaStreamTrack.readyState === "live") {
+        const ms = new MediaStream([localVideoTrack.mediaStreamTrack]);
+        setDeviceCameraPreviewStream(ms);
+        if (deviceVideoRef.current) {
+          deviceVideoRef.current.srcObject = ms;
+        }
+        return;
+      }
+
+      // 2. Otherwise request a dedicated preview stream for selectedCamId if camera is available
+      if (selectedCamId && !isCameraLocked && !isCameraBlocked) {
+        const videoConstraint = selectedCamId.startsWith("camera-")
+          ? true
+          : { deviceId: { exact: selectedCamId } };
+
+        navigator.mediaDevices
+          ?.getUserMedia({ video: videoConstraint, audio: false })
+          .then((s) => {
+            if (isCancelled) {
+              s.getTracks().forEach((t) => t.stop());
+              return;
+            }
+            stream = s;
+            setDeviceCameraPreviewStream(s);
+            if (deviceVideoRef.current) {
+              deviceVideoRef.current.srcObject = s;
+            }
+          })
+          .catch(() => {
+            // Fallback generic
+            navigator.mediaDevices
+              ?.getUserMedia({ video: true, audio: false })
+              .then((s) => {
+                if (isCancelled) {
+                  s.getTracks().forEach((t) => t.stop());
+                  return;
+                }
+                stream = s;
+                setDeviceCameraPreviewStream(s);
+                if (deviceVideoRef.current) {
+                  deviceVideoRef.current.srcObject = s;
+                }
+              })
+              .catch((err) => {
+                console.warn("Camera preview stream error:", err);
+                setDeviceCameraPreviewStream(null);
+              });
+          });
+      }
+    } else {
+      setDeviceCameraPreviewStream(null);
+    }
+
+    return () => {
+      isCancelled = true;
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [isOpen, activeTab, selectedCamId, localVideoTrack, isCameraLocked, isCameraBlocked]);
 
   // Handle Mic Selection Change (Immediately locks hardware ID & switches LiveKit room mic)
   const handleMicChange = async (newMicId: string) => {
@@ -473,18 +623,65 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
 
           <button
             type="button"
-            onClick={refreshDeviceList}
-            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white flex items-center gap-1 text-[11px] cursor-pointer"
-            title="Refresh connected USB / Bluetooth devices"
+            onClick={() => refreshDeviceList(true)}
+            disabled={isScanningDevices}
+            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white flex items-center gap-1.5 text-[11px] cursor-pointer disabled:opacity-50 transition-all"
+            title="Request camera access and refresh connected USB / Bluetooth devices"
           >
-            <RefreshCw className="w-3 h-3 text-cyan-400" />
-            <span>Rescan Devices</span>
+            <RefreshCw className={cn("w-3 h-3 text-cyan-400", isScanningDevices && "animate-spin")} />
+            <span>{isScanningDevices ? "Scanning..." : "Rescan Devices"}</span>
           </button>
         </div>
 
         {/* ─── TAB 1: Devices & Audio ──────────────────────────── */}
         {activeTab === "devices" && (
           <div className="space-y-4">
+            {/* Camera Diagnostics / Error Alert Banner */}
+            {cameraError && (
+              <div
+                className={cn(
+                  "p-3 rounded-xl border flex items-start gap-2.5 animate-in fade-in duration-200",
+                  isCameraLocked
+                    ? "bg-amber-500/15 border-amber-500/30 text-amber-200"
+                    : "bg-rose-500/15 border-rose-500/30 text-rose-200"
+                )}
+              >
+                {isCameraLocked ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <VideoOff className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                )}
+                <div className="flex-1 space-y-1 text-xs">
+                  <div className="font-semibold text-white">
+                    {isCameraLocked
+                      ? "Webcam Locked by Another Application or Tab!"
+                      : isCameraBlocked
+                      ? "Camera Permission Blocked in Browser"
+                      : "Camera Access Issue"}
+                  </div>
+                  <p className="text-[11px] leading-relaxed opacity-90">{cameraError}</p>
+                  {isCameraLocked && (
+                    <p className="text-[11px] text-amber-300 font-medium">
+                      👉 <strong>Quick Fix:</strong> Close the other tab (such as <code>webcamtests.com</code>) or any open camera app, then click <strong>Rescan Devices</strong>.
+                    </p>
+                  )}
+                  {isCameraBlocked && (
+                    <p className="text-[11px] text-rose-300 font-medium">
+                      👉 <strong>Quick Fix:</strong> Click the <strong>Lock (🔒)</strong> or <strong>Tune</strong> icon on the left of your browser address bar, set Camera to <strong>Allow</strong>, and click <strong>Rescan Devices</strong>.
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshDeviceList(true)}
+                  disabled={isScanningDevices}
+                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-[11px] shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {isScanningDevices ? "Scanning..." : "Retry Access"}
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Camera Selector */}
               <div className="space-y-1.5">
@@ -493,7 +690,9 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                     <Video className="w-3.5 h-3.5 text-indigo-400" />
                     Camera Device
                   </span>
-                  <span className="text-[10px] text-emerald-400 font-mono">Locked ✓</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">
+                    {cameraDevices.length > 0 ? "Hardware Ready ✓" : "Camera Search"}
+                  </span>
                 </label>
                 <select
                   value={selectedCamId}
@@ -507,7 +706,13 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                       </option>
                     ))
                   ) : (
-                    <option value="">No Camera Detected (Audio-Only Mode)</option>
+                    <option value="">
+                      {isCameraLocked
+                        ? "Webcam Locked by Another Tab (Click Rescan)"
+                        : isCameraBlocked
+                        ? "Camera Blocked (Allow in URL Bar)"
+                        : "No Camera Detected (Audio-Only Mode)"}
+                    </option>
                   )}
                 </select>
               </div>
@@ -532,6 +737,72 @@ export const DeviceSettingsModal: React.FC<DeviceSettingsModalProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            {/* Live Camera Feed & Framing Preview Widget */}
+            <div className="p-3.5 rounded-xl bg-surface border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Video className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="text-slate-200 font-semibold">Live Camera Feed & Framing</span>
+                  {deviceCameraPreviewStream ? (
+                    <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Live Feed
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400 font-mono bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                      Camera Idle / Off
+                    </span>
+                  )}
+                </div>
+
+                {onToggleCamera && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleCamera()}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-[11px] font-semibold transition-all cursor-pointer"
+                  >
+                    {isCameraEnabled ? "Turn Off Camera" : "Turn On Camera"}
+                  </button>
+                )}
+              </div>
+
+              <div className="aspect-video w-full max-h-52 rounded-xl overflow-hidden bg-black/90 border border-white/10 relative flex items-center justify-center shadow-inner">
+                <video
+                  ref={deviceVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={cn(
+                    "w-full h-full object-cover scale-x-[-1] transition-opacity duration-300",
+                    deviceCameraPreviewStream ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                {!deviceCameraPreviewStream && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center space-y-2">
+                    <VideoOff className="w-7 h-7 text-slate-500" />
+                    <span className="text-xs text-slate-300 font-medium">
+                      {isCameraLocked
+                        ? "Webcam in use by another tab (e.g. webcamtests.com)"
+                        : isCameraBlocked
+                        ? "Camera permission blocked in browser"
+                        : cameraDevices.length === 0
+                        ? "No camera detected on this computer"
+                        : "Camera preview not started"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => refreshDeviceList(true)}
+                      disabled={isScanningDevices}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn("w-3.5 h-3.5", isScanningDevices && "animate-spin")} />
+                      <span>{isScanningDevices ? "Scanning..." : "Unlock & Start Camera"}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
