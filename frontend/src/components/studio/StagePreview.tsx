@@ -361,29 +361,7 @@ export const StagePreview: React.FC = () => {
   const normalizedMediaVolumePct = Math.max(0, Math.min(100, activeMedia?.volume ?? 100));
   const [isMediaHovered, setIsMediaHovered] = useState(false);
 
-  const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("livestudio_media_toolbar_pos");
-        if (saved) return JSON.parse(saved);
-      } catch {}
-    }
-    return null;
-  });
-
-  const updateMediaToolbarPos = (pos: { x: number; y: number } | null) => {
-    setMediaToolbarPos(pos);
-    if (typeof window !== "undefined") {
-      try {
-        if (pos) {
-          localStorage.setItem("livestudio_media_toolbar_pos", JSON.stringify(pos));
-        } else {
-          localStorage.removeItem("livestudio_media_toolbar_pos");
-        }
-      } catch {}
-    }
-  };
-
+  const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingToolbar, setIsDraggingToolbar] = useState<boolean>(false);
   const dragToolbarStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number }>({
     mouseX: 0,
@@ -414,7 +392,7 @@ export const StagePreview: React.FC = () => {
       const deltaY = moveEv.clientY - dragToolbarStartRef.current.mouseY;
       const nextX = Math.max(4, Math.min(stageRect.width - 140, dragToolbarStartRef.current.startX + deltaX));
       const nextY = Math.max(4, Math.min(stageRect.height - 48, dragToolbarStartRef.current.startY + deltaY));
-      updateMediaToolbarPos({ x: Math.round(nextX), y: Math.round(nextY) });
+      setMediaToolbarPos({ x: Math.round(nextX), y: Math.round(nextY) });
     };
 
     const handleMouseUp = () => {
@@ -479,7 +457,7 @@ export const StagePreview: React.FC = () => {
   }, [fairUseConfig?.enabled, fairUseConfig?.dynamicTempoVariance, fairUseConfig?.playbackRate, fairUseConfig?.enableAudioFairUse]);
 
   const [isDraggingMediaPan, setIsDraggingMediaPan] = useState(false);
-  const [ytStreamAttempt, setYtStreamAttempt] = useState<number>(0);
+  const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
   const [useYtIframeFallback, setUseYtIframeFallback] = useState(false);
   const [mediaBoundsHistory, setMediaBoundsHistory] = useState<Array<ParticipantBounds | null>>([]);
   const mediaPanStartRef = useRef({ startX: 0, startY: 0, initialPanX: 0, initialPanY: 0, rectWidth: 1, rectHeight: 1 });
@@ -809,7 +787,6 @@ export const StagePreview: React.FC = () => {
         isMediaPausedRef.current = true;
         setIsVideoPlaying(false);
       }
-      return;
     }
     if (activeMedia?.type === "youtube") {
       if (isVideoPlaying) {
@@ -2192,12 +2169,14 @@ export const StagePreview: React.FC = () => {
                 </div>
               );
             })()
-          ) : (activeMedia.type === "video" || activeMedia.type === "youtube") ? (
+          ) : (activeMedia.type === "video" || (activeMedia.type === "youtube" && !useYtIframeFallback)) ? (
             <video
               id="livestudio-active-media-video"
               src={
                 activeMedia.type === "youtube"
-                  ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}${ytStreamAttempt > 0 ? `&attempt=${ytStreamAttempt}` : ""}`
+                  ? ytStreamAttempt === 0
+                    ? `/api/media/youtube/stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
+                    : `/youtube-stream?videoId=${activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")}`
                   : activeMedia.url
               }
               autoPlay
@@ -2206,21 +2185,12 @@ export const StagePreview: React.FC = () => {
               loop={activeMedia.loop ?? true}
               muted={Boolean(activeMedia.isMuted)}
               crossOrigin="anonymous"
-              onPlay={() => {
-                setIsVideoPlaying(true);
-                isMediaPausedRef.current = false;
-                stageBroadcaster.refreshAudioConnections();
-              }}
-              onPause={() => {
-                setIsVideoPlaying(false);
-                isMediaPausedRef.current = true;
-              }}
               onError={() => {
                 if (activeMedia.type === "youtube") {
-                  if (ytStreamAttempt < 3) {
-                    setYtStreamAttempt((prev) => prev + 1);
+                  if (ytStreamAttempt === 0) {
+                    setYtStreamAttempt(1);
                   } else {
-                    setMediaLoadError(true);
+                    setUseYtIframeFallback(true);
                   }
                 } else {
                   setMediaLoadError(true);
@@ -2234,7 +2204,6 @@ export const StagePreview: React.FC = () => {
                 const dur = activeMedia.endTimeSec || v.duration || 0;
                 setVideoDuration(dur);
                 mediaDurationRef.current = dur;
-                stageBroadcaster.refreshAudioConnections();
               }}
               onTimeUpdate={(e) => {
                 const ct = e.currentTarget.currentTime;
@@ -2683,8 +2652,8 @@ export const StagePreview: React.FC = () => {
                 ? ""
                 : activeMedia.type === "website"
                 ? showTicker
-                  ? "top-14 right-4"
-                  : "bottom-3 left-1/2 -translate-x-1/2"
+                  ? "bottom-14 left-1/2 -translate-x-1/2"
+                  : "top-12 left-1/2 -translate-x-1/2"
                 : "top-3 left-1/2 -translate-x-1/2",
               isMediaToolbarCollapsed
                 ? "bg-transparent p-0"
@@ -2728,7 +2697,7 @@ export const StagePreview: React.FC = () => {
                 {mediaToolbarPos !== null && (
                   <button
                     type="button"
-                    onClick={() => updateMediaToolbarPos(null)}
+                    onClick={() => setMediaToolbarPos(null)}
                     className="px-1.5 py-0.5 rounded text-[9px] font-semibold text-slate-400 hover:text-cyan-300 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
                     title="Reset controls position to default"
                   >
