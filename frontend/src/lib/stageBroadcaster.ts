@@ -158,6 +158,10 @@ class StageBroadcaster {
     return tracks.length > 0 ? new MediaStream(tracks) : null;
   }
 
+  public getCompositeAudioTrack(): MediaStreamTrack | null {
+    return this.activeAudioTrack;
+  }
+
   /**
    * Start 30 FPS Canvas render loop & Web Audio mix, returning live MediaStreamTracks for WebRTC
    */

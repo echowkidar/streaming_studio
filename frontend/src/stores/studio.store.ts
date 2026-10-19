@@ -292,6 +292,7 @@ export interface LogoConfig {
   imageUrl?: string;
   mode?: "text" | "image" | "both";
   scale?: number;
+  heightPx?: number;
   textColor: string;
   bgColor: string;
   bgOpacity: number;
@@ -395,6 +396,9 @@ interface StudioState {
   setBackground: (url: string | null, type?: "image" | "video") => void;
   setThemeColor: (color: string) => void;
   setBanner: (banner: LowerThirdBanner | null) => void;
+  bannerPresets: LowerThirdBanner[];
+  addBannerPreset: (preset: LowerThirdBanner) => void;
+  removeBannerPreset: (id: string) => void;
   setTicker: (text: string, show: boolean) => void;
 
   activeStageOverlay: StageOverlayAsset | null;
@@ -821,6 +825,7 @@ export interface SavedStudioLayoutState {
   activeStageOverlay?: StageOverlayAsset | null;
   activeOverlayUrl?: string | null;
   commentConfig?: CommentConfig;
+  bannerPresets?: LowerThirdBanner[];
   scenes?: StudioScene[];
   activeSceneId?: string | null;
   isScenesPanelOpen?: boolean;
@@ -1193,6 +1198,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         isTransparentBg: false,
         fontSize: "medium",
         position: "top-right",
+        heightPx: 42,
       },
       showLogo: saved.showLogo ?? true,
       logoPosition: saved.logoPosition || "top-right",
@@ -1401,7 +1407,6 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     vintageLinesIntensity: "medium",
     idleMediaGuardSec: 60,
     ...(savedLayout.fairUseConfig || {}),
-    autoAudioDucking: false,
   },
   setFairUseConfig: (updates) =>
     set((s) => {
@@ -1986,6 +1991,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     imageUrl: "",
     mode: "text",
     scale: 40,
+    heightPx: 42,
     textColor: "#ffffff",
     bgColor: "#000000",
     bgOpacity: 75,
@@ -2088,6 +2094,52 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       );
       persistStudioLayout({ activeBanner: banner, scenes: nextScenes });
       return { activeBanner: banner, scenes: nextScenes };
+    }),
+  bannerPresets: savedLayout.bannerPresets || [
+    {
+      id: "preset-breaking-news",
+      title: "BREAKING NEWS",
+      subtitle: "Live coverage and real-time updates",
+      themeColor: "#ef4444",
+      style: "block",
+      isShowing: false,
+    },
+    {
+      id: "preset-welcome",
+      title: "WELCOME TO THE STREAM",
+      subtitle: "Drop your questions & comments in the chat!",
+      themeColor: "#3b82f6",
+      style: "classic",
+      isShowing: false,
+    },
+    {
+      id: "preset-minimal-topic",
+      title: "TODAY'S SPECIAL GUEST",
+      subtitle: "Deep-dive discussion & Q&A session",
+      themeColor: "#8b5cf6",
+      style: "minimal",
+      isShowing: false,
+    },
+    {
+      id: "preset-social",
+      title: "FOLLOW US @STREAMSTUDIO",
+      subtitle: "Subscribe for weekly technical live deep-dives",
+      themeColor: "#10b981",
+      style: "bubble",
+      isShowing: false,
+    },
+  ],
+  addBannerPreset: (preset) =>
+    set((s) => {
+      const next = [preset, ...s.bannerPresets.filter((b) => b.id !== preset.id)];
+      persistStudioLayout({ bannerPresets: next });
+      return { bannerPresets: next };
+    }),
+  removeBannerPreset: (id) =>
+    set((s) => {
+      const next = s.bannerPresets.filter((b) => b.id !== id);
+      persistStudioLayout({ bannerPresets: next });
+      return { bannerPresets: next };
     }),
   setTicker: (text, show) => {
     persistStudioLayout({ tickerText: text, showTicker: show });

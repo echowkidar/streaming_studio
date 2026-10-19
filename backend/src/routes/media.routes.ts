@@ -451,7 +451,7 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
   };
 
   try {
-    const fastWinner = await Promise.any(innertubeClients.map((c) => attemptInnerTube(c)));
+    const fastWinner = await (Promise as any).any(innertubeClients.map((c) => attemptInnerTube(c)));
     if (fastWinner?.url) {
       ytStreamUrlCache.set(videoId, fastWinner);
       return fastWinner;
@@ -495,7 +495,7 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
   };
 
   try {
-    const mirrorWinner = await Promise.any(pipedInstances.map((u) => attemptMirror(u)));
+    const mirrorWinner = await (Promise as any).any(pipedInstances.map((u) => attemptMirror(u)));
     if (mirrorWinner?.url) {
       ytStreamUrlCache.set(videoId, mirrorWinner);
       return mirrorWinner;

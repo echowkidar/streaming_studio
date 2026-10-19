@@ -422,7 +422,7 @@ export const StagePreview: React.FC = () => {
         for (const clipItem of clipItems) {
           const imgType = clipItem.types.find((t) => t.startsWith("image/"));
           if (imgType) {
-            const blob = await clipItem.getBlob(imgType);
+            const blob = await clipItem.getType(imgType);
             handleSaveClipboardBlobToStage(blob);
             return;
           }
