@@ -65,6 +65,7 @@ interface YouTubeLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetSceneId?: string | null;
+  targetSlot?: "primary" | "secondary";
   onSelectYouTubeItem?: (item: MediaFileItem) => void;
 }
 
@@ -72,6 +73,7 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
   isOpen,
   onClose,
   targetSceneId,
+  targetSlot = "primary",
   onSelectYouTubeItem,
 }) => {
   const {
@@ -80,7 +82,9 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     updateMediaLibraryItem,
     removeMediaLibraryItem,
     setActiveMedia,
+    setSecondaryMedia,
     activeMedia,
+    secondaryMedia,
     scenes,
     activeSceneId,
     updateScene,
@@ -236,13 +240,18 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
       const updatedFull = mediaLibrary.find((m) => m.id === editingItemId);
       if (attachAndPlayNow && updatedFull) {
         const merged = { ...updatedFull, ...updates };
+        const isSecondary = targetSlot === "secondary";
         if (effectiveSceneId) {
-          updateScene(effectiveSceneId, { activeMedia: merged });
+          updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: merged } : { activeMedia: merged });
           if (effectiveSceneId !== activeSceneId) {
             switchScene(effectiveSceneId);
           }
         }
-        setActiveMedia(merged);
+        if (isSecondary) {
+          setSecondaryMedia(merged);
+        } else {
+          setActiveMedia(merged);
+        }
         onSelectYouTubeItem?.(merged);
         onClose();
       } else {
@@ -272,13 +281,18 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     addMediaLibraryItem(newItem);
 
     if (attachAndPlayNow) {
+      const isSecondary = targetSlot === "secondary";
       if (effectiveSceneId) {
-        updateScene(effectiveSceneId, { activeMedia: newItem });
+        updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: newItem } : { activeMedia: newItem });
         if (effectiveSceneId !== activeSceneId) {
           switchScene(effectiveSceneId);
         }
       }
-      setActiveMedia(newItem);
+      if (isSecondary) {
+        setSecondaryMedia(newItem);
+      } else {
+        setActiveMedia(newItem);
+      }
       onSelectYouTubeItem?.(newItem);
       resetForm();
       onClose();
@@ -296,23 +310,33 @@ export const YouTubeLibraryModal: React.FC<YouTubeLibraryModalProps> = ({
     if (audibleItem.youtubeId) {
       fetch(`/api/media/youtube/info?videoId=${encodeURIComponent(audibleItem.youtubeId)}`).catch(() => { });
     }
+    const isSecondary = targetSlot === "secondary";
     if (effectiveSceneId) {
-      updateScene(effectiveSceneId, { activeMedia: audibleItem });
+      updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: audibleItem } : { activeMedia: audibleItem });
       if (effectiveSceneId !== activeSceneId) {
         switchScene(effectiveSceneId);
       }
     }
-    setActiveMedia(audibleItem);
+    if (isSecondary) {
+      setSecondaryMedia(audibleItem);
+    } else {
+      setActiveMedia(audibleItem);
+    }
     onSelectYouTubeItem?.(audibleItem);
     onClose();
   };
 
   const handleDetachFromScene = () => {
+    const isSecondary = targetSlot === "secondary";
     if (effectiveSceneId) {
-      updateScene(effectiveSceneId, { activeMedia: null });
+      updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: null } : { activeMedia: null });
     }
     if (!targetSceneId || targetSceneId === activeSceneId) {
-      setActiveMedia(null);
+      if (isSecondary) {
+        setSecondaryMedia(null);
+      } else {
+        setActiveMedia(null);
+      }
     }
   };
 

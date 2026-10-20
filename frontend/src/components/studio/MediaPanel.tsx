@@ -62,6 +62,8 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
   const {
     activeMedia,
     setActiveMedia,
+    secondaryMedia,
+    setSecondaryMedia,
     activeStageOverlay,
     setStageOverlay,
     saveToOverlayHistory,
@@ -357,24 +359,36 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
           addMediaLibraryItem(permanentItem);
 
           const currentStore = useStudioStore.getState();
-          const nextScenes = currentStore.scenes.map((s) =>
-            s.activeMedia?.id === newItem.id || s.activeMedia?.name === newItem.name
-              ? { ...s, activeMedia: permanentItem }
-              : s
-          );
+          const nextScenes = currentStore.scenes.map((s) => {
+            const isMatchPrimary = s.activeMedia?.id === newItem.id || s.activeMedia?.name === newItem.name;
+            const isMatchSecondary = s.secondaryMedia?.id === newItem.id || s.secondaryMedia?.name === newItem.name;
+            if (isMatchPrimary || isMatchSecondary) {
+              return {
+                ...s,
+                ...(isMatchPrimary ? { activeMedia: permanentItem } : {}),
+                ...(isMatchSecondary ? { secondaryMedia: permanentItem } : {}),
+              };
+            }
+            return s;
+          });
 
           const currentActive = currentStore.activeMedia;
+          const currentSecondary = currentStore.secondaryMedia;
           const shouldUpdateActive =
             currentActive?.id === newItem.id || currentActive?.name === newItem.name;
+          const shouldUpdateSecondary =
+            currentSecondary?.id === newItem.id || currentSecondary?.name === newItem.name;
 
           persistStudioLayout({
             scenes: nextScenes,
             ...(shouldUpdateActive ? { activeMedia: permanentItem } : {}),
+            ...(shouldUpdateSecondary ? { secondaryMedia: permanentItem } : {}),
           });
 
           useStudioStore.setState({
             scenes: nextScenes,
             ...(shouldUpdateActive ? { activeMedia: permanentItem } : {}),
+            ...(shouldUpdateSecondary ? { secondaryMedia: permanentItem } : {}),
           });
         }
       } else {
@@ -802,14 +816,14 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
         </div>
       </div>
 
-      {/* 5. Active Stage Media Banner */}
+      {/* 5. Active Stage Media Banner (Window 1) */}
       {activeMedia && (
         <div className="px-3 py-2 bg-indigo-950/75 border-b border-indigo-500/40 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <div className="min-w-0">
               <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-                <span>Live On Stage</span>
+                <span>Win 1 Live On Stage</span>
                 {activeMedia.loop !== false && (
                   <span className="text-[9.5px] text-emerald-400 font-mono font-normal">
                     (Loop)
@@ -829,7 +843,40 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
               className="h-7 px-2.5 text-[11px] font-bold"
             >
               <Square className="w-3 h-3 mr-1 fill-current" />
-              Stop
+              Stop Win 1
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 5b. Active Stage Media Banner (Window 2) */}
+      {secondaryMedia && (
+        <div className="px-3 py-2 bg-emerald-950/75 border-b border-emerald-500/40 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span>Win 2 Live On Stage</span>
+                {secondaryMedia.loop !== false && (
+                  <span className="text-[9.5px] text-emerald-400 font-mono font-normal">
+                    (Loop)
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-semibold text-white truncate max-w-[155px]">
+                {secondaryMedia.name}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setSecondaryMedia(null)}
+              className="h-7 px-2.5 text-[11px] font-bold"
+            >
+              <Square className="w-3 h-3 mr-1 fill-current" />
+              Stop Win 2
             </Button>
           </div>
         </div>

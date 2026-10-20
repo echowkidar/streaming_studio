@@ -47,6 +47,7 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
   const participantBounds = useStudioStore((s) => s.participantBounds) || {};
   const activeLayout = useStudioStore((s) => s.activeLayout) || "side-by-side";
   const activeMedia = useStudioStore((s) => s.activeMedia);
+  const secondaryMedia = useStudioStore((s) => s.secondaryMedia);
   const isStageCropped = useStudioStore((s) => s.isStageCropped);
   const mediaSlotIndex = useStudioStore((s) => s.mediaSlotIndex);
   const fairUseConfig = useStudioStore((s) => s.fairUseConfig);
@@ -1298,6 +1299,15 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                             activeMedia.type === "map" ||
                             activeMedia.type === "website")
                       );
+                      const hasSecondaryVisualMedia = Boolean(
+                        secondaryMedia &&
+                          (secondaryMedia.type === "video" ||
+                            secondaryMedia.type === "image" ||
+                            secondaryMedia.type === "pdf" ||
+                            secondaryMedia.type === "youtube" ||
+                            secondaryMedia.type === "map" ||
+                            secondaryMedia.type === "website")
+                      );
                       const isFullBleedGuest =
                         isStageCropped ||
                         activeLayout === "cropped" ||
@@ -1313,7 +1323,8 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                         customLayoutConfig,
                         Boolean(fairUseConfig?.enabled && fairUseConfig?.enforceReactionPiP),
                         mediaSlotIndex,
-                        isStageCropped
+                        isStageCropped,
+                        hasSecondaryVisualMedia
                       );
 
                       return (
@@ -1393,6 +1404,86 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
                                 <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                   <span className="truncate max-w-[150px]">{activeMedia.name}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* Synchronized Stage Secondary Media / Window 2 */}
+                          {hasSecondaryVisualMedia && secondaryMedia && (() => {
+                            const defaultSecBounds = stageLayoutResult.secondaryMediaBounds || (
+                              onStageParticipants.length === 0
+                                ? { x: 50, y: 0, width: 50, height: 100, zIndex: 10, isLockedRatio: true }
+                                : { x: 70, y: 4, width: 28, height: 92, zIndex: 10, isLockedRatio: true }
+                            );
+                            const secBounds = participantBounds["secondary-media"] || defaultSecBounds;
+                            const secFit = (tileTransforms["secondary-media"]?.fitMode as any) || (isStageCropped ? "cover" : "contain");
+                            const secTf = tileTransforms["secondary-media"];
+                            const panX = secTf?.panX || 0;
+                            const panY = secTf?.panY || 0;
+                            const objX = Math.max(0, Math.min(100, 50 + panX));
+                            const objY = Math.max(0, Math.min(100, 50 + panY));
+                            const effObjX = secFit === "contain" && (!secTf?.zoom || secTf.zoom === 1) ? 50 : objX;
+                            const effObjY = secFit === "contain" && (!secTf?.zoom || secTf.zoom === 1) ? 50 : objY;
+                            const zoom = Math.max(1, secTf?.zoom || 1);
+
+                            return (
+                              <div
+                                key="guest-secondary-media"
+                                style={{
+                                  position: "absolute",
+                                  left: `${secBounds.x}%`,
+                                  top: `${secBounds.y}%`,
+                                  width: `${secBounds.width}%`,
+                                  height: `${secBounds.height}%`,
+                                  zIndex: secBounds.zIndex || 10,
+                                  transition: "all 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+                                }}
+                                className={cn(
+                                  "overflow-hidden bg-black/95 flex items-center justify-center relative",
+                                  isFullBleedGuest ? "rounded-none border-0" : "rounded-2xl border border-emerald-500/40 shadow-2xl"
+                                )}
+                              >
+                                {secondaryMedia.type === "video" && (
+                                  <video
+                                    src={secondaryMedia.url}
+                                    autoPlay
+                                    playsInline
+                                    controls
+                                    loop={secondaryMedia.loop ?? true}
+                                    muted={secondaryMedia.isMuted ?? false}
+                                    style={{
+                                      objectFit: secFit,
+                                      objectPosition: `${effObjX}% ${effObjY}%`,
+                                      transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                      transformOrigin: "center center",
+                                    }}
+                                    className="w-full h-full"
+                                  />
+                                )}
+                                {(secondaryMedia.type === "image" || secondaryMedia.type === "pdf") && (
+                                  <img
+                                    src={secondaryMedia.url}
+                                    alt={secondaryMedia.name}
+                                    style={{
+                                      objectFit: secFit,
+                                      objectPosition: `${effObjX}% ${effObjY}%`,
+                                      transform: zoom > 1 ? `scale(${zoom})` : undefined,
+                                      transformOrigin: "center center",
+                                    }}
+                                    className="w-full h-full"
+                                  />
+                                )}
+                                {secondaryMedia.type === "website" && (
+                                  <iframe
+                                    src={`/web-proxy?url=${encodeURIComponent(secondaryMedia.websiteConfig?.url || secondaryMedia.url || "")}`}
+                                    className="w-full h-full border-0 pointer-events-none bg-white"
+                                    title={secondaryMedia.name}
+                                  />
+                                )}
+                                <div className="absolute top-2.5 left-2.5 bg-black/75 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10 flex items-center gap-1.5 text-[9px] font-mono text-white pointer-events-none">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="truncate max-w-[150px]">{secondaryMedia.name}</span>
                                 </div>
                               </div>
                             );
@@ -1755,6 +1846,9 @@ function GuestJoinContent({ params }: { params: { token: string } }) {
       {/* Synchronized Background Audio Stream */}
       {activeMedia && activeMedia.type === "audio" && (
         <audio src={activeMedia.url} autoPlay loop={activeMedia.loop ?? true} muted={activeMedia.isMuted ?? false} />
+      )}
+      {secondaryMedia && secondaryMedia.type === "audio" && (
+        <audio src={secondaryMedia.url} autoPlay loop={secondaryMedia.loop ?? true} muted={secondaryMedia.isMuted ?? false} />
       )}
 
       {/* Host Grace Period Timeout Overlay */}

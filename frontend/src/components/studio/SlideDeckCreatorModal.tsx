@@ -41,6 +41,7 @@ interface SlideDeckCreatorModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetSceneId?: string | null;
+  targetSlot?: "primary" | "secondary";
   onDeckCreated?: (deckItem: MediaFileItem) => void;
 }
 
@@ -394,6 +395,7 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
   isOpen,
   onClose,
   targetSceneId,
+  targetSlot = "primary",
   onDeckCreated,
 }) => {
   const {
@@ -402,6 +404,9 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
     removeMediaLibraryItem,
     mediaLibrary,
     setActiveMedia,
+    setSecondaryMedia,
+    activeMedia,
+    secondaryMedia,
     updateScene,
     activeSceneId,
     scenes,
@@ -481,11 +486,12 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
   };
 
   const handleAttachSavedDeck = (deck: MediaFileItem, presentNow: boolean) => {
+    const isSecondary = targetSlot === "secondary";
     const sceneToUpdate = targetSceneId || (presentNow ? activeSceneId : null);
     if (sceneToUpdate) {
       const target = scenes.find((s) => s.id === sceneToUpdate);
       updateScene(sceneToUpdate, {
-        activeMedia: deck,
+        ...(isSecondary ? { secondaryMedia: deck } : { activeMedia: deck }),
         ...(target?.layout === "solo" ? { layout: "presentation" } : {}),
       });
       if (sceneToUpdate !== activeSceneId && presentNow) {
@@ -493,7 +499,11 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
       }
     }
     if (presentNow) {
-      setActiveMedia(deck);
+      if (isSecondary) {
+        setSecondaryMedia(deck);
+      } else {
+        setActiveMedia(deck);
+      }
     }
     onDeckCreated?.(deck);
     onClose();
@@ -583,11 +593,12 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
       addMediaLibraryItem(newDeck);
     }
 
+    const isSecondary = targetSlot === "secondary";
     const sceneToUpdate = targetSceneId || (presentImmediately ? activeSceneId : null);
     if (sceneToUpdate) {
       const target = scenes.find((s) => s.id === sceneToUpdate);
       updateScene(sceneToUpdate, {
-        activeMedia: newDeck,
+        ...(isSecondary ? { secondaryMedia: newDeck } : { activeMedia: newDeck }),
         ...(target?.layout === "solo" ? { layout: "presentation" } : {}),
       });
       if (sceneToUpdate !== activeSceneId && presentImmediately) {
@@ -596,7 +607,11 @@ export const SlideDeckCreatorModal: React.FC<SlideDeckCreatorModalProps> = ({
     }
 
     if (presentImmediately) {
-      setActiveMedia(newDeck);
+      if (isSecondary) {
+        setSecondaryMedia(newDeck);
+      } else {
+        setActiveMedia(newDeck);
+      }
     }
 
     onDeckCreated?.(newDeck);

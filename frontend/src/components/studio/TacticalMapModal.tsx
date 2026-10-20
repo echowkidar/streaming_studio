@@ -2705,6 +2705,7 @@ interface TacticalMapModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetSceneId?: string | null;
+  targetSlot?: "primary" | "secondary";
   initialItem?: MediaFileItem | null;
   onSaveMapItem?: (item: MediaFileItem) => void;
 }
@@ -2713,6 +2714,7 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
   isOpen,
   onClose,
   targetSceneId,
+  targetSlot = "primary",
   initialItem,
   onSaveMapItem,
 }) => {
@@ -2722,7 +2724,9 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     updateMediaLibraryItem,
     removeMediaLibraryItem,
     setActiveMedia,
+    setSecondaryMedia,
     activeMedia,
+    secondaryMedia,
     scenes,
     activeSceneId,
     updateScene,
@@ -3064,11 +3068,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
       const existing = mediaLibrary.find((m) => m.id === existingIdToUpdate);
       if (attachAndPresentNow && existing) {
         const merged = { ...existing, ...updates };
+        const isSecondary = targetSlot === "secondary";
         if (effectiveSceneId) {
-          updateScene(effectiveSceneId, { activeMedia: merged });
+          updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: merged } : { activeMedia: merged });
           if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
         }
-        setActiveMedia(merged);
+        if (isSecondary) {
+          setSecondaryMedia(merged);
+        } else {
+          setActiveMedia(merged);
+        }
         onSaveMapItem?.(merged);
         onClose();
       } else {
@@ -3092,11 +3101,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
     addMediaLibraryItem(newItem);
 
     if (attachAndPresentNow) {
+      const isSecondary = targetSlot === "secondary";
       if (effectiveSceneId) {
-        updateScene(effectiveSceneId, { activeMedia: newItem });
+        updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: newItem } : { activeMedia: newItem });
         if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
       }
-      setActiveMedia(newItem);
+      if (isSecondary) {
+        setSecondaryMedia(newItem);
+      } else {
+        setActiveMedia(newItem);
+      }
       onSaveMapItem?.(newItem);
       onClose();
     }
@@ -3243,11 +3257,16 @@ export const TacticalMapModal: React.FC<TacticalMapModalProps> = ({
                             <button
                               type="button"
                               onClick={() => {
+                                const isSecondary = targetSlot === "secondary";
                                 if (effectiveSceneId) {
-                                  updateScene(effectiveSceneId, { activeMedia: m });
+                                  updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: m } : { activeMedia: m });
                                   if (effectiveSceneId !== activeSceneId) switchScene(effectiveSceneId);
                                 }
-                                setActiveMedia(m);
+                                if (isSecondary) {
+                                  setSecondaryMedia(m);
+                                } else {
+                                  setActiveMedia(m);
+                                }
                                 onSaveMapItem?.(m);
                                 onClose();
                               }}

@@ -285,6 +285,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     scenes,
     activeSceneId,
     activeMedia,
+    secondaryMedia,
     isScenesPanelOpen,
     toggleScenesPanel,
     addScene,
@@ -295,6 +296,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     saveCurrentStageToScene,
     reorderScenes,
     setActiveMedia,
+    setSecondaryMedia,
     setLayout,
     mediaLibrary,
     addMediaLibraryItem,
@@ -315,6 +317,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [isNewSceneDropTarget, setIsNewSceneDropTarget] = useState(false);
   const [recentlyAddedMediaSceneId, setRecentlyAddedMediaSceneId] = useState<string | null>(null);
   const [mediaPickerSceneId, setMediaPickerSceneId] = useState<string | null>(null);
+  const [mediaPickerSlot, setMediaPickerSlot] = useState<"primary" | "secondary">("primary");
   const [attachCategory, setAttachCategory] = useState<string>("all");
   const [attachSearchQuery, setAttachSearchQuery] = useState<string>("");
   const [attachCleanupNotice, setAttachCleanupNotice] = useState<string | null>(null);
@@ -411,11 +414,39 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     setIsAddModalOpen(false);
   };
 
-  const handleAttachMedia = (sceneId: string, mediaItem: any | null) => {
+  const handleAttachMedia = (
+    sceneId: string,
+    mediaItem: any | null,
+    slot: "primary" | "secondary" = mediaPickerSlot || "primary"
+  ) => {
     const targetScene = scenes.find((s) => s.id === sceneId);
     const isTargetFullBleed =
       targetScene?.isStageCropped ??
       (targetScene?.layout === "cropped" || targetScene?.layout === "podcast");
+
+    if (slot === "secondary") {
+      const nextTransforms = targetScene?.tileTransforms ? { ...targetScene.tileTransforms } : {};
+      if (mediaItem) {
+        nextTransforms["secondary-media"] = {
+          ...(nextTransforms["secondary-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+          fitMode: isTargetFullBleed ? "cover" : (nextTransforms["secondary-media"]?.fitMode || "contain"),
+        };
+      }
+      const updates: Partial<StudioScene> = {
+        secondaryMedia: mediaItem,
+        ...(mediaItem ? { tileTransforms: nextTransforms } : {}),
+      };
+      updateScene(sceneId, updates);
+      if (activeSceneId === sceneId) {
+        setSecondaryMedia(mediaItem);
+        if (mediaItem && useStudioStore.getState().isStageCropped) {
+          useStudioStore.getState().setTileTransform("secondary-media", { fitMode: "cover", panX: 0, panY: 0 });
+        }
+      }
+      setMediaPickerSceneId(null);
+      setActiveMenuId(null);
+      return;
+    }
 
     const nextTransforms = targetScene?.tileTransforms ? { ...targetScene.tileTransforms } : {};
     if (mediaItem) {
@@ -621,27 +652,40 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
           // 2. Update all scenes in store containing this media or targeted scene
           const currentStore = useStudioStore.getState();
-          const nextScenes = currentStore.scenes.map((s) =>
-            s.id === sceneId || s.activeMedia?.id === item.id || s.activeMedia?.name === item.name
-              ? { ...s, activeMedia: updatedItem }
-              : s
-          );
+          const nextScenes = currentStore.scenes.map((s) => {
+            const isMatchPrimary = s.activeMedia?.id === item.id || s.activeMedia?.name === item.name;
+            const isMatchSecondary = s.secondaryMedia?.id === item.id || s.secondaryMedia?.name === item.name;
+            if (isMatchPrimary || isMatchSecondary) {
+              return {
+                ...s,
+                ...(isMatchPrimary ? { activeMedia: updatedItem } : {}),
+                ...(isMatchSecondary ? { secondaryMedia: updatedItem } : {}),
+              };
+            }
+            return s;
+          });
 
-          // 3. Update activeMedia if matching or if active scene
+          // 3. Update activeMedia / secondaryMedia if matching or if active scene
           const shouldUpdateActive =
             currentStore.activeMedia?.id === item.id ||
             currentStore.activeMedia?.name === item.name ||
-            currentStore.activeSceneId === sceneId;
+            (currentStore.activeSceneId === sceneId && mediaPickerSlot === "primary");
+          const shouldUpdateSecondary =
+            currentStore.secondaryMedia?.id === item.id ||
+            currentStore.secondaryMedia?.name === item.name ||
+            (currentStore.activeSceneId === sceneId && mediaPickerSlot === "secondary");
 
           // 4. Persist immediately to localStorage and cloud!
           persistStudioLayout({
             scenes: nextScenes,
             ...(shouldUpdateActive ? { activeMedia: updatedItem } : {}),
+            ...(shouldUpdateSecondary ? { secondaryMedia: updatedItem } : {}),
           });
 
           useStudioStore.setState({
             scenes: nextScenes,
             ...(shouldUpdateActive ? { activeMedia: updatedItem } : {}),
+            ...(shouldUpdateSecondary ? { secondaryMedia: updatedItem } : {}),
           });
         }
       }
@@ -745,36 +789,40 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const renderThumbnailContent = (scene: StudioScene) => {
     const layout = scene.layout;
     const hasMedia = Boolean(scene.activeMedia);
+    const hasSecondaryMedia = Boolean(scene.secondaryMedia);
 
     // Helpers for rendering individual boxes in thumbnail
-    const renderMediaTile = (customClass = "") => (
-      <div
-        className={cn(
-          "relative w-full h-full overflow-hidden bg-black/85 rounded border border-cyan-500/60 shadow-xs flex items-center justify-center",
-          customClass
-        )}
-      >
-        {scene.activeMedia?.type === "video" ? (
-          <video
-            src={scene.activeMedia.url}
-            className="w-full h-full object-cover"
-            muted
-            playsInline
-          />
-        ) : scene.activeMedia?.thumbnail || scene.activeMedia?.url ? (
-          <img
-            src={scene.activeMedia.thumbnail || scene.activeMedia.url}
-            alt=""
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <MonitorUp className="w-3 h-3 text-cyan-300" />
-        )}
-        <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/90 text-[6px] text-cyan-300 font-mono flex items-center gap-0.5 shadow-sm pointer-events-none">
-          <Clapperboard className="w-1.5 h-1.5" />
+    const renderMediaTile = (customClass = "", item?: MediaFileItem | null) => {
+      const target = item !== undefined ? item : scene.activeMedia;
+      return (
+        <div
+          className={cn(
+            "relative w-full h-full overflow-hidden bg-black/85 rounded border border-cyan-500/60 shadow-xs flex items-center justify-center",
+            customClass
+          )}
+        >
+          {target?.type === "video" ? (
+            <video
+              src={target.url}
+              className="w-full h-full object-cover"
+              muted
+              playsInline
+            />
+          ) : target?.thumbnail || target?.url ? (
+            <img
+              src={target.thumbnail || target.url}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <MonitorUp className="w-3 h-3 text-cyan-300" />
+          )}
+          <div className="absolute bottom-0.5 left-0.5 px-1 py-0.2 rounded bg-black/90 text-[6px] text-cyan-300 font-mono flex items-center gap-0.5 shadow-sm pointer-events-none">
+            <Clapperboard className="w-1.5 h-1.5" />
+          </div>
         </div>
-      </div>
-    );
+      );
+    };
 
     const renderCameraTile = (label?: string, customClass = "") => (
       <div
@@ -796,7 +844,9 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         <div className={cn("absolute inset-0 flex items-center justify-center", isCroppedScene ? "p-0" : "p-1")}>
           <div className={isCroppedScene ? "w-full h-full" : "w-[88%] h-[88%]"}>
             {hasMedia
-              ? renderMediaTile(isCroppedScene ? "rounded-none border-0" : "")
+              ? renderMediaTile(isCroppedScene ? "rounded-none border-0" : "", scene.activeMedia)
+              : hasSecondaryMedia
+              ? renderMediaTile(isCroppedScene ? "rounded-none border-0" : "", scene.secondaryMedia)
               : renderCameraTile(undefined, isCroppedScene ? "rounded-none border-0" : "")}
           </div>
         </div>
@@ -806,13 +856,15 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     // 2. 2-Person Fit (16:9 widescreen boxes, or full-bleed when isStageCropped is true)
     if ((layout === "side-by-side" || layout === "fit") && !isCroppedScene) {
       const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
+      const leftMedia = isMediaRight ? scene.secondaryMedia : scene.activeMedia;
+      const rightMedia = isMediaRight ? scene.activeMedia : scene.secondaryMedia;
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center gap-1">
           <div className="w-[46%] h-[80%]">
-            {hasMedia ? (isMediaRight ? renderCameraTile() : renderMediaTile()) : renderCameraTile()}
+            {leftMedia ? renderMediaTile("", leftMedia) : renderCameraTile()}
           </div>
           <div className="w-[46%] h-[80%]">
-            {hasMedia ? (isMediaRight ? renderMediaTile() : renderCameraTile()) : renderCameraTile()}
+            {rightMedia ? renderMediaTile("", rightMedia) : renderCameraTile()}
           </div>
         </div>
       );
@@ -820,21 +872,19 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
     if ((layout === "side-by-side" || layout === "fit") && isCroppedScene) {
       const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
+      const leftMedia = isMediaRight ? scene.secondaryMedia : scene.activeMedia;
+      const rightMedia = isMediaRight ? scene.activeMedia : scene.secondaryMedia;
       return (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="w-full h-full flex divide-x divide-white/25 overflow-hidden">
             <div className="flex-1 h-full">
-              {hasMedia
-                ? isMediaRight
-                  ? renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
-                : renderMediaTile("rounded-none border-0")
+              {leftMedia
+                ? renderMediaTile("rounded-none border-0", leftMedia)
                 : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
             <div className="flex-1 h-full">
-              {hasMedia
-                ? isMediaRight
-                  ? renderMediaTile("rounded-none border-0")
-                  : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+              {rightMedia
+                ? renderMediaTile("rounded-none border-0", rightMedia)
                 : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
           </div>
@@ -845,21 +895,19 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
     // 3. 2-Person Cropped / Full-Bleed
     if (layout === "cropped" || layout === "podcast") {
       const isMediaRight = (scene.mediaSlotIndex ?? 0) >= 1;
+      const leftMedia = isMediaRight ? scene.secondaryMedia : scene.activeMedia;
+      const rightMedia = isMediaRight ? scene.activeMedia : scene.secondaryMedia;
       return (
         <div className="absolute inset-0 p-1 flex items-center justify-center">
           <div className="w-full h-full flex divide-x divide-white/25 border border-white/25 rounded overflow-hidden shadow-xs">
             <div className="flex-1 h-full">
-              {hasMedia
-                ? isMediaRight
-                  ? renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
-                  : renderMediaTile("rounded-none border-0")
+              {leftMedia
+                ? renderMediaTile("rounded-none border-0", leftMedia)
                 : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
             <div className="flex-1 h-full">
-              {hasMedia
-                ? isMediaRight
-                  ? renderMediaTile("rounded-none border-0")
-                  : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")
+              {rightMedia
+                ? renderMediaTile("rounded-none border-0", rightMedia)
                 : renderCameraTile(undefined, "rounded-none border-0 bg-black/80")}
             </div>
           </div>
@@ -1218,6 +1266,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
           const isMediaDropTarget = mediaDropTargetSceneId === scene.id;
           const isRecentlyAdded = recentlyAddedMediaSceneId === scene.id;
           const effectiveSceneMedia = scene.activeMedia || (isActive ? activeMedia : null);
+          const effectiveSecondaryMedia = scene.secondaryMedia || (isActive ? secondaryMedia : null);
 
           return (
             <div
@@ -1258,13 +1307,21 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                 }}
               >
                 {/* Visual Layout Representation */}
-                {renderThumbnailContent({ ...scene, activeMedia: effectiveSceneMedia })}
+                {renderThumbnailContent({ ...scene, activeMedia: effectiveSceneMedia, secondaryMedia: effectiveSecondaryMedia })}
 
                 {/* Layout Badge (Top Left) */}
                 <div className="absolute top-1 left-1 z-10 flex items-center gap-1">
                   <div className="px-1.5 py-0.5 rounded bg-black/85 backdrop-blur-xs text-[7.5px] font-semibold text-slate-200 border border-white/20 pointer-events-none shadow-sm flex items-center gap-1">
                     <span>{LAYOUT_LABELS[scene.layout] || scene.layout}</span>
                   </div>
+                  {effectiveSceneMedia && effectiveSecondaryMedia && (
+                    <div
+                      className="px-1 py-0.5 rounded bg-cyan-950/90 backdrop-blur-xs text-[6.5px] font-black text-cyan-300 border border-cyan-400/50 pointer-events-none shadow-sm flex items-center gap-0.5"
+                      title="Dual Media (Window 1 & Window 2)"
+                    >
+                      <span>📺 2 MEDIA</span>
+                    </div>
+                  )}
                   {scene.isStageCropped && scene.layout !== "cropped" && scene.layout !== "podcast" && (
                     <div
                       className="px-1 py-0.5 rounded bg-emerald-950/90 backdrop-blur-xs text-[6.5px] font-bold text-emerald-300 border border-emerald-500/40 pointer-events-none shadow-sm"
@@ -1398,10 +1455,32 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       index >= scenes.length - 2 && scenes.length > 2 ? "bottom-16" : "top-28"
                     )}
                   >
-                    {/* Primary Action 1: Change / Attach Media */}
+                    {/* Action 1: Change / Attach Window 1 Media */}
                     <button
                       type="button"
                       onClick={() => {
+                        setMediaPickerSlot("primary");
+                        setMediaPickerSceneId(scene.id);
+                        setActiveMenuId(null);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:bg-cyan-500/20 flex items-center justify-between group transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <MonitorUp className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+                        <span className="font-semibold text-cyan-300">
+                          {effectiveSceneMedia ? "Win 1 Media: " + effectiveSceneMedia.name : "Attach Win 1 (Left)"}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-cyan-400/80 font-bold uppercase truncate max-w-[60px]">
+                        {effectiveSceneMedia ? effectiveSceneMedia.type : "Add"}
+                      </span>
+                    </button>
+
+                    {/* Action 2: Change / Attach Window 2 Media */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMediaPickerSlot("secondary");
                         setMediaPickerSceneId(scene.id);
                         setActiveMenuId(null);
                       }}
@@ -1410,27 +1489,43 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                       <div className="flex items-center gap-2">
                         <MonitorUp className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
                         <span className="font-semibold text-emerald-300">
-                          {effectiveSceneMedia ? "Change Media / Deck" : "Attach Media / Deck"}
+                          {effectiveSecondaryMedia ? "Win 2 Media: " + effectiveSecondaryMedia.name : "Attach Win 2 (Right)"}
                         </span>
                       </div>
-                      <span className="text-[10px] text-emerald-400/80 font-bold uppercase">
-                        {effectiveSceneMedia ? effectiveSceneMedia.type : "Add"}
+                      <span className="text-[10px] text-emerald-400/80 font-bold uppercase truncate max-w-[60px]">
+                        {effectiveSecondaryMedia ? effectiveSecondaryMedia.type : "Add"}
                       </span>
                     </button>
 
-                    {/* Primary Action 2: Remove Media (if attached) */}
+                    {/* Remove Window 1 Media (if attached) */}
                     {effectiveSceneMedia && (
                       <button
                         type="button"
                         onClick={() => {
-                          handleAttachMedia(scene.id, null);
+                          handleAttachMedia(scene.id, null, "primary");
                           if (isActive) setActiveMedia(null);
                           setActiveMenuId(null);
                         }}
                         className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2 transition-colors"
                       >
                         <X className="w-3.5 h-3.5 text-rose-400" />
-                        <span>Remove Media</span>
+                        <span>Remove Win 1 Media</span>
+                      </button>
+                    )}
+
+                    {/* Remove Window 2 Media (if attached) */}
+                    {effectiveSecondaryMedia && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleAttachMedia(scene.id, null, "secondary");
+                          if (isActive) setSecondaryMedia(null);
+                          setActiveMenuId(null);
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-left text-rose-300 hover:bg-rose-500/20 flex items-center gap-2 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Remove Win 2 Media</span>
                       </button>
                     )}
 
@@ -2004,6 +2099,59 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
             <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-white/10 min-h-0">
               {/* Left Column (8 cols): 8 Category Tabs, Search & Selectable Verified Media List */}
               <div className="lg:col-span-8 flex flex-col p-4 min-h-0 space-y-3 overflow-hidden">
+                {/* Target Window Slot Selector (Window 1 vs Window 2) */}
+                {(() => {
+                  const targetScene = scenes.find((s) => s.id === mediaPickerSceneId);
+                  return (
+                    <div className="flex items-center gap-2 p-1.5 bg-[#090a14] rounded-xl border border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setMediaPickerSlot("primary")}
+                        className={cn(
+                          "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-between transition-all",
+                          mediaPickerSlot === "primary"
+                            ? "bg-indigo-600 text-white shadow-md ring-1 ring-indigo-400"
+                            : "text-slate-400 hover:text-white hover:bg-white/5"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <MonitorUp className="w-3.5 h-3.5 text-cyan-300" />
+                          <span>Window 1 (Left / Primary)</span>
+                        </div>
+                        {targetScene?.activeMedia ? (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-900/60 text-cyan-200 border border-cyan-500/40 truncate max-w-[110px]">
+                            {targetScene.activeMedia.name}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">Empty</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMediaPickerSlot("secondary")}
+                        className={cn(
+                          "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-between transition-all",
+                          mediaPickerSlot === "secondary"
+                            ? "bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400"
+                            : "text-slate-400 hover:text-white hover:bg-white/5"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <MonitorUp className="w-3.5 h-3.5 text-emerald-300" />
+                          <span>Window 2 (Right / Secondary)</span>
+                        </div>
+                        {targetScene?.secondaryMedia ? (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-200 border border-emerald-500/40 truncate max-w-[110px]">
+                            {targetScene.secondaryMedia.name}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">Empty</span>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Search Bar + Clear Media quick action */}
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1">
@@ -2029,11 +2177,12 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   {/* Option to clear media */}
                   <button
                     type="button"
-                    onClick={() => handleAttachMedia(mediaPickerSceneId, null)}
+                    onClick={() => handleAttachMedia(mediaPickerSceneId, null, mediaPickerSlot)}
                     className="h-8 px-3 rounded-xl border border-white/15 hover:border-white/30 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-all"
+                    title={`Clear ${mediaPickerSlot === "secondary" ? "Window 2" : "Window 1"}`}
                   >
                     <User className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Camera Only</span>
+                    <span>Clear {mediaPickerSlot === "secondary" ? "Win 2" : "Win 1"}</span>
                   </button>
                 </div>
 
@@ -2124,14 +2273,16 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                   return (
                     <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 min-h-0">
                       {filtered.map((opt) => {
-                        const isAttached = targetScene?.activeMedia?.id === opt.id;
+                        const isAttachedPrimary = targetScene?.activeMedia?.id === opt.id;
+                        const isAttachedSecondary = targetScene?.secondaryMedia?.id === opt.id;
+                        const isAttachedAny = isAttachedPrimary || isAttachedSecondary;
                         return (
                           <div
                             key={opt.id}
                             className={cn(
                               "w-full p-2.5 rounded-xl border flex items-center justify-between gap-3 transition-all group",
-                              isAttached
-                                ? "bg-cyan-950/40 border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.15)] ring-1 ring-cyan-500/50"
+                              isAttachedAny
+                                ? "bg-cyan-950/30 border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.15)] ring-1 ring-cyan-500/40"
                                 : "border-white/10 hover:border-cyan-500/40 bg-white/[0.03] hover:bg-white/[0.06]"
                             )}
                           >
@@ -2160,9 +2311,14 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                                 <div className="text-[10.5px] text-slate-400 flex items-center gap-2 mt-0.5">
                                   <span className="capitalize font-mono text-cyan-300/80">{opt.type}</span>
                                   {opt.duration && <span>• {opt.duration}</span>}
-                                  {isAttached && (
-                                    <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[9px] border border-emerald-500/30">
-                                      Attached ✓
+                                  {isAttachedPrimary && (
+                                    <span className="px-1.5 py-0.2 rounded bg-indigo-500/25 text-indigo-300 font-bold text-[9px] border border-indigo-500/40">
+                                      Win 1 ✓
+                                    </span>
+                                  )}
+                                  {isAttachedSecondary && (
+                                    <span className="px-1.5 py-0.2 rounded bg-emerald-500/25 text-emerald-300 font-bold text-[9px] border border-emerald-500/40">
+                                      Win 2 ✓
                                     </span>
                                   )}
                                 </div>
@@ -2172,15 +2328,30 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 type="button"
-                                onClick={() => handleAttachMedia(mediaPickerSceneId, opt)}
+                                onClick={() => handleAttachMedia(mediaPickerSceneId, isAttachedPrimary ? null : opt, "primary")}
                                 className={cn(
-                                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm",
-                                  isAttached
-                                    ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                                    : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                                  "px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1",
+                                  isAttachedPrimary
+                                    ? "bg-indigo-600 hover:bg-indigo-500 text-white ring-1 ring-indigo-400"
+                                    : "bg-indigo-950/60 hover:bg-indigo-700/80 text-indigo-300 hover:text-white border border-indigo-700/50"
                                 )}
+                                title={isAttachedPrimary ? "Remove from Window 1" : "Attach to Window 1 (Left / Primary)"}
                               >
-                                {isAttached ? "Attached" : "Attach"}
+                                {isAttachedPrimary ? "Win 1 ✓" : "+ Win 1"}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleAttachMedia(mediaPickerSceneId, isAttachedSecondary ? null : opt, "secondary")}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1",
+                                  isAttachedSecondary
+                                    ? "bg-emerald-600 hover:bg-emerald-500 text-white ring-1 ring-emerald-400"
+                                    : "bg-emerald-950/60 hover:bg-emerald-700/80 text-emerald-300 hover:text-white border border-emerald-700/50"
+                                )}
+                                title={isAttachedSecondary ? "Remove from Window 2" : "Attach to Window 2 (Right / Secondary)"}
+                              >
+                                {isAttachedSecondary ? "Win 2 ✓" : "+ Win 2"}
                               </button>
 
                               {(opt.type === "map" || opt.mapConfig || opt.type === "youtube" || opt.youtubeId || opt.type === "website" || opt.websiteConfig || (opt.type === "pdf" && opt.slides)) && (
@@ -2597,24 +2768,28 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
         isOpen={Boolean(slideCreatorSceneId)}
         onClose={() => setSlideCreatorSceneId(null)}
         targetSceneId={slideCreatorSceneId}
+        targetSlot={mediaPickerSlot}
       />
 
       <YouTubeLibraryModal
         isOpen={Boolean(youtubeLibrarySceneId)}
         onClose={() => setYoutubeLibrarySceneId(null)}
         targetSceneId={youtubeLibrarySceneId || undefined}
+        targetSlot={mediaPickerSlot}
       />
 
       <TacticalMapModal
         isOpen={Boolean(tacticalMapSceneId)}
         onClose={() => setTacticalMapSceneId(null)}
         targetSceneId={tacticalMapSceneId || undefined}
+        targetSlot={mediaPickerSlot}
       />
 
       <WebsiteLibraryModal
         isOpen={Boolean(websiteLibrarySceneId)}
         onClose={() => setWebsiteLibrarySceneId(null)}
         targetSceneId={websiteLibrarySceneId || undefined}
+        targetSlot={mediaPickerSlot}
       />
     </aside>
   );

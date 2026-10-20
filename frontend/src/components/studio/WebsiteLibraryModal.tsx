@@ -660,6 +660,7 @@ interface WebsiteLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
   targetSceneId?: string | null;
+  targetSlot?: "primary" | "secondary";
   onSelectWebsiteItem?: (item: MediaFileItem) => void;
 }
 
@@ -667,6 +668,7 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
   isOpen,
   onClose,
   targetSceneId,
+  targetSlot = "primary",
   onSelectWebsiteItem,
 }) => {
   const {
@@ -675,7 +677,9 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
     updateMediaLibraryItem,
     removeMediaLibraryItem,
     setActiveMedia,
+    setSecondaryMedia,
     activeMedia,
+    secondaryMedia,
     scenes,
     activeSceneId,
     updateScene,
@@ -742,13 +746,18 @@ export const WebsiteLibraryModal: React.FC<WebsiteLibraryModalProps> = ({
   };
 
   const activateWebsiteOnSceneAndStage = (item: MediaFileItem) => {
+    const isSecondary = targetSlot === "secondary";
     if (effectiveSceneId) {
-      updateScene(effectiveSceneId, { activeMedia: item });
+      updateScene(effectiveSceneId, isSecondary ? { secondaryMedia: item } : { activeMedia: item });
       if (effectiveSceneId !== activeSceneId) {
         switchScene(effectiveSceneId);
       }
     }
-    setActiveMedia(item);
+    if (isSecondary) {
+      setSecondaryMedia(item);
+    } else {
+      setActiveMedia(item);
+    }
     onSelectWebsiteItem?.(item);
   };
 

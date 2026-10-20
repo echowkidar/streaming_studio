@@ -834,7 +834,9 @@ class StageBroadcaster {
       // 2. Active Stage Media Video / Audio Element (Direct Web Audio routing for 100% reliable recording & broadcast)
       const mediaVideo = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
       const mediaAudio = document.getElementById("livestudio-active-media-audio") as HTMLAudioElement | null;
-      const activeMediaEls = [mediaVideo, mediaAudio].filter((el): el is HTMLMediaElement => Boolean(el));
+      const secVideo = document.getElementById("livestudio-secondary-media-video") as HTMLVideoElement | null;
+      const secAudio = document.getElementById("livestudio-secondary-media-audio") as HTMLAudioElement | null;
+      const activeMediaEls = [mediaVideo, mediaAudio, secVideo, secAudio].filter((el): el is HTMLMediaElement => Boolean(el));
 
       if (activeMediaEls.length > 0 && this.audioCtx && this.audioDestination) {
         if (!this.mediaGainNode) {
@@ -912,8 +914,10 @@ class StageBroadcaster {
         const entryNode = this.mediaHighpassFilter || this.mediaGainNode;
 
         for (const el of activeMediaEls) {
-          if (el.muted !== isMediaMuted) {
-            el.muted = isMediaMuted;
+          const isSecondary = el.id.includes("secondary");
+          const elMuted = isSecondary ? Boolean(store.secondaryMedia?.isMuted) : isMediaMuted;
+          if (el.muted !== elMuted) {
+            el.muted = elMuted;
           }
 
           if (!this.connectedMediaElements.has(el)) {

@@ -38,7 +38,7 @@ import {
   ArrowLeftRight,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useStudioStore, ParticipantBounds, CustomLayoutConfig } from "@/stores/studio.store";
+import { useStudioStore, ParticipantBounds, CustomLayoutConfig, MediaFileItem } from "@/stores/studio.store";
 import { VideoTrackView } from "./VideoTrackView";
 import { Participant } from "@/types";
 import { cn } from "@/lib/utils";
@@ -227,6 +227,11 @@ export const StagePreview: React.FC = () => {
     commentConfig,
     activeMedia,
     setActiveMedia,
+    secondaryMedia,
+    setSecondaryMedia,
+    toggleSecondaryMediaMute,
+    setSecondaryMediaMuted,
+    setSecondaryMediaVolume,
     layoutSplitRatio,
     setLayoutSplitRatio,
     participantBounds,
@@ -273,6 +278,16 @@ export const StagePreview: React.FC = () => {
     flipH: false,
     flipV: false,
   };
+  const secondaryMediaTransform = tileTransforms["secondary-media"] || {
+    fitMode: defaultMediaFit,
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    rotation: 0,
+    flipH: false,
+    flipV: false,
+  };
+  const secondaryMediaFitMode = (secondaryMediaTransform.fitMode as "contain" | "cover") || defaultMediaFit;
   const mediaFitMode = (mediaTransform.fitMode as "contain" | "cover") || defaultMediaFit;
   const mediaZoom = Math.max(1, mediaTransform.zoom || 1);
   const mediaPanX = Math.max(-50, Math.min(50, mediaTransform.panX || 0));
@@ -311,6 +326,7 @@ export const StagePreview: React.FC = () => {
   const [isWebsiteModalOpen, setIsWebsiteModalOpen] = useState(false);
   const [pastedToastMsg, setPastedToastMsg] = useState<string | null>(null);
   const [clipSavedToast, setClipSavedToast] = useState<string | null>(null);
+  const [focusedMediaSlot, setFocusedMediaSlot] = useState<"primary" | "secondary">("primary");
   const [mediaToolbarPos, setMediaToolbarPos] = useState<{ x: number; y: number } | null>(null);
   const [isMediaToolbarCollapsed, setIsMediaToolbarCollapsed] = useState(false);
   const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
@@ -2038,23 +2054,49 @@ export const StagePreview: React.FC = () => {
   };
 
   // Helper to render active stage media (video/slides/image/youtube/map/website)
-  const renderMediaTile = (currentMediaBounds?: ParticipantBounds) => {
-    if (!activeMedia) return null;
-    const isTransparentCard = Boolean(mediaTransform.isTransparentBg);
-    const isMediaFullBleed = isFullBleedLayout || mediaFitMode === "cover";
+  const renderMediaTile = (
+    targetMedia: MediaFileItem | null = activeMedia,
+    currentMediaBounds?: ParticipantBounds,
+    isSecondary: boolean = false
+  ) => {
+    if (!targetMedia) return null;
+    const tileKey = isSecondary ? "secondary-media" : "active-media";
+    const tf = tileTransforms[tileKey] || {
+      fitMode: defaultMediaFit,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+    };
+    const currentFitMode = (tf.fitMode as "contain" | "cover") || defaultMediaFit;
+    const currentZoom = Math.max(1, tf.zoom || 1);
+    const currentPanX = Math.max(-50, Math.min(50, tf.panX || 0));
+    const currentPanY = Math.max(-50, Math.min(50, tf.panY || 0));
+    const currentRotation = tf.rotation || 0;
+    const currentMirrored = Boolean(
+      (fairUseConfig?.enabled && fairUseConfig?.mirrorMediaVideo) || tf.flipH
+    );
+    const effObjPosX = Math.max(0, Math.min(100, 50 + currentPanX));
+    const effObjPosY = Math.max(0, Math.min(100, 50 + currentPanY));
+    const effOriginX = currentMirrored ? 100 - effObjPosX : effObjPosX;
+
+    const isTransparentCard = Boolean(tf.isTransparentBg);
+    const isMediaFullBleed = isFullBleedLayout || currentFitMode === "cover";
     const effBounds = currentMediaBounds || { x: 0, y: 0, width: 100, height: 100 };
     const touchesBottomTicker = Boolean(showTicker && effBounds.y + effBounds.height > 88);
     const activeYtVideoId =
-      activeMedia.type === "youtube"
-        ? activeMedia.youtubeId || (activeMedia.url ? extractYouTubeVideoId(activeMedia.url) : "")
+      targetMedia.type === "youtube"
+        ? targetMedia.youtubeId || (targetMedia.url ? extractYouTubeVideoId(targetMedia.url) : "")
         : "";
     return (
       <div
         data-stage-tile="true"
         data-stage-media="true"
-        data-participant-id="active-media"
-        data-media-name={activeMedia.name}
-        data-participant-fit={mediaFitMode}
+        data-participant-id={tileKey}
+        data-media-name={targetMedia.name}
+        data-participant-fit={currentFitMode}
         data-transparent-card={isTransparentCard ? "true" : "false"}
         className={cn(
           "relative w-full h-full overflow-hidden flex items-center justify-center group select-none transition-all",
@@ -2069,19 +2111,19 @@ export const StagePreview: React.FC = () => {
         {/* Inner Media Viewport with Pan & Zoom Transform */}
         <div
           className="relative w-full h-full overflow-hidden flex items-center justify-center select-none"
-          onMouseDown={handleMediaPanMouseDown}
-          onTouchStart={handleMediaPanTouchStart}
-          onTouchMove={handleMediaPanTouchMove}
-          onTouchEnd={handleMediaPanTouchEnd}
-          onWheel={handleMediaWheel}
+          onMouseDown={!isSecondary ? handleMediaPanMouseDown : undefined}
+          onTouchStart={!isSecondary ? handleMediaPanTouchStart : undefined}
+          onTouchMove={!isSecondary ? handleMediaPanTouchMove : undefined}
+          onTouchEnd={!isSecondary ? handleMediaPanTouchEnd : undefined}
+          onWheel={!isSecondary ? handleMediaWheel : undefined}
         >
-          {mediaLoadError ? (
+          {mediaLoadError && !isSecondary ? (
             <div className="flex flex-col items-center justify-center p-6 text-center text-slate-400 gap-2.5 bg-black/90 w-full h-full">
               <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
                 <Video className="w-6 h-6" />
               </div>
               <p className="text-xs font-semibold text-rose-300">Media source unavailable or expired</p>
-              <p className="text-[10px] text-slate-500 max-w-[220px] truncate">{activeMedia.name}</p>
+              <p className="text-[10px] text-slate-500 max-w-[220px] truncate">{targetMedia.name}</p>
               <div className="flex items-center gap-2 mt-1 pointer-events-auto">
                 <button
                   type="button"
@@ -2096,7 +2138,7 @@ export const StagePreview: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveMedia(null)}
+                  onClick={() => (isSecondary ? setSecondaryMedia(null) : setActiveMedia(null))}
                   className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-semibold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
                   title="Remove from Stage"
                 >
@@ -2105,56 +2147,60 @@ export const StagePreview: React.FC = () => {
                 </button>
               </div>
             </div>
-          ) : activeMedia.type === "website" ? (
+          ) : targetMedia.type === "website" ? (
             <InteractiveWebsiteStageView
-              item={activeMedia}
-              zoom={Number((mediaZoom * breathScale).toFixed(3))}
-              panX={mediaPanX}
-              panY={mediaPanY}
-              rotation={mediaRotation}
-              isMirrored={isMediaMirrored}
+              item={targetMedia}
+              zoom={Number((currentZoom * breathScale).toFixed(3))}
+              panX={currentPanX}
+              panY={currentPanY}
+              rotation={currentRotation}
+              isMirrored={currentMirrored}
               onOpenLibraryModal={() => setIsWebsiteModalOpen(true)}
             />
-          ) : activeMedia.type === "map" && activeMedia.mapConfig ? (
+          ) : targetMedia.type === "map" && targetMedia.mapConfig ? (
             <div
               style={{
                 width: "100%",
                 height: "100%",
                 transform:
                   [
-                    mediaZoom * breathScale > 1.001
-                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
+                    currentZoom * breathScale > 1.001
+                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
                       : "",
-                    mediaRotation ? `rotate(${mediaRotation}deg)` : "",
-                    isMediaMirrored ? "scaleX(-1)" : "",
+                    currentRotation ? `rotate(${currentRotation}deg)` : "",
+                    currentMirrored ? "scaleX(-1)" : "",
                   ]
                     .filter(Boolean)
                     .join(" ") || undefined,
-                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
+                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
               }}
               className="w-full h-full relative pointer-events-auto"
             >
               <TacticalMapStageCanvas
-                config={activeMedia.mapConfig}
-                fitMode={mediaFitMode}
+                config={targetMedia.mapConfig}
+                fitMode={currentFitMode}
                 isInteractive={true}
                 onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
                 onConfigChange={(nextMapCfg) => {
-                  const mergedCfg = { ...activeMedia.mapConfig!, ...nextMapCfg };
-                  const updatedMedia = { ...activeMedia, mapConfig: mergedCfg };
-                  setActiveMedia(updatedMedia);
-                  useStudioStore.getState().updateMediaLibraryItem(activeMedia.id, { mapConfig: mergedCfg });
+                  const mergedCfg = { ...targetMedia.mapConfig!, ...nextMapCfg };
+                  const updatedMedia = { ...targetMedia, mapConfig: mergedCfg };
+                  if (isSecondary) {
+                    setSecondaryMedia(updatedMedia);
+                  } else {
+                    setActiveMedia(updatedMedia);
+                  }
+                  useStudioStore.getState().updateMediaLibraryItem(targetMedia.id, { mapConfig: mergedCfg });
                 }}
               />
             </div>
-          ) : activeMedia.type === "youtube" && useYtIframeFallback && (activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url || "")) ? (
+          ) : targetMedia.type === "youtube" && (useYtIframeFallback || isSecondary) && (activeYtVideoId || extractYouTubeVideoId(targetMedia.url || "")) ? (
             (() => {
-              const ytVideoId = activeMedia.youtubeId || extractYouTubeVideoId(activeMedia.url || "");
+              const ytVideoId = activeYtVideoId || extractYouTubeVideoId(targetMedia.url || "");
               const tileRelAspect = Math.max(
                 0.2,
                 Math.min(4.0, (effBounds.width || 100) / Math.max(1, effBounds.height || 100))
               );
-              const isCoverFill = mediaFitMode === "cover" || Math.abs(mediaPanX) > 0.5;
+              const isCoverFill = currentFitMode === "cover" || Math.abs(currentPanX) > 0.5;
               const iframeWidthPct = isCoverFill
                 ? tileRelAspect < 1
                   ? Math.ceil((1 / tileRelAspect) * 108)
@@ -2166,25 +2212,6 @@ export const StagePreview: React.FC = () => {
                   : 124
                 : 118;
 
-              const ytTotalScale = Number(
-                (mediaZoom * breathScale * (isYtJerking ? 1.045 : 1)).toFixed(4)
-              );
-              const canPanYt = isCoverFill || mediaZoom > 1 || hasActivePanOffset;
-              const ytShiftX = Number(
-                (
-                  (canPanYt ? -mediaPanX * 0.65 : 0) +
-                  breathState.tx +
-                  (isYtJerking ? 1.4 : 0)
-                ).toFixed(2)
-              );
-              const ytShiftY = Number(
-                (
-                  (canPanYt ? -mediaPanY * 0.65 : 0) +
-                  breathState.ty +
-                  (isYtJerking ? -0.9 : 0)
-                ).toFixed(2)
-              );
-
               return (
                 <div
                   style={{
@@ -2192,57 +2219,22 @@ export const StagePreview: React.FC = () => {
                     height: "100%",
                     transform:
                       [
-                        ytShiftX !== 0 || ytShiftY !== 0
-                          ? `translate3d(${ytShiftX}%, ${ytShiftY}%, 0)`
-                          : "",
-                        ytTotalScale > 1.001 ? `scale(${ytTotalScale})` : "",
-                        mediaRotation || breathState.rot
-                          ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
-                          : "",
-                        isMediaMirrored ? "scaleX(-1)" : "",
+                        currentZoom > 1.001 ? `scale(${currentZoom})` : "",
+                        currentRotation ? `rotate(${currentRotation}deg)` : "",
+                        currentMirrored ? "scaleX(-1)" : "",
                       ]
                         .filter(Boolean)
                         .join(" ") || undefined,
                     transformOrigin: "center center",
-                    cursor: canPanYt ? (isDraggingMediaPan ? "grabbing" : "grab") : "default",
-                    filter:
-                      fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                        ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
-                        : undefined,
                   }}
                   className="w-full h-full relative overflow-hidden pointer-events-auto bg-black"
                 >
                   <iframe
-                    id="livestudio-active-youtube-iframe"
-                    key={ytVideoId || activeMedia.id}
-                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${activeMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${activeMedia.startTimeSec ? `&start=${Math.floor(activeMedia.startTimeSec)}` : ""}${activeMedia.endTimeSec ? `&end=${Math.floor(activeMedia.endTimeSec)}` : ""}`}
-                    title={activeMedia.name}
+                    id={isSecondary ? "livestudio-secondary-youtube-iframe" : "livestudio-active-youtube-iframe"}
+                    key={`yt-${tileKey}-${ytVideoId || targetMedia.id}`}
+                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${targetMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${targetMedia.startTimeSec ? `&start=${Math.floor(targetMedia.startTimeSec)}` : ""}${targetMedia.endTimeSec ? `&end=${Math.floor(targetMedia.endTimeSec)}` : ""}`}
+                    title={targetMedia.name}
                     allow="autoplay; encrypted-media; picture-in-picture"
-                    onLoad={(e) => {
-                      const win = e.currentTarget.contentWindow;
-                      const initPlayer = () => {
-                        if (!win) return;
-                        win.postMessage(
-                          JSON.stringify({ event: "listening", id: 1, channel: "widget" }),
-                          "*"
-                        );
-                        sendYouTubeIframeCommand("unloadModule", ["captions"]);
-                        sendYouTubeIframeCommand("unloadModule", ["cc"]);
-                        sendYouTubeIframeCommand("setOption", ["captions", "track", {}]);
-                        sendYouTubeIframeCommand("setOption", ["cc", "track", {}]);
-                        // Mute iframe directly: sound is piped into Web Audio & broadcast mix via livestudio-active-media-audio without echo
-                        sendYouTubeIframeCommand("mute", []);
-                        sendYouTubeIframeCommand("playVideo", []);
-                        const rate =
-                          activeMedia.playbackRate ||
-                          (fairUseConfig?.enabled ? fairUseConfig.playbackRate || 1.04 : 1.0);
-                        sendYouTubeIframeCommand("setPlaybackRate", [rate]);
-                      };
-                      initPlayer();
-                      setTimeout(initPlayer, 250);
-                      setTimeout(initPlayer, 750);
-                      setTimeout(initPlayer, 1500);
-                    }}
                     style={{
                       position: "absolute",
                       top: "50%",
@@ -2253,393 +2245,138 @@ export const StagePreview: React.FC = () => {
                     }}
                     className="border-0 pointer-events-none select-none"
                   />
-
-                  {/* Same-Origin Dedicated Audio Stream: feeds stageBroadcaster & studioStageRecorder Web Audio graph */}
                   <audio
-                    id="livestudio-active-media-audio"
-                    key={`yt-audio-${ytVideoId || activeMedia.id}`}
+                    id={isSecondary ? "livestudio-secondary-media-audio" : "livestudio-active-media-audio"}
+                    key={`yt-audio-${tileKey}-${ytVideoId || targetMedia.id}`}
                     src={`/api/media/youtube/audio?videoId=${ytVideoId}`}
                     autoPlay
                     playsInline
                     preload="auto"
                     crossOrigin="anonymous"
-                    muted={Boolean(activeMedia.isMuted)}
+                    muted={Boolean(targetMedia.isMuted)}
                     className="hidden pointer-events-none"
-                    onPlay={() => setIsMediaPaused(false)}
-                    onPause={() => setIsMediaPaused(true)}
                     onCanPlay={(e) => {
                       const a = e.currentTarget;
-                      if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
+                      const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
+                      if (!targetMedia.isMuted && vol > 0) {
                         a.muted = false;
                         try {
-                          a.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
+                          a.volume = Math.max(0.05, Math.min(1, vol / 100));
                         } catch { }
                       }
-                      if (a.paused && !isMediaPausedRef.current) {
-                        a.play().catch(() => { });
-                      }
-                    }}
-                    onLoadedMetadata={(e) => {
-                      const a = e.currentTarget;
-                      if (Number.isFinite(a.duration) && a.duration > 0 && a.duration < 86400 * 3) {
-                        setMediaDuration(a.duration);
-                        mediaDurationRef.current = a.duration;
-                      }
-                      if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
-                        try { a.currentTime = activeMedia.startTimeSec; } catch { }
-                      }
-                      a.play().catch(() => { });
-                    }}
-                    onTimeUpdate={(e) => {
-                      const a = e.currentTarget;
-                      const ct = a.currentTime || 0;
-                      if (mediaCurrentTimeRef.current === 0 || Math.abs(mediaCurrentTimeRef.current - ct) > 0.5) {
-                        setMediaCurrentTime(ct);
-                        mediaCurrentTimeRef.current = ct;
-                      }
+                      if (a.paused) a.play().catch(() => { });
                     }}
                   />
                 </div>
               );
             })()
-          ) : activeMedia.type === "video" || activeMedia.type === "youtube" ? (
+          ) : targetMedia.type === "video" || targetMedia.type === "youtube" ? (
             <video
-              id="livestudio-active-media-video"
+              id={isSecondary ? "livestudio-secondary-media-video" : "livestudio-active-media-video"}
+              key={`vid-${tileKey}-${targetMedia.id}`}
               src={
-                activeMedia.type === "youtube" && activeYtVideoId
+                targetMedia.type === "youtube" && activeYtVideoId
                   ? ytStreamAttempt === 0
                     ? `/api/media/youtube/stream?videoId=${activeYtVideoId}`
                     : `/youtube-stream?videoId=${activeYtVideoId}`
-                  : activeMedia.url
+                  : targetMedia.url
               }
               autoPlay
               playsInline
               preload="auto"
-              loop={(activeMedia.loop ?? true) && !activeMedia.startTimeSec && !activeMedia.endTimeSec}
-              muted={Boolean(activeMedia.isMuted)}
+              loop={(targetMedia.loop ?? true) && !targetMedia.startTimeSec && !targetMedia.endTimeSec}
+              muted={Boolean(targetMedia.isMuted)}
               crossOrigin="anonymous"
-              onError={() => {
-                if (activeMedia.type === "youtube" && activeYtVideoId) {
-                  if (ytStreamAttempt === 0) {
-                    setYtStreamAttempt(1);
-                  } else {
-                    setUseYtIframeFallback(true);
-                  }
-                } else {
-                  setMediaLoadError(true);
-                }
-              }}
               onCanPlay={(e) => {
-                ytReadyConfirmedRef.current = true;
                 const v = e.currentTarget;
-                if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
+                const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
+                if (!targetMedia.isMuted && vol > 0) {
                   v.muted = false;
                   try {
-                    v.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
+                    v.volume = Math.max(0.05, Math.min(1, vol / 100));
                   } catch { }
                 }
-                if (v.paused && !isMediaPausedRef.current) {
-                  v.play().catch(() => { });
-                }
+                if (v.paused) v.play().catch(() => { });
               }}
-              onLoadedMetadata={(e) => {
-                ytReadyConfirmedRef.current = true;
-                const v = e.currentTarget;
-                if (Number.isFinite(v.duration) && v.duration > 0 && v.duration < 86400 * 3) {
-                  setMediaDuration(v.duration);
-                  mediaDurationRef.current = v.duration;
-                }
-                if (activeMedia.startTimeSec && activeMedia.startTimeSec > 0) {
-                  try {
-                    v.currentTime = activeMedia.startTimeSec;
-                  } catch { }
-                  setMediaCurrentTime(activeMedia.startTimeSec);
-                }
-                if (!activeMedia.isMuted && normalizedMediaVolumePct > 0) {
-                  v.muted = false;
-                  try {
-                    v.volume = Math.max(0.05, Math.min(1, normalizedMediaVolumePct / 100));
-                  } catch { }
-                }
-                v.play().catch(() => {
-                  // If browser blocks unmuted autoplay before gesture, start playing and unmute immediately
-                  v.muted = false;
-                });
-                setIsMediaPaused(v.paused);
-              }}
-              onTimeUpdate={(e) => {
-                const v = e.currentTarget;
-                const ct = v.currentTime || 0;
-                setMediaCurrentTime(ct);
-                if (
-                  Number.isFinite(v.duration) &&
-                  v.duration > 0 &&
-                  v.duration < 86400 * 3 &&
-                  mediaDuration !== v.duration
-                ) {
-                  setMediaDuration(v.duration);
-                  mediaDurationRef.current = v.duration;
-                }
-                if (activeMedia.endTimeSec && activeMedia.endTimeSec > 0 && ct >= activeMedia.endTimeSec) {
-                  if (activeMedia.loop !== false) {
-                    v.currentTime = activeMedia.startTimeSec || 0;
-                    v.play().catch(() => { });
-                  } else {
-                    v.pause();
-                    setIsMediaPaused(true);
-                    useStudioStore.getState().triggerMediaEnded();
-                  }
-                }
-              }}
-              onEnded={() => {
-                if (activeMedia.loop !== false) {
-                  const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-                  if (v) {
-                    v.currentTime = activeMedia.startTimeSec || 0;
-                    v.play().catch(() => { });
-                  }
-                } else {
-                  useStudioStore.getState().triggerMediaEnded();
-                }
-              }}
-              onPlay={() => setIsMediaPaused(false)}
-              onPause={() => setIsMediaPaused(true)}
               style={{
-                objectFit: mediaFitMode,
-                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                objectFit: currentFitMode,
+                objectPosition: `${effObjPosX}% ${effObjPosY}%`,
                 transform:
                   [
-                    breathState.tx !== 0 ||
-                      breathState.ty !== 0 ||
-                      (mediaFitMode === "contain" && hasActivePanOffset)
-                      ? `translate3d(${Number(
-                        (
-                          breathState.tx +
-                          (mediaFitMode === "contain" ? -mediaPanX * 0.45 : 0)
-                        ).toFixed(2)
-                      )}%, ${Number(
-                        (
-                          breathState.ty +
-                          (mediaFitMode === "contain" ? -mediaPanY * 0.45 : 0)
-                        ).toFixed(2)
-                      )}%, 0)`
+                    currentZoom * breathScale > 1.001
+                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
                       : "",
-                    mediaZoom * breathScale > 1.001
-                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
-                      : "",
-                    mediaRotation || breathState.rot
-                      ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
-                      : "",
-                    isMediaMirrored ? "scaleX(-1)" : "",
-                    isYtJerking ? "scale(1.025) translate(1px, -1px)" : "",
+                    currentRotation ? `rotate(${currentRotation}deg)` : "",
+                    currentMirrored ? "scaleX(-1)" : "",
                   ]
                     .filter(Boolean)
                     .join(" ") || undefined,
-                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
-                cursor:
-                  mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset
-                    ? isDraggingMediaPan
-                      ? "grabbing"
-                      : "grab"
-                    : "default",
+                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
                 userSelect: "none",
-                transition:
-                  isDraggingMediaPan || breathScale > 1.001
-                    ? "none"
-                    : "object-position 0.12s ease-out, transform 0.12s ease-out, transform-origin 0.12s ease-out",
-                filter:
-                  fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                    ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
-                    : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
           ) : (
             <img
-              src={activeMedia.url}
-              alt={activeMedia.name}
+              src={targetMedia.thumbnail || targetMedia.url}
+              alt={targetMedia.name}
               crossOrigin="anonymous"
               draggable={false}
-              onError={() => setMediaLoadError(true)}
               style={{
-                objectFit: mediaFitMode,
-                objectPosition: `${effectiveObjectPosX}% ${effectiveObjectPosY}%`,
+                objectFit: currentFitMode,
+                objectPosition: `${effObjPosX}% ${effObjPosY}%`,
                 transform:
                   [
-                    breathState.tx !== 0 ||
-                      breathState.ty !== 0 ||
-                      (mediaFitMode === "contain" && hasActivePanOffset)
-                      ? `translate3d(${Number(
-                        (
-                          breathState.tx +
-                          (mediaFitMode === "contain" ? -mediaPanX * 0.45 : 0)
-                        ).toFixed(2)
-                      )}%, ${Number(
-                        (
-                          breathState.ty +
-                          (mediaFitMode === "contain" ? -mediaPanY * 0.45 : 0)
-                        ).toFixed(2)
-                      )}%, 0)`
+                    currentZoom * breathScale > 1.001
+                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
                       : "",
-                    mediaZoom * breathScale > 1.001
-                      ? `scale(${Number((mediaZoom * breathScale).toFixed(4))})`
-                      : "",
-                    mediaRotation || breathState.rot
-                      ? `rotate(${Number((mediaRotation + breathState.rot).toFixed(2))}deg)`
-                      : "",
-                    isMediaMirrored ? "scaleX(-1)" : "",
+                    currentRotation ? `rotate(${currentRotation}deg)` : "",
+                    currentMirrored ? "scaleX(-1)" : "",
                   ]
                     .filter(Boolean)
                     .join(" ") || undefined,
-                transformOrigin: `${effectiveTransformOriginX}% ${effectiveObjectPosY}%`,
-                cursor:
-                  mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset
-                    ? isDraggingMediaPan
-                      ? "grabbing"
-                      : "grab"
-                    : "default",
+                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
                 userSelect: "none",
-                transition:
-                  isDraggingMediaPan || breathScale > 1.001
-                    ? "none"
-                    : "object-position 0.12s ease-out, transform 0.12s ease-out, transform-origin 0.12s ease-out",
-                filter:
-                  fairUseConfig?.enabled && fairUseConfig?.visualTransformFilter
-                    ? "contrast(1.06) saturate(1.08) hue-rotate(-2deg)"
-                    : undefined,
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
           )}
 
-          {/* Active Pan coordinates indicator when dragging */}
-          {isDraggingMediaPan && (
-            <div className="absolute inset-0 pointer-events-none border-2 border-cyan-400/80 bg-cyan-950/20 flex items-center justify-center z-30">
-              <span className="px-2.5 py-1 rounded-md bg-black/90 text-[11px] text-cyan-300 font-mono shadow-xl border border-cyan-500/40">
-                ✋ Pan Position: L/R {Math.round(objectPosX)}% • T/B {Math.round(objectPosY)}%
-              </span>
-            </div>
-          )}
-
-          {/* Help hint when hovering in crop/pan mode */}
-          {(mediaFitMode === "cover" || mediaZoom > 1 || hasActivePanOffset) && !isDraggingMediaPan && (
-            <div className="absolute bottom-14 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none bg-black/85 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/20 text-[9px] text-slate-200 flex items-center gap-1.5 shadow-xl z-20">
-              <span>✋ Drag video to pan Left/Right</span>
-              <span className="text-white/40">•</span>
-              <span>Or use ◄ Left / Mid / Right ► in top bar</span>
-            </div>
-          )}
-        </div>
-
-        {/* 60FPS HTML5 Canvas Fair-Use Film Grain + Refined 35mm Vintage Hairlines + Dynamic Vignette */}
-        {fairUseConfig?.enabled &&
-          ((fairUseConfig?.filmGrainOverlay ?? true) ||
-            (fairUseConfig?.vintageLinesOverlay ?? true)) && (
-            <FairUseCanvasOverlay
-              grainEnabled={fairUseConfig?.filmGrainOverlay ?? true}
-              grainIntensity={fairUseConfig?.grainIntensity || "random"}
-              linesEnabled={fairUseConfig?.vintageLinesOverlay ?? true}
-              linesIntensity={fairUseConfig?.vintageLinesIntensity || "medium"}
-            />
-          )}
-
-        {/* YouTube Fair Use / Reaction Badge */}
-        {fairUseConfig?.enabled && (
-          <div
-            className={cn(
-              "absolute left-3 z-20 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none transition-all",
-              activeMedia.type === "video" || activeMedia.type === "youtube"
-                ? touchesBottomTicker
-                  ? "bottom-20"
-                  : "bottom-12"
-                : touchesBottomTicker
-                  ? "bottom-11"
-                  : "bottom-3"
-            )}
-          >
-            <ShieldAlert className="w-3 h-3 text-slate-950" />
-            <span>Fair Use • Safe Mode</span>
-          </div>
-        )}
-
-
-
-        {/* Multi-Slide Presentation Deck Controls */}
-        {activeMedia.slides && activeMedia.slides.length > 0 && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-indigo-500/50 shadow-2xl pointer-events-auto">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                prevSlide();
-              }}
-              disabled={(activeMedia.currentSlideIndex || 0) <= 0}
-              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
-              title="Previous Slide"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-xs font-mono font-bold text-white px-1">
-              Slide {(activeMedia.currentSlideIndex || 0) + 1} / {activeMedia.slides.length}
-            </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                nextSlide();
-              }}
-              disabled={(activeMedia.currentSlideIndex || 0) >= activeMedia.slides.length - 1}
-              className="p-1 rounded text-slate-300 hover:text-white disabled:opacity-30 disabled:hover:text-slate-300 transition-colors"
-              title="Next Slide"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-
-            {activeMedia.speakerNotes && activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0] && (
+          {/* Quick Corner Controls Overlay on Tile */}
+          <div className="absolute top-2 right-2 z-30 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
+            {(targetMedia.type === "video" || targetMedia.type === "youtube" || targetMedia.type === "audio") && (
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setShowSpeakerNotes(!showSpeakerNotes);
+                  if (isSecondary) toggleSecondaryMediaMute();
+                  else toggleMediaMute();
                 }}
-                className={cn(
-                  "ml-1.5 px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors",
-                  showSpeakerNotes
-                    ? "bg-amber-500 text-black border-amber-400 font-bold"
-                    : "bg-white/10 hover:bg-white/20 text-amber-300 border-amber-500/30"
-                )}
-                title="Toggle Speaker Notes for this slide"
+                className="p-1 rounded-md bg-black/80 hover:bg-black text-white text-[10px] border border-white/20 shadow"
+                title={targetMedia.isMuted ? "Unmute Audio" : "Mute Audio"}
               >
-                <FileText className="w-3 h-3" />
-                <span>Notes</span>
+                {targetMedia.isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
               </button>
             )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isSecondary) {
+                  resetParticipantBounds("secondary-media");
+                  setSecondaryMedia(null);
+                } else {
+                  resetParticipantBounds("active-media");
+                  setActiveMedia(null);
+                }
+              }}
+              className="p-1 rounded-md bg-black/80 hover:bg-rose-600 text-slate-300 hover:text-white text-[10px] border border-white/20 shadow"
+              title="Remove from Stage"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
-        )}
-
-        {/* Floating Speaker Notes Overlay for Presenter */}
-        {showSpeakerNotes && activeMedia.slides && activeMedia.speakerNotes?.[activeMedia.currentSlideIndex || 0] && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="absolute bottom-14 left-1/2 -translate-x-1/2 max-w-md w-[88%] bg-slate-950/95 backdrop-blur-md border border-amber-500/50 rounded-xl p-3 shadow-2xl z-35 pointer-events-auto text-left"
-          >
-            <div className="flex items-center justify-between pb-1.5 border-b border-white/10 mb-1.5">
-              <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" /> Speaker Notes (Slide {(activeMedia.currentSlideIndex || 0) + 1})
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowSpeakerNotes(false)}
-                className="text-slate-400 hover:text-white text-xs px-1"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-slate-200 leading-relaxed font-sans">
-              {activeMedia.speakerNotes[activeMedia.currentSlideIndex || 0]}
-            </p>
-          </div>
-        )}
+        </div>
       </div>
     );
   };
@@ -2656,8 +2393,17 @@ export const StagePreview: React.FC = () => {
         activeMedia.type === "image" ||
         activeMedia.type === "pdf")
     );
+    const hasSecondaryVisualMedia = Boolean(
+      secondaryMedia &&
+      (secondaryMedia.type === "video" ||
+        secondaryMedia.type === "youtube" ||
+        secondaryMedia.type === "map" ||
+        secondaryMedia.type === "website" ||
+        secondaryMedia.type === "image" ||
+        secondaryMedia.type === "pdf")
+    );
 
-    if (onStageParticipants.length === 0 && !hasVisualMedia) {
+    if (onStageParticipants.length === 0 && !hasVisualMedia && !hasSecondaryVisualMedia) {
       return (
         <div className="h-full w-full flex flex-col items-center justify-center text-slate-500 gap-3">
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
@@ -2689,12 +2435,14 @@ export const StagePreview: React.FC = () => {
       customLayoutConfig,
       shouldEnforceReactionPiP,
       mediaSlotIndex,
-      effectiveMediaCropped
+      effectiveMediaCropped,
+      hasSecondaryVisualMedia
     );
 
     const stageLayoutResult = isMediaFloatingPip
       ? {
         mediaBounds: rawMediaLayoutResult.mediaBounds,
+        secondaryMediaBounds: rawMediaLayoutResult.secondaryMediaBounds,
         participantBounds: calculateStageLayout(
           activeLayout,
           totalPlannedSlots,
@@ -2703,7 +2451,8 @@ export const StagePreview: React.FC = () => {
           customLayoutConfig,
           false,
           mediaSlotIndex,
-          isStageCropped
+          isStageCropped,
+          false
         ).participantBounds,
       }
       : rawMediaLayoutResult;
@@ -2712,8 +2461,8 @@ export const StagePreview: React.FC = () => {
       stageLayoutResult.mediaBounds || (
         onStageParticipants.length === 0
           ? effectiveMediaCropped
-            ? { x: 0, y: 0, width: 100, height: 100, zIndex: 10, isLockedRatio: true }
-            : { x: 2, y: 3, width: 96, height: 94, zIndex: 10, isLockedRatio: true }
+            ? { x: 0, y: 0, width: hasSecondaryVisualMedia ? 50 : 100, height: 100, zIndex: 10, isLockedRatio: true }
+            : { x: 2, y: 3, width: hasSecondaryVisualMedia ? 46 : 96, height: 94, zIndex: 10, isLockedRatio: true }
           : effectiveMediaCropped
             ? { x: 0, y: 0, width: 68, height: 100, zIndex: 10, isLockedRatio: true }
             : { x: 2, y: 4, width: 68, height: 92, zIndex: 10, isLockedRatio: true }
@@ -2723,6 +2472,22 @@ export const StagePreview: React.FC = () => {
     const isMediaDragging = activeDragState?.participantId === "active-media";
     const isMediaTileEdgeToEdge =
       (isFullBleedLayout || mediaFitMode === "cover") && !isMediaFloatingPip;
+
+    const customSecondaryMediaBounds = participantBounds["secondary-media"];
+    const isSecondaryFloatingPip = Boolean(
+      customSecondaryMediaBounds && customSecondaryMediaBounds.width <= 42 && customSecondaryMediaBounds.height <= 45
+    );
+    const defaultSecondaryMediaBounds: ParticipantBounds =
+      stageLayoutResult.secondaryMediaBounds || (
+        effectiveMediaCropped
+          ? { x: 50, y: 0, width: 50, height: 100, zIndex: 10, isLockedRatio: true }
+          : { x: 51, y: 3, width: 47, height: 94, zIndex: 10, isLockedRatio: true }
+      );
+    const secondaryMediaBounds: ParticipantBounds = customSecondaryMediaBounds || defaultSecondaryMediaBounds;
+    const isSecondaryMediaSelected = String(selectedParticipantId) === "secondary-media";
+    const isSecondaryMediaDragging = activeDragState?.participantId === "secondary-media";
+    const isSecondaryMediaTileEdgeToEdge =
+      (isFullBleedLayout || secondaryMediaFitMode === "cover") && !isSecondaryFloatingPip;
 
     return (
       <div
@@ -2777,7 +2542,7 @@ export const StagePreview: React.FC = () => {
                 isMediaTransitioning && "animate-in fade-in zoom-in-95 duration-300"
               )}
             >
-              {renderMediaTile(mediaBounds)}
+              {renderMediaTile(activeMedia, mediaBounds, false)}
               {isMediaTransitioning && (
                 <div className="absolute inset-0 bg-[#07070d]/35 backdrop-blur-[1.5px] z-40 pointer-events-none animate-out fade-out duration-300" />
               )}
@@ -2860,8 +2625,129 @@ export const StagePreview: React.FC = () => {
           </div>
         )}
 
+        {/* Secondary Stage Media Window (Window 2) */}
+        {hasSecondaryVisualMedia && secondaryMedia && (
+          <div
+            key="stage-secondary-media"
+            style={{
+              position: "absolute",
+              left: `${secondaryMediaBounds.x}%`,
+              top: `${secondaryMediaBounds.y}%`,
+              width: `${secondaryMediaBounds.width}%`,
+              height: `${secondaryMediaBounds.height}%`,
+              zIndex: isSecondaryMediaSelected ? 35 : (secondaryMediaBounds.zIndex || 10),
+              transition: isSecondaryMediaDragging ? "none" : "all 0.18s cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+            onMouseDown={(e) =>
+              handleTileMouseDown(e, { id: "secondary-media", name: secondaryMedia.name } as any, secondaryMediaBounds)
+            }
+            onTouchStart={(e) =>
+              handleTileTouchStart(e, { id: "secondary-media", name: secondaryMedia.name } as any, secondaryMediaBounds)
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedParticipantId("secondary-media");
+              setFocusedMediaSlot("secondary");
+            }}
+            className={cn(
+              "overflow-visible select-none transition-shadow group/secondarymediatile",
+              isSecondaryMediaTileEdgeToEdge ? "rounded-none" : "rounded-2xl",
+              isSecondaryMediaSelected
+                ? cn(
+                  "ring-2 ring-emerald-500 ring-inset shadow-[0_0_25px_rgba(16,185,129,0.5)] cursor-pointer",
+                  !isSecondaryMediaTileEdgeToEdge && "border-emerald-400"
+                )
+                : secondaryMediaTransform.isTransparentBg || isSecondaryMediaTileEdgeToEdge
+                  ? "border-0 cursor-pointer"
+                  : "border border-white/10 hover:border-emerald-400/50 cursor-pointer"
+            )}
+          >
+            {/* Inner Media Content */}
+            <div
+              className={cn(
+                "w-full h-full overflow-hidden relative pointer-events-auto",
+                isSecondaryMediaTileEdgeToEdge ? "rounded-none" : "rounded-2xl",
+                isMediaTransitioning && "animate-in fade-in zoom-in-95 duration-300"
+              )}
+            >
+              {renderMediaTile(secondaryMedia, secondaryMediaBounds, true)}
+              {isMediaTransitioning && (
+                <div className="absolute inset-0 bg-[#07070d]/35 backdrop-blur-[1.5px] z-40 pointer-events-none animate-out fade-out duration-300" />
+              )}
+            </div>
+
+            {/* Quick Corner Restore / Undo Pill directly on Custom-Resized Secondary Media Window */}
+            {customSecondaryMediaBounds && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="no-drag absolute top-2 right-2 z-40 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md border border-emerald-400/60 rounded-lg px-2 py-1 shadow-xl pointer-events-auto"
+              >
+                <button
+                  type="button"
+                  onClick={() => resetParticipantBounds("secondary-media")}
+                  className="px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold transition-colors"
+                  title="Restore secondary media window to full layout slot"
+                >
+                  Fit Slot
+                </button>
+              </div>
+            )}
+
+            {/* 8-Way Interactive Mouse Resize Handles for Secondary Media Window */}
+            {(isSecondaryMediaSelected || Boolean(participantBounds["secondary-media"])) && (
+              <>
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "nw", secondaryMediaBounds)}
+                  className="no-drag absolute -top-1.5 -left-1.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-950 cursor-nwse-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "ne", secondaryMediaBounds)}
+                  className="no-drag absolute -top-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-950 cursor-nesw-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "sw", secondaryMediaBounds)}
+                  className="no-drag absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-950 cursor-nesw-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "se", secondaryMediaBounds)}
+                  className="no-drag absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-950 cursor-nwse-resize z-50 shadow-lg hover:scale-125 transition-transform"
+                  title="Drag corner to resize media window"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "n", secondaryMediaBounds)}
+                  className="no-drag absolute -top-1 left-1/2 -translate-x-1/2 w-8 h-2 rounded-full bg-emerald-400/90 border border-slate-950 cursor-ns-resize z-50 shadow"
+                  title="Drag top edge to resize height"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "s", secondaryMediaBounds)}
+                  className="no-drag absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-2 rounded-full bg-emerald-400/90 border border-slate-950 cursor-ns-resize z-50 shadow"
+                  title="Drag bottom edge to resize height"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "w", secondaryMediaBounds)}
+                  className="no-drag absolute top-1/2 -translate-y-1/2 -left-1 w-2 h-8 rounded-full bg-emerald-400/90 border border-slate-950 cursor-ew-resize z-50 shadow"
+                  title="Drag left edge to resize width"
+                />
+                <div
+                  onMouseDown={(e) => handleTileResizeMouseDown(e, "secondary-media", "e", secondaryMediaBounds)}
+                  className="no-drag absolute top-1/2 -translate-y-1/2 -right-1 w-2 h-8 rounded-full bg-emerald-400/90 border border-slate-950 cursor-ew-resize z-50 shadow"
+                  title="Drag right edge to resize width"
+                />
+              </>
+            )}
+          </div>
+        )}
+
         {/* Unified Draggable Floating Action Pill Toolbar for Media */}
-        {hasVisualMedia && activeMedia && (
+        {(hasVisualMedia || hasSecondaryVisualMedia) && (activeMedia || secondaryMedia) && (() => {
+          const isSecondaryToolbar = Boolean(focusedMediaSlot === "secondary" && secondaryMedia);
+          const currentToolbarMedia = isSecondaryToolbar && secondaryMedia ? secondaryMedia : (activeMedia || secondaryMedia);
+          if (!currentToolbarMedia) return null;
+          return (
           <div
             style={
               mediaToolbarPos
@@ -2876,7 +2762,7 @@ export const StagePreview: React.FC = () => {
               "absolute z-50 flex flex-wrap items-center justify-center gap-1 pointer-events-auto transition-all duration-75 max-w-[calc(100%-16px)]",
               mediaToolbarPos
                 ? ""
-                : activeMedia.type === "website"
+                : currentToolbarMedia.type === "website"
                 ? showTicker
                   ? "bottom-14 left-1/2 -translate-x-1/2"
                   : "top-12 left-1/2 -translate-x-1/2"
@@ -2898,13 +2784,37 @@ export const StagePreview: React.FC = () => {
                 >
                   ⠿ Drag
                 </div>
+                {hasVisualMedia && hasSecondaryVisualMedia && activeMedia && secondaryMedia && (
+                  <div className="flex items-center gap-1 bg-[#121324] px-1.5 py-1 rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setFocusedMediaSlot("primary")}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[9px] font-bold transition-all",
+                        focusedMediaSlot === "primary" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      Win 1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFocusedMediaSlot("secondary")}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[9px] font-bold transition-all",
+                        focusedMediaSlot === "secondary" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-white"
+                      )}
+                    >
+                      Win 2
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsMediaToolbarCollapsed(false)}
                   className="px-3 py-1 rounded-xl bg-[#0c0c16]/95 backdrop-blur-md border border-indigo-500/60 shadow-[0_4px_20px_rgba(0,0,0,0.7)] text-indigo-300 hover:text-white text-[10px] font-bold flex items-center gap-2 cursor-pointer transition-all hover:scale-105"
                   title="Expand Floating Media Action Controls"
                 >
-                  <span>🎬 {activeMedia.name}</span>
+                  <span>🎬 {isSecondaryToolbar ? "Win 2: " : "Win 1: "}{currentToolbarMedia.name}</span>
                   <span className="text-[9px] text-cyan-300 bg-cyan-950/70 px-1.5 py-0.5 rounded border border-cyan-500/30">⚙️ Controls ▾</span>
                 </button>
               </div>
@@ -2920,6 +2830,58 @@ export const StagePreview: React.FC = () => {
                   <span>Drag</span>
                 </div>
 
+                {/* Dual Media Window Focus Selector */}
+                {hasVisualMedia && hasSecondaryVisualMedia && activeMedia && secondaryMedia && (
+                  <div className="flex items-center gap-0.5 bg-black/60 p-0.5 rounded-lg border border-white/15">
+                    <button
+                      type="button"
+                      onClick={() => setFocusedMediaSlot("primary")}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[9.5px] font-bold transition-all flex items-center gap-1",
+                        focusedMediaSlot === "primary"
+                          ? "bg-indigo-600 text-white shadow"
+                          : "text-slate-400 hover:text-white hover:bg-white/10"
+                      )}
+                    >
+                      <span>Win 1</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleMediaMute();
+                        }}
+                        className="text-slate-300 hover:text-white"
+                        title={activeMedia.isMuted ? "Unmute Win 1" : "Mute Win 1"}
+                      >
+                        {activeMedia.isMuted ? "🔇" : "🔊"}
+                      </button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFocusedMediaSlot("secondary")}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[9.5px] font-bold transition-all flex items-center gap-1",
+                        focusedMediaSlot === "secondary"
+                          ? "bg-emerald-600 text-white shadow"
+                          : "text-slate-400 hover:text-white hover:bg-white/10"
+                      )}
+                    >
+                      <span>Win 2</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSecondaryMediaMute();
+                        }}
+                        className="text-slate-300 hover:text-white"
+                        title={secondaryMedia.isMuted ? "Unmute Win 2" : "Mute Win 2"}
+                      >
+                        {secondaryMedia.isMuted ? "🔇" : "🔊"}
+                      </button>
+                    </button>
+                  </div>
+                )}
+
                 {mediaToolbarPos !== null && (
                   <button
                     type="button"
@@ -2933,7 +2895,7 @@ export const StagePreview: React.FC = () => {
 
                 {/* Media Name Tag */}
                 <span className="text-[10px] font-semibold text-emerald-300 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 max-w-[130px] truncate select-none">
-                  🎬 {activeMedia.name}
+                  🎬 {isSecondaryToolbar ? "Win 2: " : "Win 1: "}{currentToolbarMedia.name}
                 </span>
 
                 {/* Multi-Step Undo Button */}
@@ -3112,7 +3074,7 @@ export const StagePreview: React.FC = () => {
                 </button>
 
                 {/* VIDEO & YOUTUBE TRANSPORT CONTROLS (ALWAYS VISIBLE & DRAGGABLE TOGETHER!) */}
-                {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                {(currentToolbarMedia.type === "video" || currentToolbarMedia.type === "youtube") && (
                   <div className="flex items-center gap-1 bg-[#10121e]/90 border border-indigo-400/40 rounded-lg px-2 py-0.5 shadow">
                     {/* Instant 30s Clip Button */}
                     <button
@@ -3156,7 +3118,7 @@ export const StagePreview: React.FC = () => {
                         1,
                         Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
                           ? mediaDuration
-                          : activeMedia.durationSeconds || 300
+                          : currentToolbarMedia.durationSeconds || 300
                       )}
                       step={0.5}
                       value={Math.min(
@@ -3165,7 +3127,7 @@ export const StagePreview: React.FC = () => {
                           1,
                           Number.isFinite(mediaDuration) && mediaDuration > 0 && mediaDuration < 86400 * 3
                             ? mediaDuration
-                            : activeMedia.durationSeconds || 300
+                            : currentToolbarMedia.durationSeconds || 300
                         )
                       )}
                       onChange={(e) => handleSeekMedia(Number(e.target.value))}
@@ -3184,7 +3146,7 @@ export const StagePreview: React.FC = () => {
 
                     {/* Playback Speed Selector (Direct execution) */}
                     <select
-                      value={String(activeMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1))}
+                      value={String(currentToolbarMedia.playbackRate || (fairUseConfig?.enabled ? (fairUseConfig?.playbackRate || 1.04) : 1))}
                       onChange={(e) => handleChangeMediaSpeed(Number(e.target.value))}
                       className="bg-slate-900 border border-white/20 rounded px-1 py-0.2 text-[9px] font-mono text-slate-200 focus:outline-none shrink-0 cursor-pointer"
                       title="Playback Speed"
@@ -3201,11 +3163,11 @@ export const StagePreview: React.FC = () => {
                     {/* Volume Control */}
                     <button
                       type="button"
-                      onClick={() => toggleMediaMute()}
+                      onClick={() => (isSecondaryToolbar ? toggleSecondaryMediaMute() : toggleMediaMute())}
                       className="text-slate-300 hover:text-white shrink-0 ml-0.5 cursor-pointer"
-                      title={activeMedia.isMuted ? "Unmute Video" : "Mute Video"}
+                      title={(isSecondaryToolbar ? secondaryMedia?.isMuted : activeMedia?.isMuted) ? "Unmute Video" : "Mute Video"}
                     >
-                      {activeMedia.isMuted || normalizedMediaVolumePct === 0 ? (
+                      {(isSecondaryToolbar ? secondaryMedia?.isMuted : activeMedia?.isMuted) || (isSecondaryToolbar ? (secondaryMedia?.volume === 0) : normalizedMediaVolumePct === 0) ? (
                         <VolumeX className="w-3 h-3 text-rose-400" />
                       ) : (
                         <Volume2 className="w-3 h-3 text-emerald-400" />
@@ -3216,19 +3178,33 @@ export const StagePreview: React.FC = () => {
                       min={0}
                       max={200}
                       step={5}
-                      value={activeMedia.isMuted ? 0 : normalizedMediaVolumePct}
-                      onChange={(e) => setMediaVolume(Number(e.target.value))}
+                      value={
+                        isSecondaryToolbar
+                          ? (secondaryMedia?.isMuted ? 0 : (secondaryMedia?.volume ?? 100))
+                          : (activeMedia?.isMuted ? 0 : normalizedMediaVolumePct)
+                      }
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        if (isSecondaryToolbar) setSecondaryMediaVolume(val);
+                        else setMediaVolume(val);
+                      }}
                       className="w-10 h-1 accent-emerald-400 bg-white/20 rounded cursor-pointer shrink-0"
-                      title={`Media Volume: ${normalizedMediaVolumePct}%`}
+                      title={`Media Volume: ${isSecondaryToolbar ? (secondaryMedia?.volume ?? 100) : normalizedMediaVolumePct}%`}
                     />
 
                     {/* Loop Toggle */}
                     <button
                       type="button"
-                      onClick={() => setActiveMedia({ ...activeMedia, loop: !(activeMedia.loop ?? true) })}
+                      onClick={() => {
+                        if (isSecondaryToolbar && secondaryMedia) {
+                          setSecondaryMedia({ ...secondaryMedia, loop: !(secondaryMedia.loop ?? true) });
+                        } else if (activeMedia) {
+                          setActiveMedia({ ...activeMedia, loop: !(activeMedia.loop ?? true) });
+                        }
+                      }}
                       className={cn(
                         "p-0.5 rounded border transition-colors shrink-0 cursor-pointer",
-                        (activeMedia.loop ?? true)
+                        (currentToolbarMedia.loop ?? true)
                           ? "bg-indigo-600/40 border-indigo-400 text-indigo-200"
                           : "bg-white/5 border-white/10 text-slate-400"
                       )}
@@ -3277,7 +3253,7 @@ export const StagePreview: React.FC = () => {
                       </button>
                     </div>
 
-                    {(activeMedia.type === "video" || activeMedia.type === "youtube") && (
+                    {((activeMedia?.type === "video" || activeMedia?.type === "youtube") || (secondaryMedia?.type === "video" || secondaryMedia?.type === "youtube")) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -3614,11 +3590,11 @@ export const StagePreview: React.FC = () => {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (activeMedia.type === "youtube") {
+                    if (currentToolbarMedia.type === "youtube") {
                       setIsYouTubeModalOpen(true);
-                    } else if (activeMedia.type === "map") {
+                    } else if (currentToolbarMedia.type === "map") {
                       setIsTacticalMapModalOpen(true);
-                    } else if (activeMedia.type === "website") {
+                    } else if (currentToolbarMedia.type === "website") {
                       setIsWebsiteModalOpen(true);
                     } else {
                       window.dispatchEvent(new CustomEvent("livestudio-open-tab", { detail: "media" }));
@@ -3635,8 +3611,13 @@ export const StagePreview: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    resetParticipantBounds("active-media");
-                    setActiveMedia(null);
+                    if (isSecondaryToolbar) {
+                      resetParticipantBounds("secondary-media");
+                      setSecondaryMedia(null);
+                    } else {
+                      resetParticipantBounds("active-media");
+                      setActiveMedia(null);
+                    }
                   }}
                   className="px-2 py-0.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded text-[10px] font-semibold transition-colors cursor-pointer"
                   title="Remove Media from Stage"
@@ -3656,7 +3637,8 @@ export const StagePreview: React.FC = () => {
               </>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Participant Tiles */}
         {orderedParticipants.map((p, idx) => {

@@ -717,6 +717,7 @@ export function getDefaultSlotBounds(
  */
 export interface StageLayoutResult {
   mediaBounds: ParticipantBounds | null;
+  secondaryMediaBounds?: ParticipantBounds | null;
   participantBounds: ParticipantBounds[];
 }
 
@@ -732,7 +733,8 @@ export function calculateStageLayout(
   customConfig?: CustomLayoutConfig,
   enforceReactionPiP: boolean = false,
   mediaSlotIndex: number = 0,
-  isStageCropped: boolean = false
+  isStageCropped: boolean = false,
+  hasSecondaryVisualMedia: boolean = false
 ): StageLayoutResult {
   const effectiveLayout = resolveEffectiveLayout(layout, customConfig);
   const fullBleed =
@@ -741,15 +743,131 @@ export function calculateStageLayout(
     effectiveLayout === "podcast" ||
     effectiveLayout === "interview";
 
-  // If NO active visual media on stage, compute participant bounds directly
-  if (!hasVisualMedia) {
+  // If NO active visual media on stage (neither primary nor secondary), compute participant bounds directly
+  if (!hasVisualMedia && !hasSecondaryVisualMedia) {
     const participantBounds: ParticipantBounds[] = [];
     for (let i = 0; i < totalParticipants; i++) {
       participantBounds.push(
         getDefaultSlotBounds(layout, i, totalParticipants, splitRatio, customConfig, isStageCropped)
       );
     }
-    return { mediaBounds: null, participantBounds };
+    return { mediaBounds: null, secondaryMediaBounds: null, participantBounds };
+  }
+
+  // If only secondary media is present (no primary), promote it to single media layout
+  if (!hasVisualMedia && hasSecondaryVisualMedia) {
+    const singleResult = calculateStageLayout(
+      layout,
+      totalParticipants,
+      true,
+      splitRatio,
+      customConfig,
+      enforceReactionPiP,
+      mediaSlotIndex,
+      isStageCropped,
+      false
+    );
+    return {
+      mediaBounds: null,
+      secondaryMediaBounds: singleResult.mediaBounds,
+      participantBounds: singleResult.participantBounds,
+    };
+  }
+
+  // --- Dual Media on Stage (e.g. Video + Map, YouTube + Video, Map + Website in Cropped / 2-Window / Multi-Slot) ---
+  if (hasVisualMedia && hasSecondaryVisualMedia) {
+    const safeSplit = Math.max(20, Math.min(80, splitRatio || 50));
+    const isMediaOnRight = (mediaSlotIndex || 0) >= 1;
+
+    // Case 1: 0 participants on stage (Pure Dual Media Presentation)
+    if (totalParticipants === 0) {
+      if (
+        effectiveLayout === "cropped" ||
+        effectiveLayout === "podcast" ||
+        effectiveLayout === "interview" ||
+        (fullBleed && (effectiveLayout === "side-by-side" || effectiveLayout === "fit"))
+      ) {
+        const leftW = safeSplit;
+        const rightW = 100 - safeSplit;
+        const slot0: ParticipantBounds = { x: 0, y: 0, width: leftW, height: 100, zIndex: 10, isLockedRatio: true };
+        const slot1: ParticipantBounds = { x: safeSplit, y: 0, width: rightW, height: 100, zIndex: 10, isLockedRatio: true };
+        return {
+          mediaBounds: isMediaOnRight ? slot1 : slot0,
+          secondaryMediaBounds: isMediaOnRight ? slot0 : slot1,
+          participantBounds: [],
+        };
+      }
+
+      if (effectiveLayout === "side-by-side" || effectiveLayout === "fit") {
+        const col0W = Math.max(15, safeSplit - 3);
+        const col1W = Math.max(15, 100 - safeSplit - 3);
+        const h0 = Math.min(54, Math.max(26, col0W * 0.96));
+        const h1 = Math.min(54, Math.max(26, col1W * 0.96));
+        const slot0: ParticipantBounds = {
+          x: 2,
+          y: Math.max(4, (100 - h0) / 2),
+          width: col0W,
+          height: h0,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        const slot1: ParticipantBounds = {
+          x: Math.min(85, safeSplit + 1),
+          y: Math.max(4, (100 - h1) / 2),
+          width: col1W,
+          height: h1,
+          zIndex: 10,
+          isLockedRatio: true,
+        };
+        return {
+          mediaBounds: isMediaOnRight ? slot1 : slot0,
+          secondaryMediaBounds: isMediaOnRight ? slot0 : slot1,
+          participantBounds: [],
+        };
+      }
+
+      if (effectiveLayout === "stacked") {
+        const topH = Math.max(15, safeSplit - 5);
+        const botH = Math.max(15, 100 - safeSplit - 5);
+        const slot0: ParticipantBounds = fullBleed
+          ? { x: 0, y: 0, width: 100, height: safeSplit, zIndex: 10, isLockedRatio: true }
+          : { x: 4, y: 4, width: 92, height: topH, zIndex: 10, isLockedRatio: true };
+        const slot1: ParticipantBounds = fullBleed
+          ? { x: 0, y: safeSplit, width: 100, height: 100 - safeSplit, zIndex: 10, isLockedRatio: true }
+          : { x: 4, y: Math.min(85, safeSplit + 1), width: 92, height: botH, zIndex: 10, isLockedRatio: true };
+        return {
+          mediaBounds: isMediaOnRight ? slot1 : slot0,
+          secondaryMediaBounds: isMediaOnRight ? slot0 : slot1,
+          participantBounds: [],
+        };
+      }
+
+      // Any other layout (solo, cinema, three-equal, four-grid, etc.) with 0 participants
+      const slot0 = getDefaultSlotBounds(effectiveLayout, 0, 2, splitRatio, customConfig, isStageCropped);
+      const slot1 = getDefaultSlotBounds(effectiveLayout, 1, 2, splitRatio, customConfig, isStageCropped);
+      return {
+        mediaBounds: isMediaOnRight ? slot1 : slot0,
+        secondaryMediaBounds: isMediaOnRight ? slot0 : slot1,
+        participantBounds: [],
+      };
+    }
+
+    // Case 2: 1 or more participants on stage alongside Dual Media (total slots = totalParticipants + 2)
+    const totalSlots = totalParticipants + 2;
+    const allSlotBounds: ParticipantBounds[] = [];
+    for (let s = 0; s < totalSlots; s++) {
+      allSlotBounds.push(
+        getDefaultSlotBounds(effectiveLayout, s, totalSlots, splitRatio, customConfig, isStageCropped)
+      );
+    }
+    const slot0 = allSlotBounds[0];
+    const slot1 = allSlotBounds[1];
+    const participantBounds = allSlotBounds.slice(2);
+    return {
+      mediaBounds: isMediaOnRight ? slot1 : slot0,
+      secondaryMediaBounds: isMediaOnRight ? slot0 : slot1,
+      participantBounds,
+    };
   }
 
   // Special Case: 2-Window (Cropped / Fit / Podcast / Interview / Side-by-Side) where Media is on one side and Speakers stack on the other side

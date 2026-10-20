@@ -45,6 +45,9 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
     activeMedia,
     setActiveMedia,
     toggleMediaMute,
+    secondaryMedia,
+    setSecondaryMedia,
+    toggleSecondaryMediaMute,
     toggleParticipantMic,
     soloTargetId,
     toggleSoloParticipant,
@@ -435,7 +438,124 @@ export const BackstageStrip: React.FC<BackstageStripProps> = ({
           {/* Hover Remove Pill */}
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-30">
             <span className="px-3 py-1 rounded-md text-[11px] font-black bg-[#8cb4f5] text-[#0a1128] shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
-              Remove
+              Remove Win 1
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Shared Secondary Media / Window 2 Card */}
+      {secondaryMedia && (
+        <div
+          onClick={() => setSecondaryMedia(null)}
+          className="group relative w-36 sm:w-44 h-20 sm:h-22 rounded-xl border border-emerald-500/80 bg-[#0d1c1c] overflow-hidden shrink-0 cursor-pointer shadow-lg hover:border-emerald-400 transition-all"
+          title="Click to remove Window 2 media from stage"
+        >
+          <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-2 text-center">
+            <Presentation className="w-5 h-5 text-emerald-400 mb-0.5" />
+            <span className="text-[10px] font-semibold text-slate-200 line-clamp-1">
+              {secondaryMedia.name || "Window 2 Media"}
+            </span>
+          </div>
+
+          {/* Audio Mute/Unmute Quick Button (Top-left on Media Card) */}
+          {(secondaryMedia.type === "video" || secondaryMedia.type === "audio") && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleSecondaryMediaMute();
+              }}
+              className={cn(
+                "absolute top-1.5 left-1.5 z-40 px-1.5 py-0.5 rounded-md backdrop-blur-md border text-[9px] font-bold flex items-center gap-1 shadow-md transition-all pointer-events-auto",
+                secondaryMedia.isMuted
+                  ? "bg-rose-500/30 border-rose-500/50 text-rose-300"
+                  : "bg-emerald-500/25 border-emerald-500/40 text-emerald-300"
+              )}
+              title={secondaryMedia.isMuted ? "Media audio is Muted (Click to Unmute)" : "Media audio is Playing (Click to Mute)"}
+            >
+              {secondaryMedia.isMuted ? (
+                <>
+                  <VolumeX className="w-3 h-3 text-rose-400" />
+                  <span>Muted</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="w-3 h-3 text-emerald-400" />
+                  <span>Audio</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Top-right menu indicator */}
+          <div className="absolute top-1 right-1 z-40 pointer-events-auto">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveMenuId(activeMenuId === "media-secondary" ? null : "media-secondary");
+              }}
+              className="p-1 rounded bg-black/60 hover:bg-black/80 text-slate-400 hover:text-white"
+              title="Media Options"
+            >
+              <MoreVertical className="w-3 h-3" />
+            </button>
+          </div>
+
+          {/* 3-dots Dropdown Context Menu for Secondary Media */}
+          {activeMenuId === "media-secondary" && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-8 right-1.5 z-50 w-44 bg-[#141524] border border-white/20 rounded-xl shadow-2xl p-1.5 text-xs animate-in fade-in zoom-in-95 pointer-events-auto"
+            >
+              {(secondaryMedia.type === "video" || secondaryMedia.type === "audio") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    toggleSecondaryMediaMute();
+                    setActiveMenuId(null);
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-slate-200 hover:bg-white/10"
+                >
+                  {secondaryMedia.isMuted ? (
+                    <>
+                      <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Unmute Media Audio</span>
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Mute Media Audio</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSecondaryMedia(null);
+                  setActiveMenuId(null);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg text-left flex items-center gap-1.5 text-rose-400 hover:bg-rose-500/10"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Remove Win 2 from Stage</span>
+              </button>
+            </div>
+          )}
+
+          {/* Bottom StreamYard Slide Navigation Pill on Card */}
+          <div className="absolute bottom-1 inset-x-1.5 z-40 flex items-center justify-between bg-black/85 backdrop-blur-md px-1.5 py-0.5 rounded border border-white/10 text-[9px] pointer-events-auto">
+            <span className="font-semibold text-emerald-300 truncate max-w-[85px]">{secondaryMedia.name || "Win 2"}</span>
+            <span className="text-[8px] font-mono text-emerald-400 uppercase">Win 2 • {secondaryMedia.type}</span>
+          </div>
+
+          {/* Hover Remove Pill */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity z-30">
+            <span className="px-3 py-1 rounded-md text-[11px] font-black bg-[#34d399] text-[#0a1128] shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
+              Remove Win 2
             </span>
           </div>
         </div>

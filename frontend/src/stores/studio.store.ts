@@ -234,6 +234,7 @@ export interface StudioScene {
   autoAddGuestsToStage?: boolean;
   replaceHostOnGuestJoin?: boolean;
   activeMedia?: MediaFileItem | null;
+  secondaryMedia?: MediaFileItem | null;
   nextSceneIdOnMediaEnd?: string | null;
   transitionType?: "cut" | "fade" | "wipe" | "stinger";
   stingerVideoUrl?: string | null;
@@ -418,6 +419,11 @@ interface StudioState {
   toggleMediaMute: () => void;
   setMediaMuted: (muted: boolean) => void;
   setMediaVolume: (volume: number) => void;
+  secondaryMedia: MediaFileItem | null;
+  setSecondaryMedia: (media: MediaFileItem | null) => void;
+  toggleSecondaryMediaMute: () => void;
+  setSecondaryMediaMuted: (muted: boolean) => void;
+  setSecondaryMediaVolume: (volume: number) => void;
   nextSlide: () => void;
   prevSlide: () => void;
   goToSlide: (index: number) => void;
@@ -831,6 +837,7 @@ export interface SavedStudioLayoutState {
   activeSceneId?: string | null;
   isScenesPanelOpen?: boolean;
   activeMedia?: MediaFileItem | null;
+  secondaryMedia?: MediaFileItem | null;
 }
 
 let activeStudioId: string | null = null;
@@ -2337,6 +2344,72 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     set({ activeMedia: updated, scenes });
   },
 
+  secondaryMedia: ensureAudibleMediaDefaults(
+    savedLayout.secondaryMedia !== undefined
+      ? savedLayout.secondaryMedia
+      : (savedLayout.activeSceneId
+        ? (savedLayout.scenes || DEFAULT_STUDIO_SCENES).find((s) => s.id === savedLayout.activeSceneId)?.secondaryMedia
+        : null) || null
+  ),
+  setSecondaryMedia: (media) =>
+    set((s) => {
+      const nextMedia = media
+        ? {
+          ...media,
+          isMuted: media.isMuted ?? false,
+          volume: typeof media.volume === "number" && media.volume > 0 ? media.volume : 100,
+        }
+        : null;
+      const nextScenes = s.scenes.map((sc) =>
+        sc.id === s.activeSceneId ? { ...sc, secondaryMedia: nextMedia } : sc
+      );
+      persistStudioLayout({ secondaryMedia: nextMedia, scenes: nextScenes });
+      return { secondaryMedia: nextMedia, scenes: nextScenes };
+    }),
+  toggleSecondaryMediaMute: () => {
+    const current = get().secondaryMedia;
+    if (!current) return;
+    const nextMuted = !(current.isMuted ?? false);
+    const updated = { ...current, isMuted: nextMuted };
+    persistStudioLayout({ secondaryMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.secondaryMedia?.id === current.id) {
+        return { ...s, secondaryMedia: updated };
+      }
+      return s;
+    });
+    set({ secondaryMedia: updated, scenes });
+  },
+  setSecondaryMediaMuted: (muted: boolean) => {
+    const current = get().secondaryMedia;
+    if (!current) return;
+    const updated = { ...current, isMuted: muted };
+    persistStudioLayout({ secondaryMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.secondaryMedia?.id === current.id) {
+        return { ...s, secondaryMedia: updated };
+      }
+      return s;
+    });
+    set({ secondaryMedia: updated, scenes });
+  },
+  setSecondaryMediaVolume: (volume: number) => {
+    const current = get().secondaryMedia;
+    if (!current) return;
+    const updated = { ...current, volume, isMuted: volume === 0 };
+    persistStudioLayout({ secondaryMedia: updated });
+    const activeSceneId = get().activeSceneId;
+    const scenes = get().scenes.map((s) => {
+      if (s.id === activeSceneId && s.secondaryMedia?.id === current.id) {
+        return { ...s, secondaryMedia: updated };
+      }
+      return s;
+    });
+    set({ secondaryMedia: updated, scenes });
+  },
+
   nextSlide: () => {
     const media = get().activeMedia;
     if (!media || !media.slides || media.slides.length === 0) return;
@@ -2400,13 +2473,18 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     persistMediaLibrary(next);
     const state = get();
     const updatedItem = next.find((m) => m.id === id) || null;
-    const nextScenes = state.scenes.map((s) =>
-      s.activeMedia?.id === id && updatedItem ? { ...s, activeMedia: updatedItem } : s
-    );
+    const nextScenes = state.scenes.map((s) => {
+      let sc = s;
+      if (sc.activeMedia?.id === id && updatedItem) sc = { ...sc, activeMedia: updatedItem };
+      if (sc.secondaryMedia?.id === id && updatedItem) sc = { ...sc, secondaryMedia: updatedItem };
+      return sc;
+    });
     const nextActiveMedia =
       state.activeMedia?.id === id && updatedItem ? updatedItem : state.activeMedia;
-    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia });
-    set({ mediaLibrary: next, scenes: nextScenes, activeMedia: nextActiveMedia });
+    const nextSecondaryMedia =
+      state.secondaryMedia?.id === id && updatedItem ? updatedItem : state.secondaryMedia;
+    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia, secondaryMedia: nextSecondaryMedia });
+    set({ mediaLibrary: next, scenes: nextScenes, activeMedia: nextActiveMedia, secondaryMedia: nextSecondaryMedia });
   },
   removeMediaLibraryItem: (id) => {
     const state = get();
@@ -2414,15 +2492,20 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const next = state.mediaLibrary.filter((m) => m.id !== id);
     persistMediaLibrary(next);
 
-    const nextScenes = state.scenes.map((s) =>
-      s.activeMedia?.id === id ? { ...s, activeMedia: null } : s
-    );
+    const nextScenes = state.scenes.map((s) => {
+      let sc = s;
+      if (sc.activeMedia?.id === id) sc = { ...sc, activeMedia: null };
+      if (sc.secondaryMedia?.id === id) sc = { ...sc, secondaryMedia: null };
+      return sc;
+    });
     const nextActiveMedia = state.activeMedia?.id === id ? null : state.activeMedia;
+    const nextSecondaryMedia = state.secondaryMedia?.id === id ? null : state.secondaryMedia;
     const nextOverlay = state.activeStageOverlay?.id === id ? null : state.activeStageOverlay;
 
     persistStudioLayout({
       scenes: nextScenes,
       activeMedia: nextActiveMedia,
+      secondaryMedia: nextSecondaryMedia,
       activeStageOverlay: nextOverlay,
     });
 
@@ -2430,6 +2513,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       mediaLibrary: next,
       scenes: nextScenes,
       activeMedia: nextActiveMedia,
+      secondaryMedia: nextSecondaryMedia,
       activeStageOverlay: nextOverlay,
     });
 
@@ -2451,30 +2535,46 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const validIds = new Set(cleaned.map((m) => m.id));
 
     const nextScenes = state.scenes.map((s) => {
-      if (!s.activeMedia) return s;
-      if (isDummyOrBrokenMediaItem(s.activeMedia)) {
-        return { ...s, activeMedia: null };
+      let sc = s;
+      if (sc.activeMedia) {
+        if (isDummyOrBrokenMediaItem(sc.activeMedia)) {
+          sc = { ...sc, activeMedia: null };
+        } else if (!validIds.has(sc.activeMedia.id)) {
+          const sigMatch = cleaned.find(
+            (c) => getMediaDeduplicationSignature(c) === getMediaDeduplicationSignature(sc.activeMedia!)
+          );
+          sc = { ...sc, activeMedia: sigMatch || sc.activeMedia };
+        }
       }
-      if (!validIds.has(s.activeMedia.id)) {
-        const sigMatch = cleaned.find(
-          (c) => getMediaDeduplicationSignature(c) === getMediaDeduplicationSignature(s.activeMedia!)
-        );
-        return { ...s, activeMedia: sigMatch || s.activeMedia };
+      if (sc.secondaryMedia) {
+        if (isDummyOrBrokenMediaItem(sc.secondaryMedia)) {
+          sc = { ...sc, secondaryMedia: null };
+        } else if (!validIds.has(sc.secondaryMedia.id)) {
+          const sigMatch = cleaned.find(
+            (c) => getMediaDeduplicationSignature(c) === getMediaDeduplicationSignature(sc.secondaryMedia!)
+          );
+          sc = { ...sc, secondaryMedia: sigMatch || sc.secondaryMedia };
+        }
       }
-      return s;
+      return sc;
     });
 
     const nextActiveMedia =
       state.activeMedia && isDummyOrBrokenMediaItem(state.activeMedia)
         ? null
         : state.activeMedia;
+    const nextSecondaryMedia =
+      state.secondaryMedia && isDummyOrBrokenMediaItem(state.secondaryMedia)
+        ? null
+        : state.secondaryMedia;
 
     persistMediaLibrary(cleaned);
-    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia });
+    persistStudioLayout({ scenes: nextScenes, activeMedia: nextActiveMedia, secondaryMedia: nextSecondaryMedia });
     set({
       mediaLibrary: cleaned,
       scenes: nextScenes,
       activeMedia: nextActiveMedia,
+      secondaryMedia: nextSecondaryMedia,
     });
 
     if (typeof window !== "undefined") {
@@ -2748,6 +2848,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       transitionType: custom?.transitionType || "fade",
       textCard: custom?.textCard ?? null,
       activeMedia: custom?.activeMedia !== undefined ? custom.activeMedia : state.activeMedia,
+      secondaryMedia: custom?.secondaryMedia !== undefined ? custom.secondaryMedia : state.secondaryMedia,
       backgroundUrl: custom?.backgroundUrl !== undefined ? custom.backgroundUrl : state.activeBackgroundUrl,
       backgroundType: custom?.backgroundType || state.activeBackgroundType,
       stageOverlay: custom?.stageOverlay !== undefined ? custom.stageOverlay : state.activeStageOverlay,
@@ -2764,9 +2865,16 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   updateScene: (id, updates) => {
     const next = get().scenes.map((s) => (s.id === id ? { ...s, ...updates } : s));
     const isTargetActive = get().activeSceneId === id;
-    if (isTargetActive && updates.activeMedia !== undefined) {
-      persistStudioLayout({ scenes: next, activeMedia: updates.activeMedia });
-      set({ scenes: next, activeMedia: updates.activeMedia });
+    if (isTargetActive) {
+      const layoutUpdates: Partial<SavedStudioLayoutState> = { scenes: next };
+      if (updates.activeMedia !== undefined) layoutUpdates.activeMedia = updates.activeMedia;
+      if (updates.secondaryMedia !== undefined) layoutUpdates.secondaryMedia = updates.secondaryMedia;
+      persistStudioLayout(layoutUpdates);
+      set({
+        scenes: next,
+        ...(updates.activeMedia !== undefined ? { activeMedia: updates.activeMedia } : {}),
+        ...(updates.secondaryMedia !== undefined ? { secondaryMedia: updates.secondaryMedia } : {}),
+      });
     } else {
       persistStudioLayout({ scenes: next });
       set({ scenes: next });
@@ -2846,9 +2954,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     const rawSceneMedia = scene.activeMedia !== undefined ? scene.activeMedia : null;
     const nextMedia = ensureAudibleMediaDefaults(rawSceneMedia);
 
+    const rawSceneSecMedia = scene.secondaryMedia !== undefined ? scene.secondaryMedia : null;
+    const nextSecMedia = ensureAudibleMediaDefaults(rawSceneSecMedia);
+
     const prevMediaKey = state.activeMedia ? `${state.activeMedia.id}:${state.activeMedia.url}` : "";
     const nextMediaKey = nextMedia ? `${nextMedia.id}:${nextMedia.url}` : "";
-    const didMediaChange = prevMediaKey !== nextMediaKey;
+    const prevSecMediaKey = state.secondaryMedia ? `${state.secondaryMedia.id}:${state.secondaryMedia.url}` : "";
+    const nextSecMediaKey = nextSecMedia ? `${nextSecMedia.id}:${nextSecMedia.url}` : "";
+    const didMediaChange = prevMediaKey !== nextMediaKey || prevSecMediaKey !== nextSecMediaKey;
 
     const transition = scene.transitionType || "fade";
     if (transition !== "cut") {
@@ -2901,6 +3014,11 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       fitMode: targetCropped ? "cover" : (savedSceneMediaFit || "contain"),
       ...(scene.isTransparentMedia !== undefined ? { isTransparentBg: Boolean(scene.isTransparentMedia) } : {}),
     };
+    const savedSceneSecMediaFit = scene.tileTransforms?.["secondary-media"]?.fitMode;
+    currentTransforms["secondary-media"] = {
+      ...(currentTransforms["secondary-media"] || { zoom: 1, panX: 0, panY: 0, rotation: 0, flipH: false, flipV: false }),
+      fitMode: targetCropped ? "cover" : (savedSceneSecMediaFit || "contain"),
+    };
 
     const nextBgUrl = scene.backgroundUrl !== undefined ? scene.backgroundUrl : state.activeBackgroundUrl;
     const nextBgType = scene.backgroundType || state.activeBackgroundType;
@@ -2922,6 +3040,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       participants: nextParticipants,
       tileTransforms: currentTransforms,
       activeMedia: nextMedia,
+      secondaryMedia: nextSecMedia,
       activeBackgroundUrl: nextBgUrl,
       activeBackgroundType: nextBgType,
       activeStageOverlay: nextStageOverlay,
@@ -2940,6 +3059,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       participantBounds: nextBounds,
       tileTransforms: currentTransforms,
       activeMedia: nextMedia,
+      secondaryMedia: nextSecMedia,
       activeBackgroundUrl: nextBgUrl,
       activeBackgroundType: nextBgType,
       activeStageOverlay: nextStageOverlay,
@@ -2965,6 +3085,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       replaceHostOnGuestJoin: existingScene?.replaceHostOnGuestJoin,
       slotAssignments: existingScene?.slotAssignments,
       activeMedia: state.activeMedia ? JSON.parse(JSON.stringify(state.activeMedia)) : null,
+      secondaryMedia: state.secondaryMedia ? JSON.parse(JSON.stringify(state.secondaryMedia)) : null,
       extraCameraDeviceId: state.activeExtraCameraDeviceId ?? existingScene?.extraCameraDeviceId ?? null,
       textCard: state.activeTextCard || null,
       isTransparentMedia: state.tileTransforms["active-media"]?.isTransparentBg ?? false,
