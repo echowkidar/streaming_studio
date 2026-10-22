@@ -91,17 +91,19 @@ async function resolveYouTubeDirectStreamUrl(
 
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data: any = await res.json();
-          const formats: any[] = [
-            ...(data?.streamingData?.formats || []),
-            ...(data?.streamingData?.adaptiveFormats || []),
-          ];
+          const combinedFormats: any[] = data?.streamingData?.formats || [];
+          const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
+          const formats: any[] = [...combinedFormats, ...adaptiveFormats];
           const best =
-            formats.find((f) => f.itag === 22 && f.url) ||
-            formats.find((f) => f.itag === 18 && f.url) ||
+            combinedFormats.find((f) => f.itag === 22 && f.url) ||
+            combinedFormats.find((f) => f.itag === 18 && f.url) ||
+            combinedFormats.find((f) => f.url && String(f.mimeType || "").includes("video/mp4")) ||
             formats.find(
-              (f) => f.url && String(f.mimeType || "").includes("video/mp4") && f.audioQuality
-            ) ||
-            formats.find((f) => f.url && String(f.mimeType || "").includes("video/mp4"));
+              (f) =>
+                f.url &&
+                String(f.mimeType || "").includes("video/mp4") &&
+                (f.audioQuality || f.audioChannels)
+            );
 
           if (!best?.url) throw new Error("No MP4 format");
           const durSec = Number(data?.videoDetails?.lengthSeconds || 0) || undefined;

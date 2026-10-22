@@ -333,6 +333,7 @@ export const StagePreview: React.FC = () => {
   const [breathState, setBreathState] = useState({ scale: 1, tx: 0, ty: 0, rot: 0 });
   const [isYtJerking, setIsYtJerking] = useState(false);
   const [ytStreamAttempt, setYtStreamAttempt] = useState<0 | 1>(0);
+  const [ytAudioAttempt, setYtAudioAttempt] = useState<0 | 1>(0);
   const [useYtIframeFallback, setUseYtIframeFallback] = useState(false);
   const [mediaBoundsHistory, setMediaBoundsHistory] = useState<Array<ParticipantBounds | null>>([]);
   const [isMediaHovered, setIsMediaHovered] = useState(false);
@@ -395,6 +396,22 @@ export const StagePreview: React.FC = () => {
   }, [fairUseConfig?.enabled, fairUseConfig?.zoomBreathing, fairUseConfig?.breathIntensity]);
 
   const breathScale = breathState.scale;
+
+  // Global AudioContext Autoplay Unlock on First User Gesture
+  useEffect(() => {
+    const handleUnlockAudio = () => {
+      stageBroadcaster.ensureAudioContext();
+      stageBroadcaster.refreshAudioConnections();
+    };
+    window.addEventListener("pointerdown", handleUnlockAudio, { passive: true });
+    window.addEventListener("keydown", handleUnlockAudio, { passive: true });
+    window.addEventListener("touchstart", handleUnlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", handleUnlockAudio);
+      window.removeEventListener("keydown", handleUnlockAudio);
+      window.removeEventListener("touchstart", handleUnlockAudio);
+    };
+  }, []);
 
   // Global Clipboard Screenshot Paste (Ctrl+V / Cmd+V)
   const handleSaveClipboardBlobToStage = React.useCallback(
@@ -569,6 +586,7 @@ export const StagePreview: React.FC = () => {
   React.useEffect(() => {
     setMediaLoadError(false);
     setYtStreamAttempt(0);
+    setYtAudioAttempt(0);
     setUseYtIframeFallback(false);
     ytTelemetryActiveRef.current = false;
     ytReadyConfirmedRef.current = false;
@@ -1178,12 +1196,8 @@ export const StagePreview: React.FC = () => {
       } catch { }
     }
     if (activeMedia?.type === "youtube" && useYtIframeFallback) {
-      if (activeMedia.isMuted || effectiveVolPct === 0) {
-        sendYouTubeIframeCommand("mute", []);
-      } else {
-        sendYouTubeIframeCommand("unMute", []);
-        sendYouTubeIframeCommand("setVolume", [Math.min(100, effectiveVolPct)]);
-      }
+      // Keep iframe muted so audio is piped cleanly through livestudio-active-media-audio into Web Audio DSP without echo/phasing
+      sendYouTubeIframeCommand("mute", []);
     }
   }, [
     activeMedia?.isMuted,
@@ -2173,41 +2187,49 @@ export const StagePreview: React.FC = () => {
               onOpenLibraryModal={() => setIsWebsiteModalOpen(true)}
             />
           ) : targetMedia.type === "map" && targetMedia.mapConfig ? (
-            <div
-              style={{
-                width: "100%",
-                height: "100%",
-                transform:
-                  [
-                    currentZoom * breathScale > 1.001
-                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
-                      : "",
-                    currentRotation ? `rotate(${currentRotation}deg)` : "",
-                    currentMirrored ? "scaleX(-1)" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined,
-                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
-              }}
-              className="w-full h-full relative pointer-events-auto"
-            >
-              <TacticalMapStageCanvas
-                config={targetMedia.mapConfig}
-                fitMode={currentFitMode}
-                isInteractive={true}
-                onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
-                onConfigChange={(nextMapCfg) => {
-                  const mergedCfg = { ...targetMedia.mapConfig!, ...nextMapCfg };
-                  const updatedMedia = { ...targetMedia, mapConfig: mergedCfg };
-                  if (isSecondary) {
-                    setSecondaryMedia(updatedMedia);
-                  } else {
-                    setActiveMedia(updatedMedia);
-                  }
-                  useStudioStore.getState().updateMediaLibraryItem(targetMedia.id, { mapConfig: mergedCfg });
-                }}
-              />
-            </div>
+            (() => {
+              const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
+              const effectiveZoom = Number((currentZoom * breathScale).toFixed(4));
+
+              return (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    transform:
+                      [
+                        effectiveZoom > 1.0005 ? `scale(${effectiveZoom})` : "",
+                        isBreathingActive && (Math.abs(breathState.tx) > 0.01 || Math.abs(breathState.ty) > 0.01)
+                          ? `translate3d(${breathState.tx}px, ${breathState.ty}px, 0)`
+                          : "",
+                        currentRotation ? `rotate(${currentRotation}deg)` : "",
+                        currentMirrored ? "scaleX(-1)" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined,
+                    transformOrigin: `${effOriginX}% ${effObjPosY}%`,
+                  }}
+                  className="w-full h-full relative pointer-events-auto"
+                >
+                  <TacticalMapStageCanvas
+                    config={targetMedia.mapConfig}
+                    fitMode={currentFitMode}
+                    isInteractive={true}
+                    onOpenEditorModal={() => setIsTacticalMapModalOpen(true)}
+                    onConfigChange={(nextMapCfg) => {
+                      const mergedCfg = { ...targetMedia.mapConfig!, ...nextMapCfg };
+                      const updatedMedia = { ...targetMedia, mapConfig: mergedCfg };
+                      if (isSecondary) {
+                        setSecondaryMedia(updatedMedia);
+                      } else {
+                        setActiveMedia(updatedMedia);
+                      }
+                      useStudioStore.getState().updateMediaLibraryItem(targetMedia.id, { mapConfig: mergedCfg });
+                    }}
+                  />
+                </div>
+              );
+            })()
           ) : targetMedia.type === "youtube" && (useYtIframeFallback || isSecondary) && (activeYtVideoId || extractYouTubeVideoId(targetMedia.url || "")) ? (
             (() => {
               const ytVideoId = activeYtVideoId || extractYouTubeVideoId(targetMedia.url || "");
@@ -2227,6 +2249,9 @@ export const StagePreview: React.FC = () => {
                   : 124
                 : 118;
 
+              const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
+              const effectiveZoom = Number((currentZoom * breathScale).toFixed(4));
+
               return (
                 <div
                   style={{
@@ -2234,20 +2259,23 @@ export const StagePreview: React.FC = () => {
                     height: "100%",
                     transform:
                       [
-                        currentZoom > 1.001 ? `scale(${currentZoom})` : "",
+                        effectiveZoom > 1.0005 ? `scale(${effectiveZoom})` : "",
+                        isBreathingActive && (Math.abs(breathState.tx) > 0.01 || Math.abs(breathState.ty) > 0.01)
+                          ? `translate3d(${breathState.tx}px, ${breathState.ty}px, 0)`
+                          : "",
                         currentRotation ? `rotate(${currentRotation}deg)` : "",
                         currentMirrored ? "scaleX(-1)" : "",
                       ]
                         .filter(Boolean)
                         .join(" ") || undefined,
-                    transformOrigin: "center center",
+                    transformOrigin: `${effOriginX}% ${effObjPosY}%`,
                   }}
                   className="w-full h-full relative overflow-hidden pointer-events-auto bg-black"
                 >
                   <iframe
                     id={isSecondary ? "livestudio-secondary-youtube-iframe" : "livestudio-active-youtube-iframe"}
                     key={`yt-${tileKey}-${ytVideoId || targetMedia.id}`}
-                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${targetMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${targetMedia.startTimeSec ? `&start=${Math.floor(targetMedia.startTimeSec)}` : ""}${targetMedia.endTimeSec ? `&end=${Math.floor(targetMedia.endTimeSec)}` : ""}`}
+                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&mute=1&loop=${targetMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${targetMedia.startTimeSec ? `&start=${Math.floor(targetMedia.startTimeSec)}` : ""}${targetMedia.endTimeSec ? `&end=${Math.floor(targetMedia.endTimeSec)}` : ""}`}
                     title={targetMedia.name}
                     allow="autoplay; encrypted-media; picture-in-picture"
                     style={{
@@ -2262,15 +2290,30 @@ export const StagePreview: React.FC = () => {
                   />
                   <audio
                     id={isSecondary ? "livestudio-secondary-media-audio" : "livestudio-active-media-audio"}
-                    key={`yt-audio-${tileKey}-${ytVideoId || targetMedia.id}`}
-                    src={`/api/media/youtube/audio?videoId=${ytVideoId}`}
+                    key={`yt-audio-${tileKey}-${ytVideoId || targetMedia.id}-${ytAudioAttempt}`}
+                    src={
+                      ytAudioAttempt === 0
+                        ? `/api/media/youtube/audio?videoId=${ytVideoId}`
+                        : `/youtube-stream?videoId=${ytVideoId}`
+                    }
                     autoPlay
                     playsInline
                     preload="auto"
                     crossOrigin="anonymous"
                     muted={Boolean(targetMedia.isMuted)}
                     className="hidden pointer-events-none"
+                    onError={() => {
+                      if (ytAudioAttempt === 0) {
+                        setYtAudioAttempt(1);
+                      } else {
+                        // Emergency fail-safe: unmute iframe so audio is never lost
+                        sendYouTubeIframeCommand("unMute", []);
+                        sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+                      }
+                    }}
                     onCanPlay={(e) => {
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
                       const a = e.currentTarget;
                       const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
                       if (!targetMedia.isMuted && vol > 0) {
@@ -2281,84 +2324,141 @@ export const StagePreview: React.FC = () => {
                       }
                       if (a.paused) a.play().catch(() => { });
                     }}
+                    onPlaying={() => {
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
+                    }}
+                    onPlay={() => {
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
+                    }}
                   />
                 </div>
               );
             })()
           ) : targetMedia.type === "video" || targetMedia.type === "youtube" ? (
-            <video
-              id={isSecondary ? "livestudio-secondary-media-video" : "livestudio-active-media-video"}
-              key={`vid-${tileKey}-${targetMedia.id}`}
-              src={
-                targetMedia.type === "youtube" && activeYtVideoId
-                  ? ytStreamAttempt === 0
-                    ? `/api/media/youtube/stream?videoId=${activeYtVideoId}`
-                    : `/youtube-stream?videoId=${activeYtVideoId}`
-                  : targetMedia.url
-              }
-              autoPlay
-              playsInline
-              preload="auto"
-              loop={(targetMedia.loop ?? true) && !targetMedia.startTimeSec && !targetMedia.endTimeSec}
-              muted={Boolean(targetMedia.isMuted)}
-              crossOrigin="anonymous"
-              onCanPlay={(e) => {
-                ytReadyConfirmedRef.current = true;
-                const v = e.currentTarget;
-                const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
-                if (!targetMedia.isMuted && vol > 0) {
-                  v.muted = false;
-                  try {
-                    v.volume = Math.max(0.05, Math.min(1, vol / 100));
-                  } catch { }
-                }
-                if (v.paused) v.play().catch(() => { });
-              }}
-              onPlaying={() => {
-                ytReadyConfirmedRef.current = true;
-              }}
-              style={{
-                objectFit: currentFitMode,
-                objectPosition: `${effObjPosX}% ${effObjPosY}%`,
-                transform:
-                  [
-                    currentZoom * breathScale > 1.001
-                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
-                      : "",
-                    currentRotation ? `rotate(${currentRotation}deg)` : "",
-                    currentMirrored ? "scaleX(-1)" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined,
-                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
-                userSelect: "none",
-              }}
-              className="w-full h-full max-w-none pointer-events-auto"
-            />
+            (() => {
+              const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
+              const effectiveZoom = Number((currentZoom * breathScale).toFixed(4));
+
+              return (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    transform:
+                      [
+                        effectiveZoom > 1.0005 ? `scale(${effectiveZoom})` : "",
+                        isBreathingActive && (Math.abs(breathState.tx) > 0.01 || Math.abs(breathState.ty) > 0.01)
+                          ? `translate3d(${breathState.tx}px, ${breathState.ty}px, 0)`
+                          : "",
+                        currentRotation ? `rotate(${currentRotation}deg)` : "",
+                        currentMirrored ? "scaleX(-1)" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined,
+                    transformOrigin: `${effOriginX}% ${effObjPosY}%`,
+                  }}
+                  className="w-full h-full relative overflow-hidden pointer-events-auto"
+                >
+                  <video
+                    id={isSecondary ? "livestudio-secondary-media-video" : "livestudio-active-media-video"}
+                    key={`vid-${tileKey}-${targetMedia.id}`}
+                    src={
+                      targetMedia.type === "youtube" && activeYtVideoId
+                        ? ytStreamAttempt === 0
+                          ? `/api/media/youtube/stream?videoId=${activeYtVideoId}`
+                          : `/youtube-stream?videoId=${activeYtVideoId}`
+                        : targetMedia.url
+                    }
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    loop={(targetMedia.loop ?? true) && !targetMedia.startTimeSec && !targetMedia.endTimeSec}
+                    muted={Boolean(targetMedia.isMuted)}
+                    crossOrigin="anonymous"
+                    onCanPlay={(e) => {
+                      ytReadyConfirmedRef.current = true;
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
+                      const v = e.currentTarget;
+                      const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
+                      if (!targetMedia.isMuted && vol > 0) {
+                        v.muted = false;
+                        try {
+                          v.volume = Math.max(0.05, Math.min(1, vol / 100));
+                        } catch { }
+                      }
+                      if (v.paused) v.play().catch(() => { });
+                    }}
+                    onPlaying={() => {
+                      ytReadyConfirmedRef.current = true;
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
+                    }}
+                    onPlay={() => {
+                      stageBroadcaster.ensureAudioContext();
+                      stageBroadcaster.refreshAudioConnections();
+                    }}
+                    onError={() => {
+                      if (targetMedia.type === "youtube") {
+                        if (ytStreamAttempt === 0) {
+                          setYtStreamAttempt(1);
+                        } else {
+                          setUseYtIframeFallback(true);
+                        }
+                      }
+                    }}
+                    style={{
+                      objectFit: currentFitMode,
+                      objectPosition: `${effObjPosX}% ${effObjPosY}%`,
+                      userSelect: "none",
+                    }}
+                    className="w-full h-full max-w-none pointer-events-auto"
+                  />
+                </div>
+              );
+            })()
           ) : (
-            <img
-              src={targetMedia.thumbnail || targetMedia.url}
-              alt={targetMedia.name}
-              crossOrigin="anonymous"
-              draggable={false}
-              style={{
-                objectFit: currentFitMode,
-                objectPosition: `${effObjPosX}% ${effObjPosY}%`,
-                transform:
-                  [
-                    currentZoom * breathScale > 1.001
-                      ? `scale(${Number((currentZoom * breathScale).toFixed(4))})`
-                      : "",
-                    currentRotation ? `rotate(${currentRotation}deg)` : "",
-                    currentMirrored ? "scaleX(-1)" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ") || undefined,
-                transformOrigin: `${effOriginX}% ${effObjPosY}%`,
-                userSelect: "none",
-              }}
-              className="w-full h-full max-w-none pointer-events-auto"
-            />
+            (() => {
+              const isBreathingActive = Boolean(fairUseConfig?.enabled && (fairUseConfig?.zoomBreathing ?? true));
+              const effectiveZoom = Number((currentZoom * breathScale).toFixed(4));
+
+              return (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    transform:
+                      [
+                        effectiveZoom > 1.0005 ? `scale(${effectiveZoom})` : "",
+                        isBreathingActive && (Math.abs(breathState.tx) > 0.01 || Math.abs(breathState.ty) > 0.01)
+                          ? `translate3d(${breathState.tx}px, ${breathState.ty}px, 0)`
+                          : "",
+                        currentRotation ? `rotate(${currentRotation}deg)` : "",
+                        currentMirrored ? "scaleX(-1)" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined,
+                    transformOrigin: `${effOriginX}% ${effObjPosY}%`,
+                  }}
+                  className="w-full h-full relative overflow-hidden pointer-events-auto"
+                >
+                  <img
+                    src={targetMedia.thumbnail || targetMedia.url}
+                    alt={targetMedia.name}
+                    crossOrigin="anonymous"
+                    draggable={false}
+                    style={{
+                      objectFit: currentFitMode,
+                      objectPosition: `${effObjPosX}% ${effObjPosY}%`,
+                      userSelect: "none",
+                    }}
+                    className="w-full h-full max-w-none pointer-events-auto"
+                  />
+                </div>
+              );
+            })()
           )}
 
           {/* 60FPS HTML5 Canvas Fair-Use Film Grain + Refined 35mm Vintage Hairlines + Traveling Scanline Bars */}

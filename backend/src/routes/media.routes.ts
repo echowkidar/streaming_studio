@@ -343,15 +343,19 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
           const ytData: any = await vrRes.json();
           if (ytData?.playabilityStatus?.status === 'OK') {
             const lengthSec = Number(ytData?.videoDetails?.lengthSeconds || 0);
-            const formats: any[] = [
-              ...(ytData?.streamingData?.formats || []),
-              ...(ytData?.streamingData?.adaptiveFormats || []),
-            ];
+            const combinedFormats: any[] = ytData?.streamingData?.formats || [];
+            const adaptiveFormats: any[] = ytData?.streamingData?.adaptiveFormats || [];
+            const formats: any[] = [...combinedFormats, ...adaptiveFormats];
             const bestFormat =
-              formats.find((f) => f.itag === 22 && f.url) ||
-              formats.find((f) => f.itag === 18 && f.url) ||
-              formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4') && f.audioQuality) ||
-              formats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4'));
+              combinedFormats.find((f) => f.itag === 22 && f.url) ||
+              combinedFormats.find((f) => f.itag === 18 && f.url) ||
+              combinedFormats.find((f) => f.url && String(f.mimeType || '').includes('video/mp4')) ||
+              formats.find(
+                (f) =>
+                  f.url &&
+                  String(f.mimeType || '').includes('video/mp4') &&
+                  (f.audioQuality || f.audioChannels)
+              );
 
             if (bestFormat?.url) {
               const resEntry: CachedYtStream = {

@@ -141,6 +141,9 @@ class StageBroadcaster {
       }
       if (!this.audioDestination && this.audioCtx) {
         this.audioDestination = this.audioCtx.createMediaStreamDestination();
+        this.audioDestination.channelCount = 2;
+        this.audioDestination.channelCountMode = "explicit";
+        this.audioDestination.channelInterpretation = "speakers";
       }
     } catch (e) {
       console.warn("[StageBroadcaster] AudioContext init error:", e);
@@ -233,6 +236,9 @@ class StageBroadcaster {
       }
       if (!this.audioDestination) {
         this.audioDestination = this.audioCtx.createMediaStreamDestination();
+        this.audioDestination.channelCount = 2;
+        this.audioDestination.channelCountMode = "explicit";
+        this.audioDestination.channelInterpretation = "speakers";
       }
 
       // Continuous ultra-low carrier (-76dB) to prevent WebRTC/FFmpeg silence drop
@@ -803,6 +809,9 @@ class StageBroadcaster {
               const srcStream = new MediaStream([mediaTrack]);
               const source = this.audioCtx!.createMediaStreamSource(srcStream);
               const gain = this.audioCtx!.createGain();
+              gain.channelCount = 2;
+              gain.channelCountMode = "explicit";
+              gain.channelInterpretation = "speakers";
               gain.gain.value = isAudible ? 1 : 0;
               source.connect(gain);
               gain.connect(this.audioDestination!);
@@ -834,25 +843,41 @@ class StageBroadcaster {
       const activeMediaEls = [mediaVideo, mediaAudio, secVideo, secAudio].filter((el): el is HTMLMediaElement => Boolean(el));
 
       if (activeMediaEls.length > 0 && this.audioCtx && this.audioDestination) {
+        if (this.audioCtx.state === "suspended") {
+          this.audioCtx.resume().catch(() => {});
+        }
         if (!this.mediaGainNode) {
           try {
             this.mediaHighpassFilter = this.audioCtx.createBiquadFilter();
             this.mediaHighpassFilter.type = "highpass";
             this.mediaHighpassFilter.frequency.value = 20;
+            this.mediaHighpassFilter.channelCount = 2;
+            this.mediaHighpassFilter.channelCountMode = "explicit";
+            this.mediaHighpassFilter.channelInterpretation = "speakers";
 
             this.mediaNotchFilter = this.audioCtx.createBiquadFilter();
             this.mediaNotchFilter.type = "peaking";
             this.mediaNotchFilter.frequency.value = 1550;
             this.mediaNotchFilter.Q.value = 1.8;
             this.mediaNotchFilter.gain.value = 0;
+            this.mediaNotchFilter.channelCount = 2;
+            this.mediaNotchFilter.channelCountMode = "explicit";
+            this.mediaNotchFilter.channelInterpretation = "speakers";
 
             this.mediaFormantFilter = this.audioCtx.createBiquadFilter();
             this.mediaFormantFilter.type = "peaking";
             this.mediaFormantFilter.frequency.value = 3400;
             this.mediaFormantFilter.Q.value = 1.4;
             this.mediaFormantFilter.gain.value = 0;
+            this.mediaFormantFilter.channelCount = 2;
+            this.mediaFormantFilter.channelCountMode = "explicit";
+            this.mediaFormantFilter.channelInterpretation = "speakers";
 
             this.mediaGainNode = this.audioCtx.createGain();
+            this.mediaGainNode.channelCount = 2;
+            this.mediaGainNode.channelCountMode = "explicit";
+            this.mediaGainNode.channelInterpretation = "speakers";
+
             this.mediaHighpassFilter.connect(this.mediaNotchFilter);
             this.mediaNotchFilter.connect(this.mediaFormantFilter);
             this.mediaFormantFilter.connect(this.mediaGainNode);
@@ -862,6 +887,33 @@ class StageBroadcaster {
           } catch (gainErr) {
             console.warn("[StageBroadcaster] Failed to create media audio DSP chain:", gainErr);
           }
+        }
+
+        // Guarantee 2-channel stereo routing on all active DSP nodes (prevents mono discrete channel 0 trap)
+        if (this.mediaHighpassFilter) {
+          this.mediaHighpassFilter.channelCount = 2;
+          this.mediaHighpassFilter.channelCountMode = "explicit";
+          this.mediaHighpassFilter.channelInterpretation = "speakers";
+        }
+        if (this.mediaNotchFilter) {
+          this.mediaNotchFilter.channelCount = 2;
+          this.mediaNotchFilter.channelCountMode = "explicit";
+          this.mediaNotchFilter.channelInterpretation = "speakers";
+        }
+        if (this.mediaFormantFilter) {
+          this.mediaFormantFilter.channelCount = 2;
+          this.mediaFormantFilter.channelCountMode = "explicit";
+          this.mediaFormantFilter.channelInterpretation = "speakers";
+        }
+        if (this.mediaGainNode) {
+          this.mediaGainNode.channelCount = 2;
+          this.mediaGainNode.channelCountMode = "explicit";
+          this.mediaGainNode.channelInterpretation = "speakers";
+        }
+        if (this.audioDestination) {
+          this.audioDestination.channelCount = 2;
+          this.audioDestination.channelCountMode = "explicit";
+          this.audioDestination.channelInterpretation = "speakers";
         }
 
         if (this.mediaFormantFilter && this.mediaHighpassFilter && this.mediaNotchFilter) {
@@ -1370,9 +1422,23 @@ class StageBroadcaster {
                     dw = h * iRatio;
                     dx = x + (w - dw) / 2;
                   }
-                  try {
-                    ctx.drawImage(pImg, 0, 0, pImg.naturalWidth, pImg.naturalHeight, dx, dy, dw, dh);
-                  } catch { }
+                  if (zoom > 1 || Math.abs(panX) > 0.5 || Math.abs(panY) > 0.5) {
+                    let sw = pImg.naturalWidth / zoom;
+                    let sh = pImg.naturalHeight / zoom;
+                    let sx = (pImg.naturalWidth - sw) * (objectPosX / 100);
+                    let sy = (pImg.naturalHeight - sh) * (objectPosY / 100);
+                    sx = Math.max(0, Math.min(pImg.naturalWidth - sw, sx));
+                    sy = Math.max(0, Math.min(pImg.naturalHeight - sh, sy));
+                    const shiftDx = zoom <= 1 ? (-panX / 100) * w * 0.45 : 0;
+                    const shiftDy = zoom <= 1 ? (-panY / 100) * h * 0.45 : 0;
+                    try {
+                      ctx.drawImage(pImg, sx, sy, sw, sh, dx + shiftDx, dy + shiftDy, dw, dh);
+                    } catch { }
+                  } else {
+                    try {
+                      ctx.drawImage(pImg, 0, 0, pImg.naturalWidth, pImg.naturalHeight, dx, dy, dw, dh);
+                    } catch { }
+                  }
                 }
                 ctx.restore();
 
