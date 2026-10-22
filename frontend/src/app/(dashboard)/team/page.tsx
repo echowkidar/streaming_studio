@@ -72,6 +72,13 @@ export default function TeamPage() {
       });
 
       if (res.success) {
+        const created = res.data as { email?: string; tempPassword?: string } | undefined;
+        if (created?.tempPassword) {
+          // New account: show the one-time password once so the owner can share it privately.
+          alert(
+            `Account created for ${created.email}.\n\nTemporary password (shown only once):\n${created.tempPassword}\n\nAsk them to change it after their first login.`
+          );
+        }
         setInviteEmail("");
         setInviteName("");
         setIsModalOpen(false);

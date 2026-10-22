@@ -1,31 +1,15 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as bcrypt from 'bcryptjs';
-import * as jwt from 'jsonwebtoken';
-import * as crypto from 'crypto';
 import { prisma } from '../lib/prisma';
 import { config } from '../config';
+import { issueSessionToken, requireAuth } from '../middleware/auth';
 
 const router = Router();
 
-function generatePasswordSignature(passwordHash: string): string {
-  return crypto.createHash('sha256').update(passwordHash || '').digest('hex').substring(0, 16);
-}
-
-function createSessionToken(user: { id: string; email: string; role: string; passwordHash: string }): string {
-  const pwdSig = generatePasswordSignature(user.passwordHash);
-  const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
-  return jwt.sign(
-    {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      pwdSig,
-    },
-    secret,
-    { expiresIn: '30d' }
-  );
-}
+/** Passwords that were shipped in the public repo and must never be accepted again. */
+const BLOCKED_PASSWORDS = new Set(['AdminPassword123!', 'MemberPassword123!']);
+const DUMMY_HASH = bcrypt.hashSync('timing-equaliser-not-a-real-password', 12);
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -39,472 +23,252 @@ const LoginSchema = z.object({
 });
 
 const ChangePasswordSchema = z.object({
-  email: z.string().email(),
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: z.string().min(8, 'New password must be at least 8 characters long'),
 });
 
 const ChangeEmailSchema = z.object({
-  currentEmail: z.string().email(),
   newEmail: z.string().email(),
   password: z.string().min(1, 'Current password is required to verify identity'),
 });
 
 const UpdateProfileSchema = z.object({
-  email: z.string().email(),
   name: z.string().min(1, 'Display name cannot be empty'),
-  avatarUrl: z.string().optional(),
+  avatarUrl: z.string().max(2048).optional(),
 });
 
-router.post('/register', async (req: Request, res: Response): Promise<void> => {
+function validatePasswordStrength(pw: string): string | null {
+  if (BLOCKED_PASSWORDS.has(pw)) return 'This password is publicly known. Please choose a different one.';
+  if (pw.length < 8) return 'Password must be at least 8 characters long';
+  return null;
+}
+
+async function ensurePersonalWorkspace(user: { id: string; name: string }) {
+  const existing = await prisma.workspace.findFirst({ where: { ownerId: user.id }, orderBy: { createdAt: 'asc' } });
+  if (existing) return existing;
+  return prisma.workspace.create({
+    data: {
+      name: `${user.name || 'User'}'s Studio`,
+      slug: `ws-${user.id.toLowerCase().slice(-8)}-${Date.now()}`,
+      ownerId: user.id,
+      members: { create: { userId: user.id, role: 'OWNER' } },
+    },
+  });
+}
+
+function publicUser(user: { id: string; email: string; name: string; role: string }) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name || user.email.split('@')[0] || 'User',
+    role: user.role,
+  };
+}
+
+router.post('/register', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    if (!config.ALLOW_REGISTRATION) {
+      res.status(403).json({ success: false, error: 'Registration is disabled. Ask an administrator for an account.' });
+      return;
+    }
     const data = RegisterSchema.parse(req.body);
+    const pwProblem = validatePasswordStrength(data.password);
+    if (pwProblem) {
+      res.status(400).json({ success: false, error: pwProblem });
+      return;
+    }
     const emailNorm = data.email.toLowerCase().trim();
 
-    const existing = await prisma.user.findUnique({
-      where: { email: emailNorm },
-    });
-
+    const existing = await prisma.user.findUnique({ where: { email: emailNorm } });
     if (existing) {
       res.status(400).json({ success: false, error: 'An account with this email already exists' });
       return;
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await prisma.user.create({
       data: {
         email: emailNorm,
-        passwordHash,
+        passwordHash: await bcrypt.hash(data.password, 12),
         name: data.name.trim(),
         role: 'USER',
       },
     });
-
-    // Create dedicated private workspace for the user
-    let userWorkspace = null;
-    try {
-      userWorkspace = await prisma.workspace.create({
-        data: {
-          name: `${user.name}'s Studio`,
-          slug: `ws-${user.id.toLowerCase()}-${Date.now()}`,
-          ownerId: user.id,
-          members: {
-            create: {
-              userId: user.id,
-              role: 'OWNER',
-            },
-          },
-        },
-      });
-    } catch (wsErr) {
-      console.warn('[Register] Failed to create private workspace:', wsErr);
-    }
-
-    const sessionToken = createSessionToken(user);
+    const workspace = await ensurePersonalWorkspace(user);
+    const token = await issueSessionToken(user.id, req);
 
     res.status(201).json({
       success: true,
       data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        },
-        workspace: userWorkspace
-          ? { id: userWorkspace.id, name: userWorkspace.name, slug: userWorkspace.slug }
-          : null,
-        tokens: {
-          accessToken: sessionToken,
-          refreshToken: sessionToken,
-        },
+        user: publicUser(user),
+        workspace: { id: workspace.id, name: workspace.name, slug: workspace.slug },
+        tokens: { accessToken: token, refreshToken: token },
       },
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
-    res.status(500).json({ success: false, error: 'Failed to create user account' });
+    next(error);
   }
 });
 
-router.post('/login', async (req: Request, res: Response): Promise<void> => {
+router.post('/login', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = LoginSchema.parse(req.body);
     const emailNorm = data.email.toLowerCase().trim();
 
-    // 1. Look up user in database
-    let user = await prisma.user.findUnique({
-      where: { email: emailNorm },
-    });
+    const user = await prisma.user.findUnique({ where: { email: emailNorm } });
+    // Always run bcrypt so response time does not reveal whether the email exists.
+    const hash = user?.passwordHash && user.passwordHash.startsWith('$2') ? user.passwordHash : DUMMY_HASH;
+    const valid = await bcrypt.compare(data.password, hash).catch(() => false);
 
-    // If user is trying to log in as admin, but the database admin has an auto-generated timestamp email
-    if (!user && (emailNorm === 'admin@livestudio.io' || emailNorm === 'admin')) {
-      const existingSuperAdmin = await prisma.user.findFirst({
-        where: { role: 'SUPER_ADMIN' },
-        orderBy: { createdAt: 'asc' },
-      });
-      if (existingSuperAdmin) {
-        user = existingSuperAdmin;
-        // Normalize their email to clean admin@livestudio.io in database
-        await prisma.user.update({
-          where: { id: existingSuperAdmin.id },
-          data: { email: 'admin@livestudio.io' },
-        }).catch(() => null);
-        user.email = 'admin@livestudio.io';
-      }
-    }
-
-    // If database was completely empty and default admin is logging in for the very first time
-    if (!user && emailNorm === 'admin@livestudio.io') {
-      const anyUserCount = await prisma.user.count().catch(() => 0);
-      if (anyUserCount === 0 && data.password === 'AdminPassword123!') {
-        try {
-          const defaultHash = await bcrypt.hash('AdminPassword123!', 10);
-          user = await prisma.user.create({
-            data: {
-              email: 'admin@livestudio.io',
-              passwordHash: defaultHash,
-              name: 'Super Admin',
-              role: 'SUPER_ADMIN',
-            },
-          });
-        } catch {
-          // non-fatal
-        }
-      }
-    }
-
-    if (!user) {
+    if (!user || !valid) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
-
-    // 2. Real cryptographic password verification
-    if (user.passwordHash && user.passwordHash !== 'seeded') {
-      const isValid = await bcrypt.compare(data.password, user.passwordHash);
-      if (!isValid) {
-        res.status(401).json({ success: false, error: 'Invalid email or password' });
-        return;
-      }
-    } else if (user.passwordHash === 'seeded') {
-      if (data.password !== 'AdminPassword123!') {
-        res.status(401).json({ success: false, error: 'Invalid email or password' });
-        return;
-      }
-      // Upgrade seed placeholder to real bcrypt hash
-      const upgradedHash = await bcrypt.hash('AdminPassword123!', 10);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { passwordHash: upgradedHash },
+    if (user.isBanned) {
+      res.status(403).json({ success: false, error: 'This account has been suspended' });
+      return;
+    }
+    if (BLOCKED_PASSWORDS.has(data.password)) {
+      res.status(403).json({
+        success: false,
+        error: 'This account still uses a publicly known default password and is locked. Set ADMIN_PASSWORD in the server environment and restart, or ask an admin to reset it.',
       });
+      return;
     }
 
-    // Ensure personal workspace exists for this user
-    let userWorkspace = await prisma.workspace.findFirst({
-      where: { ownerId: user.id },
-    });
-    if (!userWorkspace) {
-      try {
-        userWorkspace = await prisma.workspace.create({
-          data: {
-            name: `${user.name || 'User'}'s Studio`,
-            slug: `ws-${user.id.toLowerCase().slice(-8)}-${Date.now()}`,
-            ownerId: user.id,
-            members: {
-              create: {
-                userId: user.id,
-                role: 'OWNER',
-              },
-            },
-          },
-        });
-      } catch (e) {
-        console.warn('[Login] Failed to create workspace fallback:', e);
-      }
-    }
-
-    const sessionToken = createSessionToken(user);
+    const workspace = await ensurePersonalWorkspace(user);
+    const token = await issueSessionToken(user.id, req);
 
     res.status(200).json({
       success: true,
       data: {
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name || user.email.split('@')[0] || 'User',
-          role: user.role,
-        },
-        workspace: userWorkspace
-          ? { id: userWorkspace.id, name: userWorkspace.name, slug: userWorkspace.slug }
-          : null,
-        tokens: {
-          accessToken: sessionToken,
-          refreshToken: sessionToken,
-        },
+        user: publicUser(user),
+        workspace: { id: workspace.id, name: workspace.name, slug: workspace.slug },
+        tokens: { accessToken: token, refreshToken: token },
       },
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: 'Validation failed', details: error.errors });
-      return;
-    }
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    next(error);
   }
 });
 
 router.post('/logout', async (req: Request, res: Response): Promise<void> => {
+  if (req.user) {
+    await prisma.session.delete({ where: { id: req.user.sessionId } }).catch(() => null);
+  }
+  res.status(200).json({ success: true, data: null });
+});
+
+router.post('/refresh', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    res.status(200).json({ success: true, data: null });
+    // Rotate: drop the current session and issue a new one.
+    await prisma.session.delete({ where: { id: req.user!.sessionId } }).catch(() => null);
+    const token = await issueSessionToken(req.user!.id, req);
+    res.status(200).json({ success: true, data: { tokens: { accessToken: token, refreshToken: token } } });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    next(error);
   }
 });
 
-router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
+router.get('/me', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ success: false, error: 'Unauthorized' });
+    if (!req.user) {
+      // SESSION_REVOKED makes the frontend clear its stored token and go to /login.
+      res.status(401).json({ success: false, error: 'SESSION_REVOKED', message: 'Session expired or revoked. Please log in again.' });
       return;
     }
-    const token = authHeader.split(' ')[1];
-    const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
-    const decoded = jwt.verify(token, secret) as any;
-    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-    if (!user) {
-      res.status(401).json({ success: false, error: 'Unauthorized' });
-      return;
-    }
-    const currentSig = generatePasswordSignature(user.passwordHash);
-    if (decoded.pwdSig && decoded.pwdSig !== currentSig) {
-      res.status(401).json({ success: false, error: 'SESSION_REVOKED' });
-      return;
-    }
-    const newToken = createSessionToken(user);
-    res.status(200).json({
-      success: true,
-      data: {
-        tokens: {
-          accessToken: newToken,
-          refreshToken: newToken,
-        },
-      },
-    });
-  } catch (error) {
-    res.status(401).json({ success: false, error: 'Unauthorized' });
-  }
-});
-
-router.get('/me', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ success: false, error: 'Unauthorized: No session token provided' });
-      return;
-    }
-
-    const token = authHeader.split(' ')[1];
-    const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(token, secret);
-    } catch {
-      res.status(401).json({ success: false, error: 'Unauthorized: Token expired or invalid' });
-      return;
-    }
-
-    if (!decoded || !decoded.userId) {
-      res.status(401).json({ success: false, error: 'Unauthorized: Invalid token format' });
-      return;
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        passwordHash: true,
-      },
-    });
-
-    if (!user) {
-      res.status(401).json({ success: false, error: 'Unauthorized: User account not found' });
-      return;
-    }
-
-    // Security Check: Verify password has NOT been changed since this session token was created
-    const currentSig = generatePasswordSignature(user.passwordHash);
-    if (decoded.pwdSig && decoded.pwdSig !== currentSig) {
-      res.status(401).json({
-        success: false,
-        error: 'SESSION_REVOKED',
-        message: 'Password was changed. Please log in again with your new credentials.',
-      });
-      return;
-    }
-
-    const userWorkspace = await prisma.workspace.findFirst({
-      where: { ownerId: user.id },
+    const workspace = await prisma.workspace.findFirst({
+      where: { ownerId: req.user.id },
+      orderBy: { createdAt: 'asc' },
       select: { id: true, name: true, slug: true },
     });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        id: user.id,
-        email: user.email,
-        name: user.name || user.email.split('@')[0] || 'User',
-        role: user.role,
-        workspace: userWorkspace || null,
-      },
-    });
+    res.status(200).json({ success: true, data: { ...publicUser(req.user), workspace: workspace || null } });
   } catch (error) {
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    next(error);
   }
 });
 
-router.post('/change-password', async (req: Request, res: Response): Promise<void> => {
+router.post('/change-password', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = ChangePasswordSchema.parse(req.body);
-    const emailNorm = data.email.toLowerCase().trim();
-
-    let user = await prisma.user.findUnique({ where: { email: emailNorm } });
-    if (!user) {
-      user = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN' } });
-    }
-
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
     if (!user) {
       res.status(404).json({ success: false, error: 'User account not found' });
       return;
     }
-
-    if (user.passwordHash && user.passwordHash !== 'seeded') {
-      const isValid = await bcrypt.compare(data.currentPassword, user.passwordHash);
-      if (!isValid) {
-        res.status(400).json({ success: false, error: 'Current password is incorrect' });
-        return;
-      }
-    } else if (user.passwordHash === 'seeded') {
-      if (data.currentPassword !== 'AdminPassword123!') {
-        res.status(400).json({ success: false, error: 'Current password is incorrect' });
-        return;
-      }
+    const isValid = await bcrypt.compare(data.currentPassword, user.passwordHash).catch(() => false);
+    if (!isValid) {
+      res.status(400).json({ success: false, error: 'Current password is incorrect' });
+      return;
+    }
+    const pwProblem = validatePasswordStrength(data.newPassword);
+    if (pwProblem) {
+      res.status(400).json({ success: false, error: pwProblem });
+      return;
     }
 
-    const newHash = await bcrypt.hash(data.newPassword, 10);
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash: newHash,
-        ...(user.role === 'SUPER_ADMIN' && user.email.startsWith('admin-') ? { email: 'admin@livestudio.io' } : {}),
-      },
-    });
-
-    // Generate fresh session token for the user who just changed their password
-    const newToken = createSessionToken(updatedUser);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(data.newPassword, 12) } });
+    // Revoke every session (including this one) and give this device a fresh one.
+    await prisma.session.deleteMany({ where: { userId: user.id } });
+    const token = await issueSessionToken(user.id, req);
 
     res.status(200).json({
       success: true,
       message: 'Password changed successfully! All other active sessions have been revoked.',
-      data: {
-        tokens: {
-          accessToken: newToken,
-          refreshToken: newToken,
-        },
-      },
+      data: { tokens: { accessToken: token, refreshToken: token } },
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    next(error);
   }
 });
 
-router.post('/change-email', async (req: Request, res: Response): Promise<void> => {
+router.post('/change-email', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = ChangeEmailSchema.parse(req.body);
-    if (data.currentEmail.toLowerCase().trim() === data.newEmail.toLowerCase().trim()) {
+    const newEmail = data.newEmail.toLowerCase().trim();
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!user) {
+      res.status(404).json({ success: false, error: 'User account not found' });
+      return;
+    }
+    if (user.email === newEmail) {
       res.status(400).json({ success: false, error: 'New email must be different from current email' });
       return;
     }
-
-    try {
-      const existing = await prisma.user.findUnique({ where: { email: data.newEmail.toLowerCase().trim() } });
-      if (existing) {
-        res.status(400).json({ success: false, error: 'This email is already registered to another account' });
-        return;
-      }
-
-      const user = await prisma.user.findUnique({ where: { email: data.currentEmail.toLowerCase().trim() } });
-      if (user) {
-        if (user.passwordHash && user.passwordHash !== 'seeded') {
-          const isValid = await bcrypt.compare(data.password, user.passwordHash);
-          if (!isValid) {
-            res.status(400).json({ success: false, error: 'Current password verification failed' });
-            return;
-          }
-        }
-        await prisma.user.update({
-          where: { email: data.currentEmail.toLowerCase().trim() },
-          data: { email: data.newEmail.toLowerCase().trim() },
-        });
-      }
-    } catch (dbErr) {
-      console.warn('[ChangeEmail DB warning]:', dbErr);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Email address updated successfully!',
-      data: { newEmail: data.newEmail.toLowerCase().trim() },
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
+    const isValid = await bcrypt.compare(data.password, user.passwordHash).catch(() => false);
+    if (!isValid) {
+      res.status(400).json({ success: false, error: 'Current password verification failed' });
       return;
     }
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    const taken = await prisma.user.findUnique({ where: { email: newEmail } });
+    if (taken) {
+      res.status(400).json({ success: false, error: 'This email is already registered to another account' });
+      return;
+    }
+    await prisma.user.update({ where: { id: user.id }, data: { email: newEmail } });
+    res.status(200).json({ success: true, message: 'Email address updated successfully!', data: { newEmail } });
+  } catch (error) {
+    next(error);
   }
 });
 
-router.post('/update-profile', async (req: Request, res: Response): Promise<void> => {
+router.post('/update-profile', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = UpdateProfileSchema.parse(req.body);
-    try {
-      const user = await prisma.user.findUnique({ where: { email: data.email.toLowerCase().trim() } });
-      if (user) {
-        await prisma.user.update({
-          where: { email: data.email.toLowerCase().trim() },
-          data: {
-            name: data.name.trim(),
-            ...(data.avatarUrl ? { avatarUrl: data.avatarUrl } : {}),
-          },
-        });
-      }
-    } catch (dbErr) {
-      console.warn('[UpdateProfile DB warning]:', dbErr);
-    }
-
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: {
+        name: data.name.trim(),
+        ...(data.avatarUrl ? { avatarUrl: data.avatarUrl } : {}),
+      },
+    });
     res.status(200).json({
       success: true,
       message: 'Profile information updated successfully!',
-      data: { name: data.name.trim(), avatarUrl: data.avatarUrl },
+      data: { name: updated.name, avatarUrl: updated.avatarUrl },
     });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    next(error);
   }
 });
 
 export default router;
-

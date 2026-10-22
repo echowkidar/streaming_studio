@@ -5,6 +5,27 @@
 
 ---
 
+
+## ⚠️ Upgrade notes (security & stability release)
+
+This release locks down the API and changes how the stack is configured. **Read before redeploying.**
+
+1. **Set these stack variables in Portainer** (the API refuses to start in production without them):
+   - `JWT_SECRET` and `ENCRYPTION_KEY` — each `openssl rand -hex 32`
+   - `POSTGRES_PASSWORD` (the same one your existing database volume uses), `MINIO_ROOT_PASSWORD`
+   - `APP_URL` (e.g. `https://livestudio.echowkidar.in`), `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+   - `ADMIN_EMAIL` / `ADMIN_PASSWORD` (≥10 chars) — used to replace the old public default admin password
+2. **Everyone has to log in again** (sessions are now stored server-side and can be revoked).
+3. If `ENCRYPTION_KEY` changes, saved stream keys can't be decrypted — re-enter them under *Destinations*.
+4. Uploaded media now lives in the `livestudio_uploads_data` volume. Files uploaded before this release
+   were inside the old container and are already gone.
+5. The `websocket` and `worker` containers were removed (they were placeholders). Delete the old
+   containers in Portainer after redeploying.
+6. The LiveKit VPS stack is in `livekit/vps/docker-compose.yml` (fixed UDP ports, built-in TURN, keys from env).
+   Open TCP 7881, UDP 7882, UDP 3478 and UDP 30000-30100 on the VPS firewall.
+7. Files larger than 90 MB are uploaded in 32 MB parts (`/api/uploads`) because Cloudflare Tunnel rejects
+   request bodies over 100 MB.
+
 ## 🌟 Key Features
 
 ### 1. Browser-Based Studio Production

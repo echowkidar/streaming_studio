@@ -12,9 +12,39 @@ import {
   LocalAudioTrack,
   RemoteAudioTrack,
   RemoteTrack,
+  DisconnectReason,
 } from "livekit-client";
 import { Participant } from "@/types";
 import { useStudioStore } from "@/stores/studio.store";
+
+// ─── Room messaging ────────────────────────────────────────────────────────
+// Small messages go as reliable data packets; anything bigger (full layout/scene state can exceed the
+// ~15KB packet limit and was silently dropped) is sent as a LiveKit text stream, which is chunked.
+const ROOM_MESSAGE_TOPIC = "livestudio-sync";
+const MAX_PACKET_BYTES = 14000;
+
+export async function sendRoomMessage(room: Room, payload: string): Promise<void> {
+  const bytes = new TextEncoder().encode(payload);
+  if (bytes.byteLength <= MAX_PACKET_BYTES) {
+    await room.localParticipant.publishData(bytes, { reliable: true });
+    return;
+  }
+  await room.localParticipant.sendText(payload, { topic: ROOM_MESSAGE_TOPIC });
+}
+
+/** Role comes from token metadata, which only the server can set. */
+function participantRole(p?: { metadata?: string } | null): string {
+  try {
+    return String(JSON.parse(p?.metadata || "{}").role || "").toUpperCase();
+  } catch {
+    return "";
+  }
+}
+
+function isPrivilegedSender(p?: { metadata?: string } | null): boolean {
+  const r = participantRole(p);
+  return r === "HOST" || r === "CO_HOST";
+}
 
 export interface PreferredHardwareDevices {
   audioDeviceId: string;
@@ -530,12 +560,16 @@ export function useLiveKit({
           }
           syncParticipants(newRoom);
         })
-        .on(RoomEvent.Disconnected, () => {
+        .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
           isConnectedRef.current = false;
           isConnectingRef.current = false;
           setIsConnected(false);
           setIsConnecting(false);
           setLiveParticipants([]);
+          if (reason === DisconnectReason.DUPLICATE_IDENTITY) {
+            // The same account opened this studio in another tab/device; that one now owns the seat.
+            setError("This studio was opened in another tab or device, so this one was disconnected. Close the other tab and reload to continue here.");
+          }
         })
         .on(RoomEvent.ParticipantConnected, () => {
           syncParticipants(newRoom);
@@ -561,8 +595,7 @@ export function useLiveKit({
                       activeMedia: currentStore.activeMedia || null,
                       tileTransforms: currentStore.tileTransforms || {},
                     });
-                    newRoom.localParticipant
-                      .publishData(new TextEncoder().encode(payload), { reliable: true })
+                    sendRoomMessage(newRoom, payload)
                       .catch((err) => {
                         console.warn("ParticipantConnected publishData error:", err);
                       });
@@ -579,8 +612,31 @@ export function useLiveKit({
         .on(RoomEvent.ParticipantDisconnected, () => syncParticipants(newRoom))
         .on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
           try {
-            const str = new TextDecoder().decode(payload);
-            const data = JSON.parse(str);
+            handleRoomMessage(JSON.parse(new TextDecoder().decode(payload)), participant);
+          } catch (e) {
+            console.warn("Failed to parse LiveKit data message:", e);
+          }
+        });
+
+      try {
+        newRoom.registerTextStreamHandler(ROOM_MESSAGE_TOPIC, async (reader, info) => {
+          try {
+            const text = await reader.readAll();
+            handleRoomMessage(JSON.parse(text), newRoom.remoteParticipants.get(info.identity));
+          } catch (e) {
+            console.warn("Failed to read LiveKit text stream:", e);
+          }
+        });
+      } catch {
+        // handler already registered for this room
+      }
+
+      const handleRoomMessage = (data: any, participant?: RemoteParticipant) => {
+          try {
+            // Layout/stage control and remote mute are host-only; ignore them from guests.
+            if ((data?.type === "STAGE_SYNC" || data?.type === "REMOTE_MUTE") && !isPrivilegedSender(participant)) {
+              return;
+            }
             if (data.type === "STAGE_SYNC") {
               // Ignore loopback messages from self
               if (data.senderId && newRoom.localParticipant && data.senderId === newRoom.localParticipant.identity) {
@@ -696,9 +752,11 @@ export function useLiveKit({
               return;
             }
           } catch (e) {
-            console.warn("Failed to parse LiveKit data message:", e);
+            console.warn("Failed to handle LiveKit room message:", e);
           }
-        })
+      };
+
+      newRoom
         .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication?: RemoteTrackPublication, participant?: RemoteParticipant) => {
           // Auto-play remote audio through browser speaker by appending hidden <audio> to document.body
           if (track.kind === Track.Kind.Audio && typeof (track as RemoteAudioTrack).attach === "function") {
@@ -867,8 +925,7 @@ export function useLiveKit({
           targetId: localId,
           micOn: nextState,
         });
-        roomRef.current.localParticipant
-          .publishData(new TextEncoder().encode(payload), { reliable: true })
+        sendRoomMessage(roomRef.current, payload)
           .catch(() => {});
       }
       return nextState;
@@ -1097,8 +1154,7 @@ export function useLiveKit({
               targetId: participantId,
               micOn,
             });
-            currentRoom.localParticipant
-              .publishData(new TextEncoder().encode(payload), { reliable: true })
+            sendRoomMessage(currentRoom, payload)
               .catch((err) => console.warn("Failed to publish REMOTE_MUTE:", err));
           } catch (err) {
             console.warn("REMOTE_MUTE publish error:", err);
@@ -1131,8 +1187,7 @@ export function useLiveKit({
           senderId: roomRef.current.localParticipant.identity,
           message: detail,
         });
-        roomRef.current.localParticipant
-          .publishData(new TextEncoder().encode(payload), { reliable: true })
+        sendRoomMessage(roomRef.current, payload)
           .catch((err) => console.warn("Failed to publish private chat data:", err));
       } catch (err) {
         console.warn("Error sending private chat:", err);
@@ -1193,8 +1248,7 @@ export function useLiveKit({
           activeMedia: activeM || null,
           tileTransforms: tTransforms || {},
         });
-        await roomRef.current.localParticipant
-          .publishData(new TextEncoder().encode(payload), { reliable: true })
+        await sendRoomMessage(roomRef.current, payload)
           .catch((err) => {
             console.warn("publishStageSync publishData error:", err);
           });

@@ -863,33 +863,75 @@ export function loadSavedStudioLayout(studioId?: string | null): SavedStudioLayo
 
 let persistCloudTimeout: any = null;
 
-export function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
+export type AutoSaveStatus = "saved" | "saving" | "local-only" | "error";
+let lastAutoSaveStatus: AutoSaveStatus = "saved";
+
+function emitAutoSaveStatus(status: AutoSaveStatus, message?: string) {
+  lastAutoSaveStatus = status;
   if (typeof window === "undefined") return;
   try {
-    const targetStudioId = activeStudioId;
-    const key = getStudioStorageKey(targetStudioId);
-    const current = loadSavedStudioLayout(targetStudioId);
-    const next = { ...current, ...updates };
-    localStorage.setItem(key, JSON.stringify(next));
-
-    if (targetStudioId) {
-      if (persistCloudTimeout) clearTimeout(persistCloudTimeout);
-      persistCloudTimeout = setTimeout(() => {
-        import("@/lib/api").then(({ apiRequest }) => {
-          apiRequest(`/api/studios/${targetStudioId}`, {
-            method: "PUT",
-            data: {
-              settings: next,
-              defaultLayout: next.activeLayout || "solo",
-              name: next.broadcastTitle,
-            },
-          }).catch(() => { });
-        });
-      }, 1200);
-    }
+    window.dispatchEvent(new CustomEvent("livestudio:autosave", { detail: { status, message } }));
   } catch {
     // ignore
   }
+}
+
+export function getAutoSaveStatus(): AutoSaveStatus {
+  return lastAutoSaveStatus;
+}
+
+/** Replace large inline data: URLs (images/PDFs as base64) so the local copy fits the ~5MB localStorage quota. */
+function stripLargeDataUrls<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_key, v) =>
+      typeof v === "string" && v.startsWith("data:") && v.length > 20000 ? "" : v
+    )
+  );
+}
+
+export function persistStudioLayout(updates: Partial<SavedStudioLayoutState>) {
+  if (typeof window === "undefined") return;
+  const targetStudioId = activeStudioId;
+  const key = getStudioStorageKey(targetStudioId);
+  const current = loadSavedStudioLayout(targetStudioId);
+  const next = { ...current, ...updates };
+
+  let localOk = true;
+  try {
+    localStorage.setItem(key, JSON.stringify(next));
+  } catch {
+    // Quota exceeded (usually inline images). Keep a lighter local copy; the server copy stays complete.
+    try {
+      localStorage.setItem(key, JSON.stringify(stripLargeDataUrls(next)));
+    } catch {
+      localOk = false;
+    }
+  }
+
+  if (!targetStudioId) {
+    emitAutoSaveStatus(localOk ? "local-only" : "error", localOk ? undefined : "Browser storage is full");
+    return;
+  }
+
+  emitAutoSaveStatus("saving");
+  if (persistCloudTimeout) clearTimeout(persistCloudTimeout);
+  persistCloudTimeout = setTimeout(() => {
+    import("@/lib/api").then(({ apiRequest }) => {
+      apiRequest(`/api/studios/${targetStudioId}`, {
+        method: "PUT",
+        data: {
+          settings: next,
+          defaultLayout: next.activeLayout || "solo",
+          name: next.broadcastTitle,
+        },
+      })
+        .then((res) => {
+          if (res.success) emitAutoSaveStatus("saved");
+          else emitAutoSaveStatus("error", res.error || "Server rejected the save");
+        })
+        .catch((err) => emitAutoSaveStatus("error", err instanceof Error ? err.message : "Network error"));
+    });
+  }, 1200);
 }
 
 const savedLayout = loadSavedStudioLayout();

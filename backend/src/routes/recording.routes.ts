@@ -1,18 +1,26 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import fs from 'fs';
 import { prisma } from '../lib/prisma';
 import { StorageService } from '../services/storage.service';
+import { HttpError, assertWorkspaceAccess, getAccessibleBroadcast, resolveWorkspaceId } from '../lib/access';
+import { uploadsSubdir } from '../lib/paths';
+import { createSignedQuery } from '../lib/signedUrl';
+import { takeCompletedUpload } from './upload.routes';
 
+// Mounted behind requireAuth in server.ts
 const router = Router();
 const storageService = new StorageService();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
+const upload = multer({
+  dest: uploadsSubdir('tmp-multer'),
+  limits: { fileSize: 500 * 1024 * 1024 }, // larger recordings go through chunked /api/uploads
+});
 
 const RenameRecordingSchema = z.object({
   name: z.string().min(1).max(255),
 });
 
-// Helper to serialize BigInt for JSON responses
 function serializeRecording(recording: any) {
   return {
     ...recording,
@@ -20,29 +28,11 @@ function serializeRecording(recording: any) {
   };
 }
 
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = req.headers['x-workspace-id'] as string;
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
-  }
-  const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (defaultWs) return defaultWs.id;
-  const newWs = await prisma.workspace.create({
-    data: {
-      name: 'Default Workspace',
-      slug: `default-${Date.now()}`,
-      owner: {
-        create: {
-          email: `admin-${Date.now()}@livestudio.io`,
-          passwordHash: 'seeded',
-          name: 'Super Admin',
-          role: 'SUPER_ADMIN',
-        },
-      },
-    },
-  });
-  return newWs.id;
+async function getOwnedRecording(req: Request, id: string) {
+  const recording = await prisma.recording.findUnique({ where: { id } });
+  if (!recording) throw new HttpError(404, 'Recording not found');
+  await assertWorkspaceAccess(req, recording.workspaceId);
+  return recording;
 }
 
 // GET /api/recordings
@@ -51,16 +41,10 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
     const workspaceId = await resolveWorkspaceId(req);
     const recordings = await prisma.recording.findMany({
       where: { workspaceId },
-      include: {
-        broadcast: { select: { id: true, title: true, startedAt: true } },
-      },
+      include: { broadcast: { select: { id: true, title: true, startedAt: true } } },
       orderBy: { createdAt: 'desc' },
     });
-
-    res.status(200).json({
-      success: true,
-      data: recordings.map(serializeRecording),
-    });
+    res.status(200).json({ success: true, data: recordings.map(serializeRecording) });
   } catch (error) {
     next(error);
   }
@@ -69,53 +53,28 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
 // GET /api/recordings/:id
 router.get('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    await getOwnedRecording(req, req.params.id);
     const recording = await prisma.recording.findUnique({
       where: { id: req.params.id },
-      include: {
-        broadcast: true,
-        tracks: true,
-        aiClips: true,
-        transcripts: true,
-      },
+      include: { broadcast: true, tracks: true, aiClips: true, transcripts: true },
     });
-
-    if (!recording) {
-      res.status(404).json({ success: false, error: 'Recording not found' });
-      return;
-    }
-
-    res.status(200).json({
-      success: true,
-      data: serializeRecording(recording),
-    });
+    res.status(200).json({ success: true, data: serializeRecording(recording) });
   } catch (error) {
     next(error);
   }
 });
 
-// GET /api/recordings/:id/download
+// GET /api/recordings/:id/download -> short-lived signed link served by the API
+// (the old MinIO presigned URL pointed at http://minio:9000, which browsers cannot reach)
 router.get('/:id/download', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const recording = await prisma.recording.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!recording || !recording.storagePath) {
-      res.status(404).json({ success: false, error: 'Recording file not found' });
-      return;
-    }
-
-    const presigned = await storageService.getPresignedUrl(recording.storagePath, undefined, 7200);
-    if (!presigned.success || !presigned.data) {
-      res.status(500).json({ success: false, error: 'Failed to generate download URL' });
-      return;
-    }
-
+    const recording = await getOwnedRecording(req, req.params.id);
+    if (!recording.storagePath) throw new HttpError(404, 'Recording file not found');
     res.status(200).json({
       success: true,
       data: {
-        downloadUrl: presigned.data,
-        fileName: `${recording.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.mp4`,
+        downloadUrl: `/api/media/recording-file/${recording.id}?${createSignedQuery(`recording:${recording.id}`, 2 * 3600)}`,
+        fileName: `${recording.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.webm`,
         fileSize: Number(recording.fileSize || 0),
       },
     });
@@ -124,51 +83,48 @@ router.get('/:id/download', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
-// POST /api/recordings/upload (Multipart upload for completed studio broadcasts)
+// POST /api/recordings/upload  (multipart `recording` ≤500MB, or `uploadId` from chunked upload)
 router.post('/upload', upload.single('recording'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  let tmpPath: string | null = null;
   try {
-    if (!req.file) {
-      res.status(400).json({ success: false, error: 'Recording file is required' });
-      return;
+    let fileInfo: { path: string; mimetype: string; size: number } | null = null;
+    if (req.file) fileInfo = { path: req.file.path, mimetype: req.file.mimetype, size: req.file.size };
+    else if (typeof req.body.uploadId === 'string' && req.body.uploadId) fileInfo = await takeCompletedUpload(req, req.body.uploadId);
+    if (!fileInfo) throw new HttpError(400, 'Recording file is required');
+    tmpPath = fileInfo.path;
+    if (!/^video\/(webm|mp4|x-matroska)/i.test(fileInfo.mimetype || '')) {
+      throw new HttpError(400, 'Recording must be a WEBM or MP4 video');
     }
 
-    const title = (req.body.title as string) || `Broadcast Recording ${new Date().toLocaleDateString()}`;
-    const duration = parseInt(req.body.duration as string, 10) || 0;
-    const resolution = (req.body.resolution as string) || '1080p';
-    const workspaceId = await resolveWorkspaceId(req);
+    const title = String(req.body.title || `Broadcast Recording ${new Date().toLocaleDateString()}`).slice(0, 255);
+    const duration = parseInt(String(req.body.duration), 10) || 0;
+    const resolution = String(req.body.resolution || '1080p').slice(0, 20);
 
-    // Resolve or create broadcast record
-    let broadcastId = req.body.broadcastId as string;
-    if (!broadcastId) {
+    let broadcastId: string;
+    let workspaceId: string;
+    if (req.body.broadcastId) {
+      const b = await getAccessibleBroadcast(req, String(req.body.broadcastId), { createForStudio: true });
+      broadcastId = b.id;
+      workspaceId = b.workspaceId;
+    } else {
+      workspaceId = await resolveWorkspaceId(req);
       let studio = await prisma.studio.findFirst({ where: { workspaceId } });
-      if (!studio) {
-        studio = await prisma.studio.create({
-          data: { workspaceId, name: 'Main Studio' },
-        });
-      }
+      if (!studio) studio = await prisma.studio.create({ data: { workspaceId, name: 'Main Studio' } });
       const broadcast = await prisma.broadcast.create({
-        data: {
-          title,
-          studioId: studio.id,
-          workspaceId,
-          status: 'ENDED',
-          endedAt: new Date(),
-        },
+        data: { title, studioId: studio.id, workspaceId, status: 'ENDED', endedAt: new Date() },
       });
       broadcastId = broadcast.id;
     }
 
-    const storageKey = `recordings/${workspaceId}/${broadcastId}-${Date.now()}.webm`;
+    const ext = /mp4/i.test(fileInfo.mimetype) ? 'mp4' : 'webm';
+    const storageKey = `recordings/${workspaceId}/${broadcastId}-${Date.now()}.${ext}`;
     const uploadRes = await storageService.uploadFile({
       key: storageKey,
-      contentType: req.file.mimetype || 'video/webm',
-      body: req.file.buffer,
+      contentType: fileInfo.mimetype || 'video/webm',
+      body: fs.createReadStream(fileInfo.path),
+      contentLength: fileInfo.size,
     });
-
-    if (!uploadRes.success) {
-      res.status(500).json({ success: false, error: uploadRes.error || 'Failed to upload recording to storage' });
-      return;
-    }
+    if (!uploadRes.success) throw new HttpError(500, uploadRes.error || 'Failed to upload recording to storage');
 
     const recording = await prisma.recording.create({
       data: {
@@ -177,18 +133,16 @@ router.post('/upload', upload.single('recording'), async (req: Request, res: Res
         workspaceId,
         duration,
         resolution,
-        fileSize: BigInt(req.file.size),
+        fileSize: BigInt(fileInfo.size),
         storagePath: storageKey,
         status: 'READY',
       },
     });
-
-    res.status(201).json({
-      success: true,
-      data: serializeRecording(recording),
-    });
+    res.status(201).json({ success: true, data: serializeRecording(recording) });
   } catch (error) {
     next(error);
+  } finally {
+    if (tmpPath) await fs.promises.unlink(tmpPath).catch(() => null);
   }
 });
 
@@ -196,32 +150,21 @@ router.post('/upload', upload.single('recording'), async (req: Request, res: Res
 router.patch('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { name } = RenameRecordingSchema.parse(req.body);
-    const updated = await prisma.recording.update({
-      where: { id: req.params.id },
-      data: { title: name },
-    });
-
-    res.status(200).json({
-      success: true,
-      data: serializeRecording(updated),
-    });
+    await getOwnedRecording(req, req.params.id);
+    const updated = await prisma.recording.update({ where: { id: req.params.id }, data: { title: name } });
+    res.status(200).json({ success: true, data: serializeRecording(updated) });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
     next(error);
   }
 });
 
-// DELETE /api/recordings/:id
+// DELETE /api/recordings/:id  (also removes the file from storage)
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    await prisma.recording.delete({
-      where: { id: req.params.id },
-    });
-
-    res.status(200).json({ success: true, data: { id: req.params.id, deleted: true } });
+    const recording = await getOwnedRecording(req, req.params.id);
+    if (recording.storagePath) await storageService.deleteFile(recording.storagePath).catch(() => null);
+    await prisma.recording.delete({ where: { id: recording.id } });
+    res.status(200).json({ success: true, data: { id: recording.id, deleted: true } });
   } catch (error) {
     next(error);
   }

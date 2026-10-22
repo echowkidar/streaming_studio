@@ -2,22 +2,29 @@ import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
-import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { StorageService } from '../services/storage.service';
 import { AssetType } from '@prisma/client';
-import { config } from '../config';
 import https from 'https';
 import http from 'http';
 import { execFile } from 'child_process';
+import { requireAuth } from '../middleware/auth';
+import { HttpError, assertWorkspaceAccess, getAccessibleStudio, resolveWorkspaceId } from '../lib/access';
+import { uploadsSubdir } from '../lib/paths';
+import { streamLocalFile } from '../lib/fileStream';
+import { verifySignedQuery } from '../lib/signedUrl';
+import { takeCompletedUpload } from './upload.routes';
 
 const router = Router();
 const storageService = new StorageService();
 
 // Dedicated local disk storage for studio session media (100% reliable, zero LiveKit data)
-const LOCAL_UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'session-media');
-if (!fs.existsSync(LOCAL_UPLOAD_DIR)) {
-  fs.mkdirSync(LOCAL_UPLOAD_DIR, { recursive: true });
+const LOCAL_UPLOAD_DIR = uploadsSubdir('session-media');
+const UPLOAD_TMP_DIR = uploadsSubdir('tmp-multer');
+
+/** Resolve a `local://name` storage path to a file inside LOCAL_UPLOAD_DIR (no path traversal). */
+function localPathFor(storagePath: string): string {
+  return path.join(LOCAL_UPLOAD_DIR, path.basename(storagePath.replace('local://', '')));
 }
 
 const DUMMY_MEDIA_NAMES = new Set([
@@ -53,8 +60,7 @@ export async function purgeOrphanedAndDummyMedia(workspaceId?: string): Promise<
 
       let isMissingOnDisk = false;
       if (asset.storagePath.startsWith("local://")) {
-        const relPath = asset.storagePath.replace("local://", "");
-        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+        const fullLocalPath = localPathFor(asset.storagePath);
         if (!fs.existsSync(fullLocalPath)) {
           isMissingOnDisk = true;
         } else {
@@ -72,8 +78,7 @@ export async function purgeOrphanedAndDummyMedia(workspaceId?: string): Promise<
 
       if (isDummyName || isMissingOnDisk || isDuplicate) {
         if (asset.storagePath.startsWith("local://") && !isDuplicate) {
-          const relPath = asset.storagePath.replace("local://", "");
-          const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+          const fullLocalPath = localPathFor(asset.storagePath);
           if (fs.existsSync(fullLocalPath)) {
             await fs.promises.unlink(fullLocalPath).catch(() => null);
           }
@@ -113,8 +118,7 @@ export async function deleteSessionMedia(sessionId: string): Promise<number> {
 
     for (const asset of assets) {
       if (asset.storagePath.startsWith('local://')) {
-        const relPath = asset.storagePath.replace('local://', '');
-        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+        const fullLocalPath = localPathFor(asset.storagePath);
         if (fs.existsSync(fullLocalPath)) {
           await fs.promises.unlink(fullLocalPath).catch(() => null);
         }
@@ -136,11 +140,14 @@ export async function deleteSessionMedia(sessionId: string): Promise<number> {
   return count;
 }
 
-const TEN_MINUTES_MS = 10 * 60 * 1000;
+// Temporary (session) media is kept for 6 hours, and never removed while its studio is live.
+const TEMP_MEDIA_TTL_MS = 6 * 60 * 60 * 1000;
 
 setInterval(async () => {
   try {
-    const tenMinutesAgo = new Date(Date.now() - TEN_MINUTES_MS);
+    const tenMinutesAgo = new Date(Date.now() - TEMP_MEDIA_TTL_MS);
+    const { RtmpStreamerService } = await import('../services/rtmp-streamer.service');
+    const streamer = RtmpStreamerService.getInstance();
     const expiredAssets = await prisma.mediaAsset.findMany({
       where: {
         tags: { has: 'temporary' },
@@ -158,8 +165,8 @@ setInterval(async () => {
       const studioId = meta.studioId || '';
       const cleanId = studioId.replace(/^studio-/, '');
 
-      let isBroadcastLive = false;
-      if (cleanId) {
+      let isBroadcastLive = Boolean(cleanId && streamer.getSession(cleanId));
+      if (cleanId && !isBroadcastLive) {
         try {
           const b = await prisma.broadcast.findUnique({
             where: { id: cleanId },
@@ -173,8 +180,7 @@ setInterval(async () => {
 
       if (!isBroadcastLive) {
         if (asset.storagePath.startsWith('local://')) {
-          const relPath = asset.storagePath.replace('local://', '');
-          const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+          const fullLocalPath = localPathFor(asset.storagePath);
           if (fs.existsSync(fullLocalPath)) {
             await fs.promises.unlink(fullLocalPath).catch(() => null);
           }
@@ -192,98 +198,30 @@ setInterval(async () => {
 }, 60000);
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_TMP_DIR),
+    filename: (_req, _file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.part`),
+  }),
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max (bigger files use chunked /api/uploads)
 });
 
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId && reqWsId !== 'default') {
-    try {
-      const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-      if (ws) return ws.id;
-    } catch {
-      return reqWsId;
-    }
-  }
+/** Only these types may be stored and served back from our origin (no HTML/SVG => no stored XSS). */
+const ALLOWED_MIME: Record<string, AssetType> = {
+  'image/png': 'IMAGE',
+  'image/jpeg': 'IMAGE',
+  'image/jpg': 'IMAGE',
+  'image/gif': 'IMAGE',
+  'image/webp': 'IMAGE',
+  'video/mp4': 'VIDEO',
+  'video/webm': 'VIDEO',
+  'video/quicktime': 'VIDEO',
+  'audio/mpeg': 'AUDIO',
+  'audio/mp3': 'AUDIO',
+  'application/pdf': 'PDF',
+};
 
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    try {
-      const token = authHeader.split(' ')[1];
-      const decoded = jwt.decode(token) as { userId?: string } | null;
-      if (decoded?.userId) {
-        let userWs = await prisma.workspace.findFirst({
-          where: { ownerId: decoded.userId },
-        });
-
-        if (!userWs) {
-          const membership = await prisma.workspaceMember.findFirst({
-            where: { userId: decoded.userId },
-            include: { workspace: true },
-          });
-          if (membership?.workspace) {
-            userWs = membership.workspace;
-          }
-        }
-
-        if (!userWs) {
-          const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-          if (user) {
-            userWs = await prisma.workspace.create({
-              data: {
-                name: `${user.name || 'User'}'s Studio`,
-                slug: `ws-${user.id.toLowerCase().slice(-6)}-${Date.now()}`,
-                ownerId: user.id,
-                members: {
-                  create: {
-                    userId: user.id,
-                    role: 'OWNER',
-                  },
-                },
-              },
-            });
-          }
-        }
-
-        if (userWs) return userWs.id;
-      }
-    } catch (err) {
-      console.warn('[Media] Error resolving user workspace from JWT:', err);
-    }
-  }
-
-  try {
-    const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-    if (defaultWs) return defaultWs.id;
-
-    const newWs = await prisma.workspace.create({
-      data: {
-        name: 'Default Workspace',
-        slug: `default-${Date.now()}`,
-        owner: {
-          create: {
-            email: `admin-${Date.now()}@livestudio.io`,
-            passwordHash: 'seeded',
-            name: 'Super Admin',
-            role: 'SUPER_ADMIN',
-          },
-        },
-      },
-    });
-    return newWs.id;
-  } catch (error) {
-    console.warn('[Workspace] Database unavailable during resolveWorkspaceId, using default workspace ID:', error);
-    return 'default-workspace';
-  }
-}
-
-function resolveAssetType(mimeType: string): AssetType {
-  if (mimeType.startsWith('video/')) return 'VIDEO';
-  if (mimeType.startsWith('image/')) return 'IMAGE';
-  if (mimeType.startsWith('audio/')) return 'AUDIO';
-  if (mimeType.includes('pdf')) return 'PDF';
-  return 'IMAGE';
+function resolveAssetType(mimeType: string): AssetType | null {
+  return ALLOWED_MIME[(mimeType || '').toLowerCase().split(';')[0].trim()] || null;
 }
 
 function serializeMediaAsset(asset: any, presignedUrl?: string) {
@@ -330,39 +268,32 @@ const ytStreamUrlCache = new Map<string, CachedYtStream>();
 const inFlightYtResolutions = new Map<string, Promise<CachedYtStream | null>>();
 let ytDlpBootstrapPromise: Promise<string> | null = null;
 
+/** Check that a yt-dlp candidate installed in the image actually runs (`--version`). */
+function probeBinary(bin: string, args: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(bin, args, { timeout: 8000 }, (err) => resolve(!err));
+  });
+}
+
+/** yt-dlp is installed at image build time (see backend/Dockerfile); nothing is downloaded at runtime. */
 async function getOrBootstrapYtDlpBinary(): Promise<string> {
-  const candidates = [
-    '/usr/local/bin/yt-dlp',
-    '/usr/bin/yt-dlp',
-    'yt-dlp',
-    'python3',
-    'python',
-    '/tmp/yt-dlp',
-  ];
-  for (const c of candidates) {
-    if (c.startsWith('/')) {
-      if (fs.existsSync(c)) return c;
-    } else {
-      return c;
-    }
-  }
   if (!ytDlpBootstrapPromise) {
     ytDlpBootstrapPromise = (async () => {
-      try {
-        const resp = await fetch(
-          'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp',
-          { redirect: 'follow', signal: AbortSignal.timeout(10000) }
-        );
-        if (resp.ok) {
-          const buf = Buffer.from(await resp.arrayBuffer());
-          await fs.promises.writeFile('/tmp/yt-dlp', buf, { mode: 0o755 });
-          return '/tmp/yt-dlp';
-        }
-      } catch { }
-      return 'yt-dlp';
+      for (const bin of ['/usr/local/bin/yt-dlp', '/usr/bin/yt-dlp', 'yt-dlp']) {
+        if (bin.startsWith('/') && !fs.existsSync(bin)) continue;
+        if (await probeBinary(bin, ['--version'])) return bin;
+      }
+      if (await probeBinary('python3', ['-m', 'yt_dlp', '--version'])) return 'python3';
+      console.error('[YouTube] yt-dlp is not installed in this image — the yt-dlp fallback is disabled.');
+      ytDlpBootstrapPromise = null; // re-check on next request
+      return '';
     })();
   }
   return ytDlpBootstrapPromise;
+}
+
+function ytDlpArgs(bin: string, args: string[]): string[] {
+  return bin === 'python3' ? ['-m', 'yt_dlp', ...args] : args;
 }
 
 async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStream | null> {
@@ -439,38 +370,17 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
       try {
         const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
         const ytdlpBin = await getOrBootstrapYtDlpBinary();
-        const isPython = ytdlpBin.includes('python');
-        const ytdlpArgs = isPython
-          ? [
-              '-m',
-              'yt_dlp',
-              '--extractor-args',
-              'youtube:player_client=ios,android',
-              '-f',
-              '18/ba/best[ext=mp4]/best',
-              '--print',
-              '%(url)s',
-              '--print',
-              '%(duration)s',
-              '--no-playlist',
-              '--no-check-certificates',
-              '--geo-bypass',
-              watchUrl,
-            ]
-          : [
-              '--extractor-args',
-              'youtube:player_client=ios,android',
-              '-f',
-              '18/ba/best[ext=mp4]/best',
-              '--print',
-              '%(url)s',
-              '--print',
-              '%(duration)s',
-              '--no-playlist',
-              '--no-check-certificates',
-              '--geo-bypass',
-              watchUrl,
-            ];
+        if (!ytdlpBin) throw new Error('yt-dlp unavailable');
+        const ytdlpArgs = ytDlpArgs(ytdlpBin, [
+          '-f',
+          '18/b[ext=mp4]/b',
+          '--print',
+          '%(url)s',
+          '--print',
+          '%(duration)s',
+          '--no-playlist',
+          watchUrl,
+        ]);
 
         const ytdlpResult = await new Promise<{ url: string; durSec: number } | null>((resolve) => {
           execFile(
@@ -944,73 +854,73 @@ router.get('/website/proxy', async (req: Request, res: Response): Promise<void> 
 });
 
 // POST /api/media/upload
-router.post('/upload', upload.single('file'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+// Accepts a multipart `file` (≤500MB) or `uploadId` from the chunked /api/uploads flow (for files > 90MB).
+router.post('/upload', requireAuth, upload.single('file'), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  let tmpPath: string | null = null;
   try {
-    if (!req.file) {
+    let fileInfo: { path: string; originalname: string; mimetype: string; size: number } | null = null;
+    if (req.file) {
+      fileInfo = { path: req.file.path, originalname: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size };
+    } else if (typeof req.body.uploadId === 'string' && req.body.uploadId) {
+      fileInfo = await takeCompletedUpload(req, req.body.uploadId);
+    }
+    if (!fileInfo) {
       res.status(400).json({ success: false, error: 'File is required' });
       return;
     }
+    tmpPath = fileInfo.path;
 
     const workspaceId = await resolveWorkspaceId(req);
-    const mimeType = req.file.mimetype || 'application/octet-stream';
+    const mimeType = (fileInfo.mimetype || 'application/octet-stream').toLowerCase();
     const assetType = resolveAssetType(mimeType);
+    if (!assetType) {
+      res.status(400).json({
+        success: false,
+        error: `File type "${mimeType}" is not allowed. Allowed: PNG, JPEG, GIF, WEBP, MP4, WEBM, MOV, MP3, PDF.`,
+      });
+      return;
+    }
+
+    let studioIdRaw = String(req.body.studioId || req.body.sessionId || req.headers['x-session-id'] || '').trim();
+    if (studioIdRaw) {
+      // Only tag media to a studio the user may use (or a new on-demand studio of theirs).
+      try {
+        await getAccessibleStudio(req, studioIdRaw, { createIfMissing: true });
+      } catch {
+        studioIdRaw = '';
+      }
+    }
 
     await purgeOrphanedAndDummyMedia(workspaceId);
 
     if (assetType === 'VIDEO') {
       const newDuration = req.body.duration ? Math.round(Number(req.body.duration)) : 0;
       const existingVideos = await prisma.mediaAsset.findMany({
-        where: {
-          workspaceId,
-          assetType: 'VIDEO',
-        },
+        where: { workspaceId, assetType: 'VIDEO' },
         select: { metadata: true },
       });
-
       let currentTotalDuration = 0;
       for (const v of existingVideos) {
         const meta = (v.metadata as Record<string, any>) || {};
         currentTotalDuration += Number(meta.duration || 0);
       }
-
       const MAX_TOTAL_DURATION_SEC = 3600;
       if (currentTotalDuration + newDuration > MAX_TOTAL_DURATION_SEC) {
         const remainingSec = Math.max(0, MAX_TOTAL_DURATION_SEC - currentTotalDuration);
-        const remMin = Math.floor(remainingSec / 60);
-        const remSec = remainingSec % 60;
-        const newMin = Math.floor(newDuration / 60);
-        const newSec = newDuration % 60;
         res.status(400).json({
           success: false,
-          error: `Total video duration limit (60 minutes) exceeded! Current total is ${Math.floor(currentTotalDuration / 60)}m. You only have ${remMin}m ${remSec}s remaining, but this video is ${newMin}m ${newSec}s. Please delete an existing video first.`,
+          error: `Total video duration limit (60 minutes) exceeded! Current total is ${Math.floor(currentTotalDuration / 60)}m. You only have ${Math.floor(remainingSec / 60)}m ${remainingSec % 60}s remaining, but this video is ${Math.floor(newDuration / 60)}m ${newDuration % 60}s. Please delete an existing video first.`,
         });
         return;
       }
-
       if (req.body.height && Number(req.body.height) > 1080) {
-        res.status(400).json({
-          success: false,
-          error: 'Video resolution exceeds limit: Maximum 1080p resolution allowed.',
-        });
+        res.status(400).json({ success: false, error: 'Video resolution exceeds limit: Maximum 1080p resolution allowed.' });
         return;
       }
     }
 
     if (assetType === 'AUDIO') {
-      const isMp3 =
-        mimeType === 'audio/mpeg' ||
-        mimeType === 'audio/mp3' ||
-        req.file.originalname.toLowerCase().endsWith('.mp3');
-      if (!isMp3) {
-        res.status(400).json({
-          success: false,
-          error: 'Format not allowed: Only MP3 audio files are permitted to save VPS storage.',
-        });
-        return;
-      }
-      const audioCount = await prisma.mediaAsset.count({
-        where: { workspaceId, assetType: 'AUDIO' },
-      });
+      const audioCount = await prisma.mediaAsset.count({ where: { workspaceId, assetType: 'AUDIO' } });
       if (audioCount >= 2) {
         res.status(400).json({
           success: false,
@@ -1019,28 +929,22 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
         return;
       }
       if (req.body.duration && Number(req.body.duration) > 900) {
-        res.status(400).json({
-          success: false,
-          error: 'Audio duration exceeds limit: Maximum 15 minutes (900 seconds) allowed.',
-        });
+        res.status(400).json({ success: false, error: 'Audio duration exceeds limit: Maximum 15 minutes (900 seconds) allowed.' });
         return;
       }
     }
 
     if (assetType === 'IMAGE' || assetType === 'PDF') {
       const maxSizeBytes = 2 * 1024 * 1024;
-      if (req.file.size > maxSizeBytes) {
+      if (fileInfo.size > maxSizeBytes) {
         res.status(400).json({
           success: false,
-          error: `File size exceeds limit: Maximum 2MB allowed for images and PDFs. Uploaded file is ${(req.file.size / (1024 * 1024)).toFixed(1)}MB.`,
+          error: `File size exceeds limit: Maximum 2MB allowed for images and PDFs. Uploaded file is ${(fileInfo.size / (1024 * 1024)).toFixed(1)}MB.`,
         });
         return;
       }
       const docCount = await prisma.mediaAsset.count({
-        where: {
-          workspaceId,
-          assetType: { in: ['IMAGE', 'PDF'] },
-        },
+        where: { workspaceId, assetType: { in: ['IMAGE', 'PDF'] } },
       });
       if (docCount >= 2) {
         res.status(400).json({
@@ -1051,17 +955,12 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
       }
     }
 
-    const rawStudioId = (req.body.studioId || req.body.sessionId || (req.headers['x-session-id'] as string) || '').trim();
-    const studioId = rawStudioId || 'default';
+    const studioId = studioIdRaw || 'default';
     const cleanStudioId = studioId.replace(/^studio-/, '');
-
-    const cleanFilename = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cleanFilename = fileInfo.originalname.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120);
     const localFileName = `${Date.now()}-${cleanFilename}`;
-    const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, localFileName);
-
-    await fs.promises.writeFile(fullLocalPath, req.file.buffer);
-
-    const storageKey = `local://${localFileName}`;
+    await fs.promises.rename(fileInfo.path, path.join(LOCAL_UPLOAD_DIR, localFileName));
+    tmpPath = null;
 
     const isPersistent =
       req.body.isPersistent === 'true' ||
@@ -1076,11 +975,11 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     const mediaAsset = await prisma.mediaAsset.create({
       data: {
         workspaceId,
-        name: req.body.name || req.file.originalname,
+        name: String(req.body.name || fileInfo.originalname).slice(0, 255),
         assetType,
         mimeType,
-        fileSize: BigInt(req.file.size),
-        storagePath: storageKey,
+        fileSize: BigInt(fileInfo.size),
+        storagePath: `local://${localFileName}`,
         tags,
         metadata: {
           studioId,
@@ -1094,24 +993,27 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
       },
     });
 
-    res.status(201).json({
-      success: true,
-      data: serializeMediaAsset(mediaAsset),
-    });
+    res.status(201).json({ success: true, data: serializeMediaAsset(mediaAsset) });
   } catch (error) {
     next(error);
+  } finally {
+    if (tmpPath) await fs.promises.unlink(tmpPath).catch(() => null);
   }
 });
 
 // GET /api/media
-router.get('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
     const studioId = ((req.query.studioId as string) || (req.headers['x-session-id'] as string) || '').trim();
     const cleanStudioId = studioId.replace(/^studio-/, '');
+    const typeFilter = String(req.query.type || '').toUpperCase();
 
     const assets = await prisma.mediaAsset.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        ...(['VIDEO', 'IMAGE', 'AUDIO', 'PDF'].includes(typeFilter) ? { assetType: typeFilter as AssetType } : {}),
+      },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -1127,104 +1029,111 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
       );
     });
 
-    const serialized = filtered.map((asset) => serializeMediaAsset(asset));
-    res.status(200).json({ success: true, data: serialized });
+    res.status(200).json({ success: true, data: filtered.map((asset) => serializeMediaAsset(asset)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/media/prerecorded-preview/:id?exp&sig  (signed link used by the admin <video> preview)
+router.get('/prerecorded-preview/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!verifySignedQuery(`prerecorded:${req.params.id}`, req.query)) {
+      res.status(403).json({ success: false, error: 'Link expired' });
+      return;
+    }
+    const broadcast = await prisma.broadcast.findUnique({ where: { id: req.params.id } });
+    const videoFilePath = ((broadcast?.settings as Record<string, any>) || {}).videoFilePath as string | undefined;
+    const { PrerecordedStreamerService } = await import('../services/prerecorded-streamer.service');
+    const dir = PrerecordedStreamerService.getInstance().getStorageDir();
+    const safePath = videoFilePath ? path.join(dir, path.basename(videoFilePath)) : '';
+    if (!safePath || !fs.existsSync(safePath)) {
+      res.status(404).json({ success: false, error: 'Video file no longer exists (already auto-deleted)' });
+      return;
+    }
+    await streamLocalFile(req, res, safePath, 'video/mp4');
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/media/recording-file/:id?exp&sig  (signed download link for recordings stored in MinIO)
+router.get('/recording-file/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!verifySignedQuery(`recording:${req.params.id}`, req.query)) {
+      res.status(403).json({ success: false, error: 'Link expired' });
+      return;
+    }
+    const recording = await prisma.recording.findUnique({ where: { id: req.params.id } });
+    if (!recording?.storagePath) {
+      res.status(404).json({ success: false, error: 'Recording file not found' });
+      return;
+    }
+    const fileRes = await storageService.getFileStream(recording.storagePath);
+    if (!fileRes.success || !fileRes.data) {
+      res.status(404).json({ success: false, error: 'Recording file not found in storage' });
+      return;
+    }
+    const safeName = `${recording.title.replace(/[^a-zA-Z0-9_-]/g, '_') || 'recording'}.webm`;
+    res.setHeader('Content-Type', fileRes.data.contentType || 'video/webm');
+    if (fileRes.data.contentLength) res.setHeader('Content-Length', fileRes.data.contentLength);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    (fileRes.data.stream as any).pipe(res);
   } catch (error) {
     next(error);
   }
 });
 
 // GET /api/media/:id
-router.get('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.get('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const asset = await prisma.mediaAsset.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!asset) {
-      res.status(404).json({ success: false, error: 'Media asset not found' });
-      return;
-    }
-
-    res.status(200).json({
-      success: true,
-      data: serializeMediaAsset(asset),
-    });
+    const asset = await prisma.mediaAsset.findUnique({ where: { id: req.params.id } });
+    if (!asset) throw new HttpError(404, 'Media asset not found');
+    await assertWorkspaceAccess(req, asset.workspaceId);
+    res.status(200).json({ success: true, data: serializeMediaAsset(asset) });
   } catch (error) {
     next(error);
   }
 });
 
 // GET /api/media/:id/file
+// Public by unguessable id because it is used directly as <video>/<img> src on the stage and by guests.
 router.get('/:id/file', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const asset = await prisma.mediaAsset.findUnique({
-      where: { id: req.params.id },
-    });
-
+    const asset = await prisma.mediaAsset.findUnique({ where: { id: req.params.id } });
     if (!asset) {
       res.status(404).json({ success: false, error: 'Media asset not found' });
       return;
     }
 
-    if (asset.storagePath.startsWith('local://')) {
-      const relPath = asset.storagePath.replace('local://', '');
-      const fullPath = path.join(LOCAL_UPLOAD_DIR, relPath);
+    // Never let stored files render as HTML/SVG on our origin.
+    const safeType = resolveAssetType(asset.mimeType) ? asset.mimeType : 'application/octet-stream';
+    const extra: Record<string, string> = {
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Cache-Control': 'private, max-age=3600',
+    };
+    if (safeType === 'application/octet-stream') extra['Content-Disposition'] = 'attachment';
 
+    if (asset.storagePath.startsWith('local://')) {
+      const fullPath = localPathFor(asset.storagePath);
       if (!fs.existsSync(fullPath)) {
         res.status(404).json({ success: false, error: 'Local media file not found on disk' });
         return;
       }
-
-      const stat = await fs.promises.stat(fullPath);
-      const fileSize = stat.size;
-      const range = req.headers.range;
-
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-        if (start >= fileSize || end >= fileSize) {
-          res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
-          return;
-        }
-
-        const chunkSize = end - start + 1;
-        const fileStream = fs.createReadStream(fullPath, { start, end });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize,
-          'Content-Type': asset.mimeType || 'video/mp4',
-        });
-        fileStream.pipe(res);
-        return;
-      } else {
-        res.writeHead(200, {
-          'Content-Length': fileSize,
-          'Content-Type': asset.mimeType || 'video/mp4',
-          'Accept-Ranges': 'bytes',
-        });
-        fs.createReadStream(fullPath).pipe(res);
-        return;
-      }
+      await streamLocalFile(req, res, fullPath, safeType, extra);
+      return;
     }
 
     const fileRes = await storageService.getFileStream(asset.storagePath);
     if (!fileRes.success || !fileRes.data) {
-      res.status(500).json({ success: false, error: 'Failed to retrieve media file stream' });
+      res.status(404).json({ success: false, error: 'Failed to retrieve media file stream' });
       return;
     }
-
-    res.setHeader('Content-Type', fileRes.data.contentType || asset.mimeType);
-    if (fileRes.data.contentLength) {
-      res.setHeader('Content-Length', fileRes.data.contentLength);
-    }
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-
+    res.setHeader('Content-Type', safeType);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
+    if (fileRes.data.contentLength) res.setHeader('Content-Length', fileRes.data.contentLength);
     (fileRes.data.stream as any).pipe(res);
   } catch (error) {
     next(error);
@@ -1232,55 +1141,59 @@ router.get('/:id/file', async (req: Request, res: Response, next: NextFunction):
 });
 
 // POST /api/media/cleanup
-router.post('/cleanup', async (req: Request, res: Response): Promise<void> => {
+router.post('/cleanup', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
     const purgedCount = await purgeOrphanedAndDummyMedia(workspaceId);
     res.status(200).json({ success: true, data: { purgedCount } });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    next(error);
   }
 });
 
 // DELETE /api/media/session/:sessionId
-router.delete('/session/:sessionId', async (req: Request, res: Response): Promise<void> => {
+router.delete('/session/:sessionId', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    await getAccessibleStudio(req, req.params.sessionId);
     const count = await deleteSessionMedia(req.params.sessionId);
     res.status(200).json({ success: true, deletedCount: count });
   } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
+    if (error instanceof HttpError && error.status === 404) {
+      res.status(200).json({ success: true, deletedCount: 0 });
+      return;
+    }
+    next(error);
   }
 });
 
 // DELETE /api/media/:id
-router.delete('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.delete('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const asset = await prisma.mediaAsset.findUnique({
-      where: { id: req.params.id },
-    });
+    const asset = await prisma.mediaAsset.findUnique({ where: { id: req.params.id } });
+    if (!asset) throw new HttpError(404, 'Media asset not found');
+    await assertWorkspaceAccess(req, asset.workspaceId);
 
-    if (asset) {
-      if (asset.storagePath.startsWith('local://')) {
-        const relPath = asset.storagePath.replace('local://', '');
-        const fullLocalPath = path.join(LOCAL_UPLOAD_DIR, relPath);
-        if (fs.existsSync(fullLocalPath)) {
-          await fs.promises.unlink(fullLocalPath).catch(() => null);
-        }
-      } else {
-        try {
-          await storageService.deleteFile(asset.storagePath);
-        } catch { }
-      }
-
-      await prisma.mediaAsset.delete({
-        where: { id: req.params.id },
-      });
+    if (asset.storagePath.startsWith('local://')) {
+      await fs.promises.unlink(localPathFor(asset.storagePath)).catch(() => null);
+    } else {
+      await storageService.deleteFile(asset.storagePath).catch(() => null);
     }
-
-    res.status(200).json({ success: true, data: { id: req.params.id, deleted: true } });
+    await prisma.mediaAsset.delete({ where: { id: asset.id } });
+    res.status(200).json({ success: true, data: { id: asset.id, deleted: true } });
   } catch (error) {
     next(error);
   }
 });
+
+// Remove abandoned multer temp files (crashed/aborted uploads)
+setInterval(async () => {
+  try {
+    for (const f of await fs.promises.readdir(UPLOAD_TMP_DIR)) {
+      const full = path.join(UPLOAD_TMP_DIR, f);
+      const st = await fs.promises.stat(full).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > 6 * 3600 * 1000) await fs.promises.unlink(full).catch(() => null);
+    }
+  } catch { }
+}, 30 * 60 * 1000);
 
 export default router;

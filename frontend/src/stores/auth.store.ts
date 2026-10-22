@@ -43,6 +43,15 @@ export const useAuthStore = create<AuthState>()(
       setWorkspaces: (workspaces) => set({ workspaces }),
       logout: () => {
         if (typeof window !== "undefined") {
+          // Revoke the session on the server (fire-and-forget), then forget it locally.
+          const current = localStorage.getItem("livestudio_token");
+          if (current) {
+            fetch("/api/auth/logout", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${current}` },
+              keepalive: true,
+            }).catch(() => undefined);
+          }
           localStorage.removeItem("livestudio_token");
           localStorage.removeItem("livestudio_auth");
         }

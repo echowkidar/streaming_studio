@@ -110,8 +110,18 @@ class StageBroadcaster {
   private workerBlobUrl: string | null = null;
 
   // Strict Sequential FIFO Upload Queue (prevents out-of-order chunks)
-  private chunkQueue: Blob[] = [];
+  private chunkQueue: Array<{ blob: Blob; epoch: number; seq: number }> = [];
   private isUploading = false;
+  // RTMP upload state. Each MediaRecorder run is an "epoch"; chunk seq 0 carries the WebM header.
+  private recorderEpoch = 0;
+  private recorderSeq = 0;
+  private recordingStream: MediaStream | null = null;
+  private recorderMimeType = "video/webm";
+  private isRestartingRecorder = false;
+  private streamStartPayload: Record<string, unknown> | null = null;
+  private onFatalError: ((message: string) => void) | null = null;
+  /** ~15s of 500ms chunks: if uploads fall this far behind, restart instead of growing delay forever. */
+  private readonly MAX_QUEUED_CHUNKS = 30;
 
   // Tracks for LiveKit WebRTC transmission
   private activeVideoTrack: MediaStreamTrack | null = null;
@@ -616,7 +626,7 @@ class StageBroadcaster {
         }
       }
 
-      const combinedStream = new MediaStream(tracks);
+      this.recordingStream = new MediaStream(tracks);
 
       let mimeType = "video/webm;codecs=vp8,opus";
       if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -625,24 +635,9 @@ class StageBroadcaster {
           mimeType = "video/webm";
         }
       }
-
-      this.mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType,
-        videoBitsPerSecond: 2800000,
-        audioBitsPerSecond: 128000,
-      });
-
-      this.mediaRecorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data && e.data.size > 0 && this.activeBroadcastId) {
-          this.enqueueChunk(e.data);
-        }
-      };
-
-      this.mediaRecorder.onerror = (recorderErr) => {
-        console.error("[StageBroadcaster] MediaRecorder error:", recorderErr);
-      };
-
-      this.mediaRecorder.start(500);
+      this.recorderMimeType = mimeType;
+      this.recorderEpoch = Date.now();
+      this.startRecorderRun();
       return true;
     } catch (streamErr) {
       console.error("[StageBroadcaster] Failed to start MediaRecorder stream:", streamErr);
@@ -2246,49 +2241,150 @@ class StageBroadcaster {
     ctx.restore();
   }
 
-  private enqueueChunk(chunk: Blob) {
-    this.chunkQueue.push(chunk);
-    this.processUploadQueue();
+  /** Remember the /stream/start body so the session can be re-created if the API restarts. */
+  public setStreamStartPayload(payload: Record<string, unknown>, onFatalError?: (message: string) => void) {
+    this.streamStartPayload = payload;
+    this.onFatalError = onFatalError || null;
   }
 
+  /** Start one MediaRecorder run (a new epoch); its first chunk is a fresh WebM header. */
+  private startRecorderRun() {
+    if (!this.recordingStream) return;
+    this.recorderSeq = 0;
+    const epoch = this.recorderEpoch;
+    const recorder = new MediaRecorder(this.recordingStream, {
+      mimeType: this.recorderMimeType,
+      videoBitsPerSecond: 2800000,
+      audioBitsPerSecond: 128000,
+    });
+    recorder.ondataavailable = (e: BlobEvent) => {
+      if (e.data && e.data.size > 0 && this.activeBroadcastId && epoch === this.recorderEpoch) {
+        this.chunkQueue.push({ blob: e.data, epoch, seq: this.recorderSeq++ });
+        if (this.chunkQueue.length > this.MAX_QUEUED_CHUNKS) {
+          console.warn("[StageBroadcaster] Upload is falling behind real time — restarting the stream to catch up.");
+          void this.restartRecorder();
+          return;
+        }
+        void this.processUploadQueue();
+      }
+    };
+    recorder.onerror = (recorderErr) => {
+      console.error("[StageBroadcaster] MediaRecorder error:", recorderErr);
+      void this.restartRecorder();
+    };
+    this.mediaRecorder = recorder;
+    recorder.start(500);
+  }
+
+  /** Drop the current run and start a new epoch (server asked for a fresh header, or we fell behind). */
+  private async restartRecorder() {
+    if (this.isRestartingRecorder || !this.isStreamingRtmp) return;
+    this.isRestartingRecorder = true;
+    try {
+      const old = this.mediaRecorder;
+      this.recorderEpoch = Math.max(Date.now(), this.recorderEpoch + 1);
+      this.chunkQueue = [];
+      if (old && old.state !== "inactive") {
+        try {
+          old.stop();
+        } catch { }
+      }
+      this.startRecorderRun();
+    } finally {
+      this.isRestartingRecorder = false;
+    }
+  }
+
+  /** The API lost the session (e.g. it was restarted): create it again, then restart the recorder. */
+  private async recreateServerSession(): Promise<boolean> {
+    if (!this.activeBroadcastId || !this.streamStartPayload) return false;
+    try {
+      const res = await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(this.streamStartPayload),
+      });
+      const json = await res.json().catch(() => ({}));
+      return Boolean(json?.success);
+    } catch {
+      return false;
+    }
+  }
+
+  private failStream(message: string) {
+    console.error("[StageBroadcaster] Live stream stopped:", message);
+    const cb = this.onFatalError;
+    this.stop();
+    if (cb) cb(message);
+  }
+
+  /** Upload chunks strictly in order. A chunk is never silently skipped: on persistent failure we restart the run. */
   private async processUploadQueue() {
     if (this.isUploading || this.chunkQueue.length === 0 || !this.activeBroadcastId) return;
     this.isUploading = true;
+    let consecutiveFailures = 0;
 
-    while (this.chunkQueue.length > 0 && this.isBroadcasting && this.activeBroadcastId) {
-      const chunk = this.chunkQueue[0];
-      let uploaded = false;
-      let retries = 0;
+    try {
+      while (this.chunkQueue.length > 0 && this.isBroadcasting && this.activeBroadcastId) {
+        const item = this.chunkQueue[0];
+        if (item.epoch !== this.recorderEpoch) {
+          this.chunkQueue.shift(); // left over from a run we already abandoned
+          continue;
+        }
 
-      while (!uploaded && retries < 3 && this.isBroadcasting && this.activeBroadcastId) {
-        retries++;
+        let res: Response | null = null;
         try {
-          let token = "";
-          if (typeof window !== "undefined") {
-            token = localStorage.getItem("livestudio_token") || "";
-          }
-          const res = await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
+          res = await fetch(`/api/broadcasts/${this.activeBroadcastId}/stream/chunk`, {
             method: "POST",
             headers: {
               "Content-Type": "application/octet-stream",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              "X-Stream-Epoch": String(item.epoch),
+              "X-Chunk-Seq": String(item.seq),
             },
-            body: chunk,
+            body: item.blob,
           });
-          if (res.ok) {
-            uploaded = true;
-          } else {
-            await new Promise((r) => setTimeout(r, 200));
-          }
         } catch {
-          await new Promise((r) => setTimeout(r, 200));
+          res = null;
         }
+
+        if (res && res.ok) {
+          consecutiveFailures = 0;
+          this.chunkQueue.shift();
+          const json = await res.json().catch(() => ({}));
+          if (json?.restart) {
+            await this.restartRecorder();
+          }
+          continue;
+        }
+
+        if (res && res.status === 409) {
+          // Session gone on the server — re-create it and start a fresh run.
+          const ok = await this.recreateServerSession();
+          if (!ok) {
+            this.failStream("The streaming server lost the live session and it could not be restarted.");
+            return;
+          }
+          await this.restartRecorder();
+          continue;
+        }
+        if (res && (res.status === 410 || res.status === 401 || res.status === 403 || res.status === 404)) {
+          const json = await res.json().catch(() => ({}));
+          this.failStream(json?.error || `Streaming server rejected the stream (HTTP ${res.status}).`);
+          return;
+        }
+
+        // Network error / 5xx / 429: back off and retry the same chunk.
+        consecutiveFailures++;
+        if (consecutiveFailures >= 6) {
+          // ~10s of failures: the run is now too far behind; start a new one once the network is back.
+          consecutiveFailures = 0;
+          await this.restartRecorder();
+        }
+        await new Promise((r) => setTimeout(r, Math.min(2000, 200 * 2 ** consecutiveFailures)));
       }
-
-      this.chunkQueue.shift();
+    } finally {
+      this.isUploading = false;
     }
-
-    this.isUploading = false;
   }
 
   public stop() {
@@ -2296,6 +2392,9 @@ class StageBroadcaster {
     this.activeBroadcastId = null;
     this.chunkQueue = [];
     this.isUploading = false;
+    this.recordingStream = null;
+    this.streamStartPayload = null;
+    this.onFatalError = null;
 
     if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
       try {

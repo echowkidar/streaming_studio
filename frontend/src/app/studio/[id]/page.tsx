@@ -304,24 +304,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
         const statusData = statusRes ? await statusRes.json().catch(() => null) : null;
         const broadcastData = broadcastRes ? await broadcastRes.json().catch(() => null) : null;
 
-        const bSettings = (broadcastData?.data?.settings || {}) as Record<string, any>;
-        if (bSettings?.inviteToken) {
-          setInviteToken(bSettings.inviteToken);
-        } else {
-          // Auto-fetch or generate token for this room (handles on-demand studios like studio-superadmin)
-          fetch("/api/livekit/regenerate-invite", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ broadcastId: params.id, roomName }),
+        // Current guest invite token for this studio (created server-side on first use)
+        fetch(`/api/livekit/invite?roomName=${encodeURIComponent(roomName)}`)
+          .then((r) => r.json())
+          .then((res) => {
+            if (res.success && res.inviteToken && isMounted) {
+              setInviteToken(res.inviteToken);
+            }
           })
-            .then((r) => r.json())
-            .then((res) => {
-              if (res.success && res.inviteToken && isMounted) {
-                setInviteToken(res.inviteToken);
-              }
-            })
-            .catch((err) => console.warn("[Studio] Auto-init invite token warning:", err));
-        }
+          .catch((err) => console.warn("[Studio] Invite token load warning:", err));
 
         const isStreamActive =
           Boolean(statusData?.active) ||
@@ -524,6 +515,15 @@ export default function StudioPage({ params }: { params: { id: string } }) {
       // 3. Start stage canvas recording & chunk streaming directly to backend
       const stageEl = document.getElementById("livestudio-stage-container");
       const started = await stageBroadcaster.start(stageEl, params.id);
+      if (started) {
+        // Lets the broadcaster re-create the server session if the API restarts mid-stream,
+        // and tells us if the stream had to stop for good.
+        stageBroadcaster.setStreamStartPayload({ destinationIds, roomName, directDestinations }, (message) => {
+          setShowMonitor(false);
+          endLive();
+          alert(`❌ Live stream stopped: ${message}`);
+        });
+      }
       if (!started) {
         console.warn("[Studio GoLive] Canvas broadcaster failed to start, stopping backend session");
         await fetch(`/api/broadcasts/${params.id}/stream/stop`, { method: "POST" });
@@ -617,16 +617,22 @@ export default function StudioPage({ params }: { params: { id: string } }) {
     }
   };
 
-  const handleCopyInvite = () => {
+  const handleCopyInvite = async () => {
     let currentToken = inviteToken;
     if (!currentToken) {
-      currentToken = `inv-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 8)}`;
-      setInviteToken(currentToken);
-      fetch("/api/livekit/regenerate-invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ broadcastId: params.id, roomName, forceToken: currentToken }),
-      }).catch((e) => console.warn("Failed to register invite token:", e));
+      try {
+        const res = await fetch(`/api/livekit/invite?roomName=${encodeURIComponent(roomName)}`).then((r) => r.json());
+        if (res.success && res.inviteToken) {
+          currentToken = res.inviteToken;
+          setInviteToken(res.inviteToken);
+        }
+      } catch (e) {
+        console.warn("Failed to load invite token:", e);
+      }
+    }
+    if (!currentToken) {
+      alert("Could not create an invite link. Please check your connection and try again.");
+      return;
     }
     const inviteUrl = `${window.location.origin}/join/${roomName}?token=${currentToken}`;
     navigator.clipboard.writeText(inviteUrl);

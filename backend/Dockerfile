@@ -1,37 +1,40 @@
+# ─── Build ───────────────────────────────────────────────
 FROM node:20-alpine AS builder
-
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 COPY prisma ./prisma/
-
-RUN npm install
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
+RUN npx prisma generate && npm run build && test -f dist/server.js && test -f dist/seed.js
 
-RUN npx prisma generate
-RUN npm run build
-
+# ─── Runtime ─────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Install FFmpeg, Python3, py3-pip, and yt-dlp for Live RTMP Streaming & Direct YouTube MP4 Stage Recording
-RUN apk add --no-cache ffmpeg python3 py3-pip curl ca-certificates && \
-    (python3 -m pip install --no-cache-dir --break-system-packages -U yt-dlp || \
-     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp) || true
+# FFmpeg for RTMP output, yt-dlp for the YouTube fallback.
+# The build fails loudly if yt-dlp cannot be installed (it used to be skipped silently).
+# YouTube changes often: rebuild the image (Portainer "Re-pull image and redeploy" with no cache) to get a fresh yt-dlp.
+RUN apk add --no-cache ffmpeg python3 py3-pip ca-certificates tini openssl \
+ && python3 -m pip install --no-cache-dir --break-system-packages yt-dlp \
+ && yt-dlp --version
 
-
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    UPLOADS_DIR=/app/uploads
 
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-ARG ENTRY_POINT=dist/server.js
-ENV ENTRY_POINT=${ENTRY_POINT}
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+ && mkdir -p /app/uploads \
+ && chown -R node:node /app/uploads
 
-EXPOSE 4000 4001
+USER node
+EXPOSE 4000
 
-CMD ["sh", "-c", "if [ \"$ENTRY_POINT\" = \"ws\" ]; then if [ -f \"dist/ws-server.js\" ]; then node dist/ws-server.js; else node dist/src/ws-server.js; fi; elif [ \"$ENTRY_POINT\" = \"worker\" ]; then if [ -f \"dist/worker-server.js\" ]; then node dist/worker-server.js; else node dist/src/worker-server.js; fi; else npx prisma db push --skip-generate --accept-data-loss || true; if [ -f \"dist/seed.js\" ]; then node dist/seed.js || true; fi; if [ -f \"dist/server.js\" ]; then node dist/server.js; elif [ -f \"dist/src/server.js\" ]; then node dist/src/server.js; else node ${ENTRY_POINT}; fi; fi"]
+ENTRYPOINT ["/sbin/tini", "--", "docker-entrypoint.sh"]

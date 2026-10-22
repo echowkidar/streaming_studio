@@ -5,11 +5,11 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && (tsc prisma/seed.ts --outDir dist --target ES2020 --module CommonJS --esModuleInterop true --skipLibCheck true || true)",
+    "build": "tsc && tsc prisma/seed.ts --outDir dist --target ES2020 --module CommonJS --esModuleInterop true --skipLibCheck true",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",

@@ -1,13 +1,16 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
-import { config } from '../config';
+import { HttpError, cleanStudioId, getAccessibleStudio, getUserWorkspaceIds, resolveWorkspaceId } from '../lib/access';
 
+// Mounted behind requireAuth in server.ts
 const router = Router({ mergeParams: true });
 
+/** Keys inside Studio.settings that only the server may write. */
+const SERVER_OWNED_SETTINGS = ['inviteToken', 'inviteTokenUpdatedAt'];
+
 const StudioSchema = z.object({
-  id: z.string().optional(),
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, 'Invalid studio id').optional(),
   name: z.string().min(1, 'Studio name is required'),
   description: z.string().optional(),
   defaultLayout: z.string().default('solo'),
@@ -17,102 +20,72 @@ const StudioSchema = z.object({
 
 const UpdateStudioSchema = StudioSchema.partial();
 
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
+function mergeSettings(existing: unknown, incoming: Record<string, unknown>): Record<string, unknown> {
+  const current = (existing as Record<string, unknown>) || {};
+  const next: Record<string, unknown> = { ...incoming };
+  for (const key of SERVER_OWNED_SETTINGS) {
+    delete next[key];
+    if (current[key] !== undefined) next[key] = current[key];
   }
+  return next;
+}
 
-  // If user is authenticated with Bearer token, get their personal/assigned workspace
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    try {
-      const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, config.JWT_SECRET) as any;
-      if (decoded?.userId) {
-        const member = await prisma.workspaceMember.findFirst({
-          where: { userId: decoded.userId },
-        });
-        if (member) return member.workspaceId;
-
-        const owned = await prisma.workspace.findFirst({
-          where: { ownerId: decoded.userId },
-        });
-        if (owned) return owned.id;
-      }
-    } catch {}
-  }
-
-  const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (defaultWs) return defaultWs.id;
-
-  const newWs = await prisma.workspace.create({
-    data: {
-      name: 'Default Workspace',
-      slug: `default-${Date.now()}`,
-      owner: {
-        create: {
-          email: `admin-${Date.now()}@livestudio.io`,
-          passwordHash: 'seeded',
-          name: 'Super Admin',
-          role: 'SUPER_ADMIN',
-        },
-      },
-    },
-  });
-  return newWs.id;
+function publicStudio<T extends { settings: unknown }>(studio: T): T {
+  const settings = { ...((studio.settings as Record<string, unknown>) || {}) };
+  return { ...studio, settings };
 }
 
 // POST /api/studios
 router.post('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = StudioSchema.parse(req.body);
-    const workspaceId = data.workspaceId || (await resolveWorkspaceId(req));
+    const workspaceId = await resolveWorkspaceId(req);
 
-    const studio = await prisma.studio.upsert({
-      where: { id: data.id || 'not-found' },
-      update: {
-        name: data.name,
-        description: data.description,
-        defaultLayout: data.defaultLayout,
-        settings: data.settings as any,
-      },
-      create: {
+    if (data.id) {
+      const existing = await prisma.studio.findUnique({ where: { id: data.id } });
+      if (existing) {
+        await getAccessibleStudio(req, data.id); // throws if not ours
+        const updated = await prisma.studio.update({
+          where: { id: data.id },
+          data: {
+            name: data.name,
+            description: data.description,
+            defaultLayout: data.defaultLayout,
+            settings: mergeSettings(existing.settings, data.settings) as any,
+          },
+        });
+        res.status(200).json({ success: true, data: publicStudio(updated) });
+        return;
+      }
+    }
+
+    const studio = await prisma.studio.create({
+      data: {
         ...(data.id ? { id: data.id } : {}),
         workspaceId,
         name: data.name,
         description: data.description,
         defaultLayout: data.defaultLayout,
-        settings: data.settings as any,
+        settings: mergeSettings({}, data.settings) as any,
       },
     });
-
-    res.status(201).json({ success: true, data: studio });
+    res.status(201).json({ success: true, data: publicStudio(studio) });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
     next(error);
   }
 });
 
-// GET /api/studios
+// GET /api/studios  (all studios in the caller's workspaces)
 router.get('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const workspaceId = await resolveWorkspaceId(req);
+    const ids = await getUserWorkspaceIds(req.user!.id);
+    if (ids.length === 0) ids.push(await resolveWorkspaceId(req));
     const studios = await prisma.studio.findMany({
-      where: { workspaceId },
-      include: {
-        _count: {
-          select: { broadcasts: true },
-        },
-      },
+      where: { workspaceId: { in: ids } },
+      include: { _count: { select: { broadcasts: true } } },
       orderBy: { createdAt: 'desc' },
     });
-
-    res.status(200).json({ success: true, data: studios });
+    res.status(200).json({ success: true, data: studios.map(publicStudio) });
   } catch (error) {
     next(error);
   }
@@ -121,57 +94,37 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
 // GET /api/studios/:studioId
 router.get('/:studioId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const studio = await prisma.studio.findUnique({
-      where: { id: req.params.studioId },
-      include: {
-        broadcasts: {
-          take: 5,
-          orderBy: { createdAt: 'desc' },
-        },
-      },
+    const studio = await getAccessibleStudio(req, req.params.studioId);
+    const broadcasts = await prisma.broadcast.findMany({
+      where: { studioId: studio.id },
+      take: 5,
+      orderBy: { createdAt: 'desc' },
     });
-
-    if (!studio) {
-      res.status(404).json({ success: false, error: 'Studio not found' });
-      return;
-    }
-
-    res.status(200).json({ success: true, data: studio });
+    res.status(200).json({ success: true, data: { ...publicStudio(studio), broadcasts } });
   } catch (error) {
     next(error);
   }
 });
 
-// PUT /api/studios/:studioId
+// PUT /api/studios/:studioId  (auto-save of layout/scenes; creates on-demand studios)
 router.put('/:studioId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = UpdateStudioSchema.parse(req.body);
-    const workspaceId = await resolveWorkspaceId(req);
+    const id = cleanStudioId(req.params.studioId);
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) throw new HttpError(400, 'Invalid studio id');
 
-    const updated = await prisma.studio.upsert({
-      where: { id: req.params.studioId },
-      update: {
+    const studio = await getAccessibleStudio(req, id, { createIfMissing: true, name: data.name || id });
+    const updated = await prisma.studio.update({
+      where: { id: studio.id },
+      data: {
         ...(data.name ? { name: data.name } : {}),
         ...(data.description !== undefined ? { description: data.description } : {}),
         ...(data.defaultLayout ? { defaultLayout: data.defaultLayout } : {}),
-        ...(data.settings ? { settings: data.settings as any } : {}),
-      },
-      create: {
-        id: req.params.studioId,
-        workspaceId,
-        name: data.name || req.params.studioId,
-        description: data.description || '',
-        defaultLayout: data.defaultLayout || 'solo',
-        settings: (data.settings as any) || {},
+        ...(data.settings ? { settings: mergeSettings(studio.settings, data.settings) as any } : {}),
       },
     });
-
-    res.status(200).json({ success: true, data: updated });
+    res.status(200).json({ success: true, data: { id: updated.id, updatedAt: updated.updatedAt } });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
     next(error);
   }
 });
@@ -179,11 +132,17 @@ router.put('/:studioId', async (req: Request, res: Response, next: NextFunction)
 // DELETE /api/studios/:studioId
 router.delete('/:studioId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    await prisma.studio.delete({
-      where: { id: req.params.studioId },
-    });
-
-    res.status(200).json({ success: true, data: { id: req.params.studioId, deleted: true } });
+    const studio = await getAccessibleStudio(req, req.params.studioId);
+    if (await prisma.broadcast.count({ where: { studioId: studio.id, status: 'LIVE' } })) {
+      throw new HttpError(409, 'This studio is live right now. End the broadcast first.');
+    }
+    // Broadcast.studio is onDelete: Restrict. Remove empty broadcasts, but never cascade-delete recordings.
+    await prisma.broadcast.deleteMany({ where: { studioId: studio.id, recordings: { none: {} } } });
+    if (await prisma.broadcast.count({ where: { studioId: studio.id } })) {
+      throw new HttpError(409, 'This studio still has recordings. Delete them from Recordings first.');
+    }
+    await prisma.studio.delete({ where: { id: studio.id } });
+    res.status(200).json({ success: true, data: { id: studio.id, deleted: true } });
   } catch (error) {
     next(error);
   }

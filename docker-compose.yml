@@ -1,8 +1,11 @@
-version: '3.8'
-
 # ═══════════════════════════════════════════════════════════
 # LiveStudio — Self-Hosted Live Streaming Studio
-# Docker Compose Stack
+# Docker Compose Stack (Portainer: Stacks -> Repository)
+#
+# Required stack environment variables (no insecure defaults any more):
+#   POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, JWT_SECRET, ENCRYPTION_KEY,
+#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, APP_URL
+# Recommended on first deploy: ADMIN_EMAIL, ADMIN_PASSWORD
 # ═══════════════════════════════════════════════════════════
 
 services:
@@ -11,13 +14,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* values are compiled into the browser bundle at BUILD time.
+      args:
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-LiveStudio}
+        NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-}
     container_name: livestudio-frontend
     restart: unless-stopped
-    environment:
-      - NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME:-LiveStudio}
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-/ws}
-      - NEXT_PUBLIC_LIVEKIT_URL=${LIVEKIT_URL:-${NEXT_PUBLIC_LIVEKIT_URL:-/livekit}}
     depends_on:
       api:
         condition: service_healthy
@@ -30,7 +32,6 @@ services:
       retries: 5
       start_period: 30s
 
-
   # ─── Backend API (Express + TypeScript) ──────────────────
   api:
     build:
@@ -39,39 +40,36 @@ services:
     container_name: livestudio-api
     restart: unless-stopped
     environment:
-      - NODE_ENV=${NODE_ENV:-production}
+      - NODE_ENV=production
       - APP_NAME=${APP_NAME:-LiveStudio}
-      - APP_URL=${APP_URL:-https://studio.example.com}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
-      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
-      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
-      - POSTGRES_HOST=postgres
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
+      - APP_URL=${APP_URL:?APP_URL is required, e.g. https://livestudio.example.com}
+      - CORS_ORIGIN=${CORS_ORIGIN:-}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
-      - LIVEKIT_URL=${LIVEKIT_URL:-}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
+      - LIVEKIT_URL=${LIVEKIT_URL:?LIVEKIT_URL is required}
       - LIVEKIT_HTTP_URL=${LIVEKIT_HTTP_URL:-}
-      - JWT_SECRET=${JWT_SECRET:-default_jwt_secret_livestudio_2024}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-default_jwt_refresh_secret_livestudio_2024}
-      - JWT_EXPIRY=${JWT_EXPIRY:-15m}
-      - JWT_REFRESH_EXPIRY=${JWT_REFRESH_EXPIRY:-7d}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
-      - SMTP_HOST=${SMTP_HOST}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required (openssl rand -hex 32)}
+      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (openssl rand -hex 32)}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-true}
+      - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - SMTP_FROM=${SMTP_FROM}
-      - AI_PROVIDER=${AI_PROVIDER:-local}
-      - AI_API_KEY=${AI_API_KEY}
-      - PORT=${API_PORT:-4000}
-      - API_PORT=${API_PORT:-4000}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - PORT=4000
+      - UPLOADS_DIR=/app/uploads
+    volumes:
+      # Session media, pre-recorded videos and chunked uploads survive redeploys.
+      - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,86 +80,11 @@ services:
     networks:
       - livestudio
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4000/health || curl -sf http://127.0.0.1:4000/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 40s
-
-  # ─── WebSocket Server (Socket.IO) ───────────────────────
-  websocket:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        - ENTRY_POINT=ws
-    container_name: livestudio-websocket
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=${NODE_ENV:-production}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
-      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
-      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
-      - POSTGRES_HOST=postgres
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - JWT_SECRET=${JWT_SECRET:-default_jwt_secret_livestudio_2024}
-      - PORT=${WS_PORT:-4001}
-      - WS_PORT=${WS_PORT:-4001}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - livestudio
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4001/health || curl -sf http://127.0.0.1:4001/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-
-  # ─── Background Worker (BullMQ) ─────────────────────────
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      args:
-        - ENTRY_POINT=worker
-    container_name: livestudio-worker
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=${NODE_ENV:-production}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-livestudio}:${POSTGRES_PASSWORD:-livestudio_db_pass_2024}@postgres:5432/${POSTGRES_DB:-livestudio}?schema=public}
-      - POSTGRES_USER=${POSTGRES_USER:-livestudio}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
-      - POSTGRES_DB=${POSTGRES_DB:-livestudio}
-      - POSTGRES_HOST=postgres
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
-      - MINIO_BUCKET=${MINIO_BUCKET:-livestudio}
-      - LIVEKIT_URL=${LIVEKIT_URL:-}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
-      - LIVEKIT_HTTP_URL=${LIVEKIT_HTTP_URL:-}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef}
-      - AI_PROVIDER=${AI_PROVIDER:-local}
-      - AI_API_KEY=${AI_API_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_started
-    networks:
-      - livestudio
+      start_period: 60s
 
   # ─── PostgreSQL ──────────────────────────────────────────
   postgres:
@@ -171,7 +94,7 @@ services:
     environment:
       - POSTGRES_DB=${POSTGRES_DB:-livestudio}
       - POSTGRES_USER=${POSTGRES_USER:-livestudio}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livestudio_db_pass_2024}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -185,7 +108,7 @@ services:
 
   # ─── Redis ──────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: livestudio-redis
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -200,7 +123,10 @@ services:
       retries: 5
       start_period: 10s
 
-  # ─── MinIO (S3-Compatible Object Storage) ───────────────
+  # ─── MinIO (S3-Compatible Object Storage for recordings) ─
+  # Chainguard only publishes a free ":latest" tag. To pin, replace with an @sha256 digest
+  # (see `docker image inspect cgr.dev/chainguard/minio:latest --format '{{index .RepoDigests 0}}'`).
+  # No healthcheck: the image has no shell/curl, and the old "|| true" check always reported healthy.
   minio:
     image: cgr.dev/chainguard/minio:latest
     container_name: livestudio-minio
@@ -209,106 +135,42 @@ services:
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-livestudio}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-livestudio_minio_pass}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
     volumes:
       - minio_data:/data
     networks:
       - livestudio
-    healthcheck:
-      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/127.0.0.1/9000 || curl -sf http://127.0.0.1:9000/minio/health/live || wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live || true"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
-  # ─── LiveKit (WebRTC SFU - Optional local fallback) ─────
+  # ─── LiveKit (optional local fallback; production uses the VPS) ─
   livekit:
     profiles: ["local-livekit"]
-    build:
-      context: ./livekit
-      dockerfile: Dockerfile
+    image: livekit/livekit-server:v1.13.9
     container_name: livestudio-livekit
     restart: unless-stopped
-    command: ["--config", "/etc/livekit.yaml", "--keys", "${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"]
+    command: ["--config", "/etc/livekit.yaml"]
     environment:
-      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-APIxxxxxxxxxx}: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}"
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
     ports:
       - "7880:7880"
       - "7881:7881/tcp"
       - "7882:7882/udp"
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - livestudio
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:7880"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # ─── LiveKit Egress (Optional local fallback) ───────────
-  egress:
-    profiles: ["local-livekit"]
-    image: livekit/egress:latest
-    container_name: livestudio-egress
-    restart: unless-stopped
-    cap_add:
-      - SYS_ADMIN
-    shm_size: 2gb
-    environment:
-      EGRESS_CONFIG_BODY: |
-        api_key: ${LIVEKIT_API_KEY:-APIxxxxxxxxxx}
-        api_secret: ${LIVEKIT_API_SECRET:-CHANGE_ME_LIVEKIT_SECRET}
-        ws_url: ws://livekit:7880
-        insecure: true
-        log_level: info
-        redis:
-          address: redis:6379
-          db: 0
-        template_port: 7980
-    depends_on:
-      redis:
-        condition: service_healthy
-      livekit:
-        condition: service_healthy
     networks:
       - livestudio
 
-  # ─── coturn (TURN Server - Optional local fallback) ─────
-  coturn:
-    profiles: ["local-livekit"]
-    build:
-      context: ./coturn
-      dockerfile: Dockerfile
-    container_name: livestudio-coturn
-    restart: unless-stopped
-    ports:
-      - "${TURN_PORT:-3478}:3478/tcp"
-      - "${TURN_PORT:-3478}:3478/udp"
-      - "${TURN_TLS_PORT:-5349}:5349/tcp"
-      - "${TURN_TLS_PORT:-5349}:5349/udp"
-      - "49152-49200:49152-49200/udp"
-    networks:
-      - livestudio
-
-  # ─── Nginx (Reverse Proxy) ──────────────────────────────
+  # ─── Nginx (Reverse Proxy, reached by cloudflared) ──────
   nginx:
     build:
       context: ./nginx
       dockerfile: Dockerfile
     container_name: livestudio-nginx
     restart: unless-stopped
-    volumes:
-      - nginx_certs:/etc/nginx/certs
     ports:
       - "${NGINX_PORT:-8088}:80"
     depends_on:
       - frontend
       - api
-      - websocket
-      - minio
     networks:
       - livestudio
       - proxy
@@ -319,7 +181,6 @@ services:
       retries: 3
       start_period: 10s
 
-# ─── Networks ──────────────────────────────────────────────
 networks:
   livestudio:
     driver: bridge
@@ -328,9 +189,6 @@ networks:
     name: npm-network
     external: true
 
-
-
-# ─── Volumes ──────────────────────────────────────────────
 volumes:
   postgres_data:
     name: livestudio_postgres_data
@@ -338,5 +196,5 @@ volumes:
     name: livestudio_redis_data
   minio_data:
     name: livestudio_minio_data
-  nginx_certs:
-    name: livestudio_nginx_certs
+  uploads_data:
+    name: livestudio_uploads_data

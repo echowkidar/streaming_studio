@@ -50,7 +50,7 @@ export class StorageService {
     }
   }
 
-  public async uploadFile(input: Omit<FileUploadInput, 'bucket'> & { bucket?: string }): Promise<ServiceResponse<{ url: string }>> {
+  public async uploadFile(input: Omit<FileUploadInput, 'bucket'> & { bucket?: string; contentLength?: number }): Promise<ServiceResponse<{ url: string }>> {
     try {
       const bucket = input.bucket ?? this.defaultBucket;
       await this.ensureBucket(bucket);
@@ -60,6 +60,7 @@ export class StorageService {
         Key: input.key,
         Body: input.body,
         ContentType: input.contentType,
+        ...(input.contentLength ? { ContentLength: input.contentLength } : {}),
       });
 
       try {

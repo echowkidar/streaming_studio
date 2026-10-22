@@ -1,5 +1,6 @@
 "use client";
 
+import { appendFileOrChunked } from "@/lib/chunkedUpload";
 import React, { useState, useRef, useMemo } from "react";
 import {
   PlaySquare,
@@ -320,7 +321,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ studioId }) => {
     setIsUploading(true);
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      await appendFileOrChunked(formData, "file", file);
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
       formData.append("studioId", effectiveStudioId);

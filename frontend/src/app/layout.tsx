@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthFetchBootstrap } from "@/components/AuthFetchBootstrap";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans bg-pattern min-h-screen text-slate-50 antialiased selection:bg-indigo-500/30`}>
+        <AuthFetchBootstrap />
         {children}
       </body>
     </html>

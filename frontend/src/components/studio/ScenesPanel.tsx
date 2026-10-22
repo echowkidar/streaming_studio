@@ -1,8 +1,9 @@
 "use client";
 
+import { appendFileOrChunked } from "@/lib/chunkedUpload";
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout, MediaFileItem, isDummyOrBrokenMediaItem, sanitizeAndDeduplicateMediaList } from "@/stores/studio.store";
+import { useStudioStore, StudioScene, StudioLayout, persistStudioLayout, MediaFileItem, isDummyOrBrokenMediaItem, sanitizeAndDeduplicateMediaList, getAutoSaveStatus, AutoSaveStatus } from "@/stores/studio.store";
 import { SlideDeckCreatorModal } from "./SlideDeckCreatorModal";
 import { YouTubeLibraryModal } from "./YouTubeLibraryModal";
 import { TacticalMapModal } from "./TacticalMapModal";
@@ -259,6 +260,17 @@ interface ScenesPanelProps {
 
 export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const [isMounted, setIsMounted] = useState(false);
+  const [autoSave, setAutoSave] = useState<{ status: AutoSaveStatus; message?: string }>(() => ({
+    status: getAutoSaveStatus(),
+  }));
+  useEffect(() => {
+    const onStatus = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      setAutoSave({ status: detail.status, message: detail.message });
+    };
+    window.addEventListener("livestudio:autosave", onStatus);
+    return () => window.removeEventListener("livestudio:autosave", onStatus);
+  }, []);
   useEffect(() => {
     setIsMounted(true);
   }, []);
@@ -624,7 +636,7 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
   const uploadToServer = async (file: File, item: any, sceneId: string) => {
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      await appendFileOrChunked(formData, "file", file);
       formData.append("name", file.name);
       formData.append("assetType", item.type.toUpperCase());
       const currentStudioId = useStudioStore.getState().currentStudioId || "";
@@ -688,9 +700,15 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
             ...(shouldUpdateSecondary ? { secondaryMedia: updatedItem } : {}),
           });
         }
+      } else {
+        const json = await res.json().catch(() => ({}));
+        // Previously silent: the scene kept a browser-only copy that guests and other devices never saw.
+        alert(
+          `"${file.name}" could not be saved to the server, so it will only work in this browser.\n\n${json?.error || `HTTP ${res.status}`}`
+        );
       }
-    } catch {
-      // Backend upload skipped or offline; local data URL continues working smoothly
+    } catch (err) {
+      alert(`"${file.name}" could not be uploaded (${err instanceof Error ? err.message : "network error"}). It will only work in this browser.`);
     } finally {
       if (mediaFileInputRef.current) mediaFileInputRef.current.value = "";
     }
@@ -1197,11 +1215,32 @@ export const ScenesPanel: React.FC<ScenesPanelProps> = ({ className }) => {
 
         <div className="flex items-center gap-1.5">
           <div
-            className="flex items-center gap-1 text-[9px] text-emerald-400/90 font-medium bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded select-none"
-            title="All scene changes are automatically saved to this studio"
+            className={cn(
+              "flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded select-none border",
+              autoSave.status === "error"
+                ? "text-rose-300 bg-rose-500/10 border-rose-500/30"
+                : autoSave.status === "saving"
+                ? "text-amber-300 bg-amber-500/10 border-amber-500/25"
+                : "text-emerald-400/90 bg-emerald-500/10 border-emerald-500/25"
+            )}
+            title={
+              autoSave.status === "error"
+                ? `Not saved to the server: ${autoSave.message || "unknown error"}`
+                : autoSave.status === "local-only"
+                ? "Saved in this browser only"
+                : "All scene changes are automatically saved to this studio"
+            }
           >
-            <Check className="w-2.5 h-2.5 text-emerald-400" />
-            <span>Auto-Saved</span>
+            <Check className="w-2.5 h-2.5" />
+            <span>
+              {autoSave.status === "error"
+                ? "Save failed"
+                : autoSave.status === "saving"
+                ? "Saving…"
+                : autoSave.status === "local-only"
+                ? "Saved locally"
+                : "Auto-Saved"}
+            </span>
           </div>
 
           {/* Collapse Button */}

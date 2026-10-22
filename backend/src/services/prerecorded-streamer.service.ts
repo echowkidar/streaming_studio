@@ -3,35 +3,38 @@ import path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { prisma } from '../lib/prisma';
-import { RtmpStreamerService } from './rtmp-streamer.service';
+import { RtmpStreamerService, redactRtmp, rtmpOutputArgs } from './rtmp-streamer.service';
+import { uploadsSubdir } from '../lib/paths';
 
 export interface ScheduleOptions {
   broadcastId: string;
   title: string;
   workspaceId: string;
   videoFilePath: string;
+  fileName?: string;
+  /** true when the file was uploaded only for this schedule (deleted afterwards); false for library media */
+  ownsVideoFile?: boolean;
   durationSeconds: number;
   scheduledAt: Date;
   destinationIds: string[];
-  directDestinations?: Array<{ name: string; rtmpUrl: string; streamKey: string }>;
+  directDestinations?: Array<{ name?: string; rtmpUrl: string; streamKey: string }>;
 }
+
+/** A scheduled start that was missed (server was down) is still started if we are at most this late. */
+const MISSED_START_GRACE_MS = 10 * 60 * 1000;
 
 export class PrerecordedStreamerService extends EventEmitter {
   private static instance: PrerecordedStreamerService;
   private readonly scheduledTimers: Map<string, NodeJS.Timeout> = new Map();
-  private readonly activeStreams: Map<string, ChildProcess[]> = new Map();
+  private readonly activeStreams: Map<string, ChildProcess> = new Map();
   private readonly storageDir: string;
 
   private constructor() {
     super();
-    this.storageDir = path.join(process.cwd(), 'uploads', 'prerecorded');
-    if (!fs.existsSync(this.storageDir)) {
-      fs.mkdirSync(this.storageDir, { recursive: true });
-    }
-    // Start 24h failure/orphaned cleanup sweep every 60 minutes
-    setInterval(() => this.runGarbageCollectionSweep(), 60 * 60 * 1000);
-    this.runGarbageCollectionSweep();
-    this.restorePendingSchedules();
+    this.storageDir = uploadsSubdir('prerecorded');
+    setInterval(() => void this.runGarbageCollectionSweep(), 60 * 60 * 1000);
+    void this.runGarbageCollectionSweep();
+    void this.restorePendingSchedules();
   }
 
   public static getInstance(): PrerecordedStreamerService {
@@ -45,75 +48,59 @@ export class PrerecordedStreamerService extends EventEmitter {
     return this.storageDir;
   }
 
-  /**
-   * Schedule a pre-recorded broadcast with strict 40-minute limit and 72-hour window
-   */
+  private async mergeSettings(broadcastId: string, patch: Record<string, unknown>) {
+    const b = await prisma.broadcast.findUnique({ where: { id: broadcastId }, select: { settings: true } });
+    return { ...((b?.settings as Record<string, unknown>) || {}), ...patch };
+  }
+
   public async scheduleBroadcast(options: ScheduleOptions): Promise<{ success: boolean; error?: string }> {
     try {
-      // 1. Validate max duration: strictly <= 40 minutes (2400s)
       if (options.durationSeconds > 2400) {
         return {
           success: false,
-          error: `Video duration exceeds 40 minutes limit (${Math.round(options.durationSeconds / 60)}m ${options.durationSeconds % 60}s). Please upload or select a video of 40 minutes or less.`,
+          error: `Video duration exceeds 40 minutes limit (${Math.round(options.durationSeconds / 60)}m). Please upload or select a video of 40 minutes or less.`,
         };
       }
-
-      // 2. Validate max schedule window: strictly <= 72 hours from now
       const now = Date.now();
       const schedTime = options.scheduledAt.getTime();
-      const maxAllowed = now + 72 * 60 * 60 * 1000; // 72 hours in ms
-
-      if (schedTime > maxAllowed) {
-        return {
-          success: false,
-          error: 'Broadcast cannot be scheduled more than 72 hours (3 days) in advance.',
-        };
+      if (schedTime > now + 72 * 60 * 60 * 1000) {
+        return { success: false, error: 'Broadcast cannot be scheduled more than 72 hours (3 days) in advance.' };
       }
-
       if (schedTime < now - 60000) {
-        return {
-          success: false,
-          error: 'Scheduled time must be in the future.',
-        };
+        return { success: false, error: 'Scheduled time must be in the future.' };
       }
 
-      // 3. Update Broadcast in Database
       await prisma.broadcast.update({
         where: { id: options.broadcastId },
         data: {
           title: options.title,
           status: 'SCHEDULED',
           scheduledAt: options.scheduledAt,
-          settings: {
+          settings: (await this.mergeSettings(options.broadcastId, {
             isPrerecorded: true,
             videoFilePath: options.videoFilePath,
+            fileName: options.fileName || path.basename(options.videoFilePath),
+            ownsVideoFile: Boolean(options.ownsVideoFile),
             durationSeconds: options.durationSeconds,
             destinationIds: options.destinationIds,
             directDestinations: options.directDestinations || [],
-          },
+          })) as any,
         },
       });
 
-      // 4. Register in ScheduledJob model for audit & recovery
-      await prisma.scheduledJob.create({
-        data: {
-          jobType: 'PRERECORDED_BROADCAST',
-          scheduledAt: options.scheduledAt,
-          status: 'QUEUED',
-          payload: {
-            broadcastId: options.broadcastId,
-            videoFilePath: options.videoFilePath,
-            durationSeconds: options.durationSeconds,
-            destinationIds: options.destinationIds,
-            directDestinations: options.directDestinations || [],
+      await prisma.scheduledJob
+        .create({
+          data: {
+            jobType: 'PRERECORDED_BROADCAST',
+            scheduledAt: options.scheduledAt,
+            status: 'QUEUED',
+            payload: { broadcastId: options.broadcastId },
           },
-        },
-      });
+        })
+        .catch(() => null);
 
-      // 5. Setup execution timer
       this.armBroadcastTimer(options.broadcastId, options.scheduledAt);
-
-      console.log(`[PreRecordedStreamer] Scheduled broadcast "${options.title}" (${options.broadcastId}) for ${options.scheduledAt.toISOString()} (Duration: ${options.durationSeconds}s)`);
+      console.log(`[PreRecordedStreamer] Scheduled "${options.title}" (${options.broadcastId}) for ${options.scheduledAt.toISOString()}`);
       return { success: true };
     } catch (err: any) {
       console.error('[PreRecordedStreamer] scheduleBroadcast error:', err);
@@ -121,157 +108,104 @@ export class PrerecordedStreamerService extends EventEmitter {
     }
   }
 
-  /**
-   * Arm a timer to trigger the broadcast at the exact scheduled timestamp
-   */
   private armBroadcastTimer(broadcastId: string, scheduledAt: Date) {
-    if (this.scheduledTimers.has(broadcastId)) {
-      clearTimeout(this.scheduledTimers.get(broadcastId)!);
-      this.scheduledTimers.delete(broadcastId);
-    }
-
+    const existing = this.scheduledTimers.get(broadcastId);
+    if (existing) clearTimeout(existing);
     const delayMs = Math.max(0, scheduledAt.getTime() - Date.now());
-
-    // If within 24 days (Node setTimeout max is ~24.8 days, 72h is well within limit)
-    const timer = setTimeout(() => {
-      this.startPrerecordedStream(broadcastId);
-    }, delayMs);
-
-    this.scheduledTimers.set(broadcastId, timer);
+    this.scheduledTimers.set(
+      broadcastId,
+      setTimeout(() => void this.startPrerecordedStream(broadcastId), delayMs)
+    );
   }
 
-  /**
-   * Start streaming pre-recorded video directly to RTMP destinations via FFmpeg
-   */
+  private async deleteOwnedFile(settings: Record<string, any>) {
+    const filePath = settings.videoFilePath as string | undefined;
+    if (!filePath || !settings.ownsVideoFile) return; // never delete the user's media-library file
+    const safe = path.join(this.storageDir, path.basename(filePath));
+    if (safe !== filePath) return;
+    await fs.promises.unlink(safe).catch(() => null);
+  }
+
   public async startPrerecordedStream(broadcastId: string): Promise<void> {
+    this.scheduledTimers.delete(broadcastId);
     try {
-      this.scheduledTimers.delete(broadcastId);
-
-      const broadcast = await prisma.broadcast.findUnique({
-        where: { id: broadcastId },
-        include: { workspace: true },
-      });
-
-      if (!broadcast) {
-        console.warn(`[PreRecordedStreamer] Broadcast ${broadcastId} not found`);
-        return;
-      }
+      const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
+      if (!broadcast || broadcast.status !== 'SCHEDULED') return;
 
       const settings = (broadcast.settings as Record<string, any>) || {};
       const videoFilePath = settings.videoFilePath as string;
-
       if (!videoFilePath || !fs.existsSync(videoFilePath)) {
-        console.error(`[PreRecordedStreamer] Video file missing on VPS for broadcast ${broadcastId}: ${videoFilePath}`);
-        await this.handleBroadcastFailure(broadcastId, 'Video file missing from VPS storage', videoFilePath);
+        await this.handleBroadcastFailure(broadcastId, 'Video file missing from server storage');
         return;
       }
 
-      // Resolve RTMP destination URLs
-      const streamer = RtmpStreamerService.getInstance();
-      const rtmpUrls = await streamer.resolveDestinationUrls(
+      const rtmpUrls = await RtmpStreamerService.getInstance().resolveDestinationUrls(
         settings.destinationIds || [],
-        settings.directDestinations || []
+        settings.directDestinations || [],
+        [broadcast.workspaceId]
       );
-
       if (rtmpUrls.length === 0) {
-        console.error(`[PreRecordedStreamer] No valid RTMP destinations found for broadcast ${broadcastId}`);
-        await this.handleBroadcastFailure(broadcastId, 'No valid RTMP destinations found', videoFilePath);
+        await this.handleBroadcastFailure(broadcastId, 'No valid RTMP destinations found');
         return;
       }
 
-      // Update broadcast state to LIVE
-      await prisma.broadcast.update({
-        where: { id: broadcastId },
-        data: {
-          status: 'LIVE',
-          startedAt: new Date(),
-        },
+      await prisma.broadcast.update({ where: { id: broadcastId }, data: { status: 'LIVE', startedAt: new Date() } });
+      console.log(`[PreRecordedStreamer] Going live with "${broadcast.title}" -> ${rtmpUrls.length} destination(s)`);
+
+      // One read + one encode, fanned out to every destination with the tee muxer.
+      const args = [
+        '-hide_banner',
+        '-re',
+        '-i', videoFilePath,
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-b:v', '3000k',
+        '-maxrate', '3500k',
+        '-bufsize', '6000k',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-r', '30',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-rw_timeout', '15000000',
+        ...rtmpOutputArgs(rtmpUrls),
+      ];
+
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      this.activeStreams.set(broadcastId, proc);
+      let lastErrorLine = '';
+      proc.stderr?.on('data', (d) => {
+        for (const raw of d.toString().split(/[\r\n]+/)) {
+          const line = raw.trim();
+          if (!line) continue;
+          if (/error|fatal|failed|refused/i.test(line)) {
+            lastErrorLine = redactRtmp(line);
+            console.warn(`[PreRecordedStreamer FFmpeg - ${broadcastId}]:`, lastErrorLine);
+          }
+        }
       });
 
-      console.log(`[PreRecordedStreamer] Starting live FFmpeg stream for "${broadcast.title}" to ${rtmpUrls.length} destination(s)`);
-
-      const procs: ChildProcess[] = [];
-
-      for (const targetUrl of rtmpUrls) {
-        // Broadcast-grade real-time FFmpeg pipe reading video file at native rate (-re)
-        const args = [
-          '-re',
-          '-i', videoFilePath,
-          '-c:v', 'libx264',
-          '-preset', 'veryfast',
-          '-b:v', '3000k',
-          '-maxrate', '3500k',
-          '-bufsize', '6000k',
-          '-pix_fmt', 'yuv420p',
-          '-g', '60',
-          '-r', '30',
-          '-c:a', 'aac',
-          '-b:a', '128k',
-          '-ar', '44100',
-          '-f', 'flv',
-          '-flvflags', 'no_duration_filesize',
-          '-rtmp_live', 'live',
-          targetUrl,
-        ];
-
-        const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-
-        proc.stderr?.on('data', (d) => {
-          // Log errors or stats if needed
-          const line = d.toString();
-          if (line.includes('error') || line.includes('fatal')) {
-            console.warn(`[PreRecordedStreamer FFmpeg Error - ${broadcastId}]:`, line.trim());
-          }
-        });
-
-        procs.push(proc);
-      }
-
-      this.activeStreams.set(broadcastId, procs);
-
-      // Handle process completion on the primary stream
-      const primaryProc = procs[0];
-      primaryProc.on('close', async (code) => {
+      proc.on('close', async (code) => {
         this.activeStreams.delete(broadcastId);
-
+        const current = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
+        if (!current || current.status !== 'LIVE') return; // canceled meanwhile
         if (code === 0) {
-          // ── SUCCESSFUL BROADCAST COMPLETION ─────────────────────────
-          console.log(`[PreRecordedStreamer] Broadcast ${broadcastId} finished successfully! Unlinking video from VPS immediately.`);
-          
-          await prisma.broadcast.update({
-            where: { id: broadcastId },
-            data: {
-              status: 'ENDED',
-              endedAt: new Date(),
-            },
-          });
-
-          // IMMEDIATELY DELETE VIDEO FROM VPS DISK (Zero storage waste!)
-          if (fs.existsSync(videoFilePath)) {
-            try {
-              await fs.promises.unlink(videoFilePath);
-              console.log(`[PreRecordedStreamer] Video file ${videoFilePath} successfully deleted from VPS disk.`);
-            } catch (unlinkErr) {
-              console.warn('[PreRecordedStreamer] Error unlinking video:', unlinkErr);
-            }
-          }
+          await prisma.broadcast.update({ where: { id: broadcastId }, data: { status: 'ENDED', endedAt: new Date() } });
+          await this.deleteOwnedFile((current.settings as Record<string, any>) || {});
+          console.log(`[PreRecordedStreamer] Broadcast ${broadcastId} finished.`);
         } else {
-          // ── BROADCAST FAILURE ──────────────────────────────────────
-          await this.handleBroadcastFailure(broadcastId, `FFmpeg exited with error code ${code}`, videoFilePath);
+          await this.handleBroadcastFailure(broadcastId, `FFmpeg exited with code ${code}${lastErrorLine ? `: ${lastErrorLine}` : ''}`);
         }
       });
     } catch (err: any) {
       console.error(`[PreRecordedStreamer] Fatal streaming error for ${broadcastId}:`, err);
-      const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
-      const settings = (broadcast?.settings as Record<string, any>) || {};
-      await this.handleBroadcastFailure(broadcastId, err.message, settings.videoFilePath);
+      await this.handleBroadcastFailure(broadcastId, err.message || 'Unknown error');
     }
   }
 
-  /**
-   * Handle broadcast failure: mark FAILED and log 24-hour cleanup deadline
-   */
-  private async handleBroadcastFailure(broadcastId: string, errorReason: string, videoFilePath?: string) {
+  /** Mark FAILED, keeping existing settings; the file is removed by the 24h GC sweep. */
+  private async handleBroadcastFailure(broadcastId: string, errorReason: string) {
     console.error(`[PreRecordedStreamer] Broadcast ${broadcastId} FAILED: ${errorReason}`);
     try {
       await prisma.broadcast.update({
@@ -279,12 +213,11 @@ export class PrerecordedStreamerService extends EventEmitter {
         data: {
           status: 'FAILED',
           endedAt: new Date(),
-          settings: {
-            failedAt: new Date(),
+          settings: (await this.mergeSettings(broadcastId, {
+            failedAt: new Date().toISOString(),
             failureReason: errorReason,
-            cleanupAfter: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24-hour auto-delete
-            videoFilePath,
-          },
+            cleanupAfter: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          })) as any,
         },
       });
     } catch (dbErr) {
@@ -292,45 +225,27 @@ export class PrerecordedStreamerService extends EventEmitter {
     }
   }
 
-  /**
-   * Cancel and delete a scheduled pre-recorded broadcast and remove file immediately from VPS
-   */
   public async cancelScheduledBroadcast(broadcastId: string): Promise<boolean> {
     try {
-      // 1. Cancel running timer if armed
-      if (this.scheduledTimers.has(broadcastId)) {
-        clearTimeout(this.scheduledTimers.get(broadcastId)!);
-        this.scheduledTimers.delete(broadcastId);
-      }
+      const timer = this.scheduledTimers.get(broadcastId);
+      if (timer) clearTimeout(timer);
+      this.scheduledTimers.delete(broadcastId);
 
-      // 2. Kill active FFmpeg streams if running
-      const activeProcs = this.activeStreams.get(broadcastId);
-      if (activeProcs) {
-        activeProcs.forEach((p) => {
-          try {
-            p.kill('SIGTERM');
-          } catch {}
-        });
+      const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
+      if (!broadcast) return false;
+
+      // Mark ENDED first so the ffmpeg close handler does not record it as a failure.
+      await prisma.broadcast.update({ where: { id: broadcastId }, data: { status: 'ENDED', endedAt: new Date() } });
+
+      const proc = this.activeStreams.get(broadcastId);
+      if (proc) {
+        try {
+          proc.kill('SIGTERM');
+        } catch { }
         this.activeStreams.delete(broadcastId);
       }
 
-      // 3. Find broadcast and unlink video file from VPS
-      const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
-      if (broadcast) {
-        const settings = (broadcast.settings as Record<string, any>) || {};
-        const videoFilePath = settings.videoFilePath as string;
-
-        if (videoFilePath && fs.existsSync(videoFilePath)) {
-          await fs.promises.unlink(videoFilePath).catch(() => null);
-          console.log(`[PreRecordedStreamer] Deleted video file ${videoFilePath} from VPS for canceled broadcast ${broadcastId}`);
-        }
-
-        await prisma.broadcast.update({
-          where: { id: broadcastId },
-          data: { status: 'ENDED', endedAt: new Date() },
-        });
-      }
-
+      await this.deleteOwnedFile((broadcast.settings as Record<string, any>) || {});
       return true;
     } catch (err) {
       console.error(`[PreRecordedStreamer] Failed to cancel scheduled broadcast ${broadcastId}:`, err);
@@ -339,28 +254,31 @@ export class PrerecordedStreamerService extends EventEmitter {
   }
 
   /**
-   * 24-Hour Garbage Collection Sweep:
-   * Removes any files from failed/orphaned pre-recorded streams older than 24 hours
+   * Hourly sweep: remove files in the prerecorded folder older than 24h that are NOT needed by a
+   * SCHEDULED/LIVE broadcast (videos may legitimately wait up to 72h for their slot).
    */
   public async runGarbageCollectionSweep(): Promise<void> {
     try {
-      if (!fs.existsSync(this.storageDir)) return;
+      const pending = await prisma.broadcast.findMany({
+        where: { status: { in: ['SCHEDULED', 'LIVE'] } },
+        select: { settings: true },
+      });
+      const keep = new Set(
+        pending
+          .map((b) => ((b.settings as Record<string, any>) || {}).videoFilePath as string | undefined)
+          .filter(Boolean)
+          .map((p) => path.basename(p as string))
+      );
+
       const files = await fs.promises.readdir(this.storageDir);
       const now = Date.now();
-      const twentyFourHours = 24 * 60 * 60 * 1000;
-
       for (const file of files) {
+        if (keep.has(file)) continue;
         const fullPath = path.join(this.storageDir, file);
-        try {
-          const stats = await fs.promises.stat(fullPath);
-          const ageMs = now - stats.mtimeMs;
-
-          if (ageMs > twentyFourHours) {
-            await fs.promises.unlink(fullPath);
-            console.log(`[PreRecordedStreamer GC] 24-Hour Cleanup: Removed expired/failed video file from VPS: ${file}`);
-          }
-        } catch {
-          // ignore single file stat errors
+        const stats = await fs.promises.stat(fullPath).catch(() => null);
+        if (stats && now - stats.mtimeMs > 24 * 60 * 60 * 1000) {
+          await fs.promises.unlink(fullPath).catch(() => null);
+          console.log(`[PreRecordedStreamer GC] Removed expired video file: ${file}`);
         }
       }
     } catch (gcErr) {
@@ -368,24 +286,27 @@ export class PrerecordedStreamerService extends EventEmitter {
     }
   }
 
-  /**
-   * Restore pending scheduled broadcasts upon backend server reboot
-   */
+  /** Re-arm timers after a restart; start slightly-missed ones, fail the ones missed long ago. */
   private async restorePendingSchedules(): Promise<void> {
     try {
-      const now = new Date();
-      const pendingBroadcasts = await prisma.broadcast.findMany({
-        where: {
-          status: 'SCHEDULED',
-          scheduledAt: { gte: now },
-        },
-      });
-
-      for (const b of pendingBroadcasts) {
+      const pending = await prisma.broadcast.findMany({ where: { status: 'SCHEDULED' } });
+      const now = Date.now();
+      for (const b of pending) {
         const settings = (b.settings as Record<string, any>) || {};
-        if (settings.isPrerecorded && b.scheduledAt) {
-          this.armBroadcastTimer(b.id, b.scheduledAt);
-          console.log(`[PreRecordedStreamer] Restored scheduled timer for broadcast: "${b.title}" (${b.id}) at ${b.scheduledAt.toISOString()}`);
+        if (!settings.isPrerecorded || !b.scheduledAt) continue;
+        const late = now - b.scheduledAt.getTime();
+        if (late > MISSED_START_GRACE_MS) {
+          await this.handleBroadcastFailure(b.id, 'Server was offline at the scheduled start time');
+          continue;
+        }
+        this.armBroadcastTimer(b.id, b.scheduledAt);
+        console.log(`[PreRecordedStreamer] Restored timer for "${b.title}" (${b.id}) at ${b.scheduledAt.toISOString()}`);
+      }
+      // Anything still marked LIVE belongs to an ffmpeg that died with the previous process.
+      const stale = await prisma.broadcast.findMany({ where: { status: 'LIVE' } });
+      for (const b of stale) {
+        if (((b.settings as Record<string, any>) || {}).isPrerecorded) {
+          await this.handleBroadcastFailure(b.id, 'Server restarted during the broadcast');
         }
       }
     } catch (e) {

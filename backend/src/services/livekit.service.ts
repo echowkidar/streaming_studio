@@ -47,6 +47,7 @@ export class LiveKitService {
         identity: validated.identity,
         name: validated.name,
         metadata: validated.metadata,
+        ttl: '12h',
       });
 
       at.addGrant({ 

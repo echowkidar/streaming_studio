@@ -6,6 +6,7 @@ import {
   ZoomIn, ZoomOut, RotateCw, FlipHorizontal, RefreshCw, Move, Sparkles 
 } from "lucide-react";
 import { useStudioStore } from "@/stores/studio.store";
+import { useShallow } from "zustand/react/shallow";
 import { ChromaKeyCanvas } from "./ChromaKeyCanvas";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +53,21 @@ export function VideoTrackView({
     isStageCropped,
     customLayoutConfig,
     selectedParticipantId,
-  } = useStudioStore();
+  } = useStudioStore(
+    // Subscribe only to the fields this tile uses (the whole-store subscription re-rendered every
+    // video tile on every store change, e.g. each ticker/timer update while live).
+    useShallow((st) => ({
+      tileTransforms: st.tileTransforms,
+      setTileTransform: st.setTileTransform,
+      resetTileTransform: st.resetTileTransform,
+      activeThemeColor: st.activeThemeColor,
+      chromaKeyConfig: st.chromaKeyConfig,
+      activeLayout: st.activeLayout,
+      isStageCropped: st.isStageCropped,
+      customLayoutConfig: st.customLayoutConfig,
+      selectedParticipantId: st.selectedParticipantId,
+    }))
+  );
 
   const isFullBleedLayout =
     isStageCropped ||

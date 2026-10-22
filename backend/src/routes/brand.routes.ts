@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { BrandType } from '@prisma/client';
+import { HttpError, assertWorkspaceAccess, resolveWorkspaceId } from '../lib/access';
 
 const router = Router();
 
@@ -26,37 +27,18 @@ const BrandAssetSchema = z.object({
 
 const UpdateBrandAssetSchema = BrandAssetSchema.partial();
 
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
-  }
-  const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (defaultWs) return defaultWs.id;
-
-  const newWs = await prisma.workspace.create({
-    data: {
-      name: 'Default Workspace',
-      slug: `default-${Date.now()}`,
-      owner: {
-        create: {
-          email: `admin-${Date.now()}@livestudio.io`,
-          passwordHash: 'seeded',
-          name: 'Super Admin',
-          role: 'SUPER_ADMIN',
-        },
-      },
-    },
-  });
-  return newWs.id;
+async function getOwnedBrandAsset(req: Request, id: string) {
+  const asset = await prisma.brandAsset.findUnique({ where: { id } });
+  if (!asset) throw new HttpError(404, 'Brand asset not found');
+  await assertWorkspaceAccess(req, asset.workspaceId);
+  return asset;
 }
 
 // POST /api/brand
 router.post('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = BrandAssetSchema.parse(req.body);
-    const workspaceId = data.workspaceId || (await resolveWorkspaceId(req));
+    const workspaceId = await resolveWorkspaceId(req);
 
     const brandAsset = await prisma.brandAsset.create({
       data: {
@@ -101,14 +83,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction): Promise
 // GET /api/brand/:id
 router.get('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const asset = await prisma.brandAsset.findUnique({
-      where: { id: req.params.id },
-    });
-
-    if (!asset) {
-      res.status(404).json({ success: false, error: 'Brand asset not found' });
-      return;
-    }
+    const asset = await getOwnedBrandAsset(req, req.params.id);
 
     res.status(200).json({ success: true, data: asset });
   } catch (error) {
@@ -120,6 +95,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction): Prom
 router.put('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = UpdateBrandAssetSchema.parse(req.body);
+    await getOwnedBrandAsset(req, req.params.id);
     const updated = await prisma.brandAsset.update({
       where: { id: req.params.id },
       data: {
@@ -143,6 +119,7 @@ router.put('/:id', async (req: Request, res: Response, next: NextFunction): Prom
 // DELETE /api/brand/:id
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    await getOwnedBrandAsset(req, req.params.id);
     await prisma.brandAsset.delete({
       where: { id: req.params.id },
     });

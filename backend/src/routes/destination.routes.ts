@@ -1,18 +1,23 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import * as jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { EncryptionService } from '../services/encryption.service';
 import { DestinationPlatform } from '@prisma/client';
-import { config } from '../config';
+import { HttpError, assertWorkspaceAccess, getUserWorkspaceIds, resolveWorkspaceId } from '../lib/access';
 
+// Mounted behind requireAuth in server.ts
 const router = Router({ mergeParams: true });
 const encryptionService = new EncryptionService();
+
+const RTMP_URL = z
+  .string()
+  .min(1, 'RTMP server URL is required')
+  .regex(/^rtmps?:\/\/[^\s]+$/i, 'RTMP URL must start with rtmp:// or rtmps://');
 
 const DestinationSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   platform: z.enum(['YOUTUBE', 'FACEBOOK', 'TWITCH', 'LINKEDIN', 'CUSTOM_RTMP']),
-  rtmpUrl: z.string().min(1, 'RTMP server URL is required'),
+  rtmpUrl: RTMP_URL,
   streamKey: z.string().min(1, 'Stream key is required'),
   workspaceId: z.string().optional(),
 });
@@ -20,285 +25,87 @@ const DestinationSchema = z.object({
 const UpdateDestinationSchema = z.object({
   name: z.string().min(1).optional(),
   platform: z.enum(['YOUTUBE', 'FACEBOOK', 'TWITCH', 'LINKEDIN', 'CUSTOM_RTMP']).optional(),
-  rtmpUrl: z.string().min(1).optional(),
+  rtmpUrl: RTMP_URL.optional(),
   streamKey: z.string().min(1).optional(),
 });
 
-// In-memory resilient cache for destinations if DB is temporarily unavailable
-interface FallbackDestinationItem {
+function toPublic(d: {
   id: string;
   workspaceId: string;
   name: string;
   platform: DestinationPlatform;
   rtmpUrl: string;
-  streamKeyEncrypted: string;
-  streamKeyIv: string;
-  streamKeyTag: string;
   status: string;
   lastUsedAt?: Date | null;
   createdAt: Date;
+}) {
+  return {
+    id: d.id,
+    workspaceId: d.workspaceId,
+    name: d.name,
+    platform: d.platform,
+    rtmpUrl: d.rtmpUrl,
+    streamKey: '••••••••••••',
+    status: d.status,
+    lastUsedAt: d.lastUsedAt,
+    createdAt: d.createdAt,
+  };
 }
 
-export const fallbackDestinations: FallbackDestinationItem[] = [];
-
-// Helper to resolve workspace ID with user-level isolation
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = (req.headers['x-workspace-id'] as string) || (req.body?.workspaceId as string);
-  if (reqWsId && reqWsId !== 'default') {
-    try {
-      const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-      if (ws) return ws.id;
-    } catch {
-      return reqWsId;
-    }
-  }
-
-  // Check authenticated user from JWT Bearer token
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    try {
-      const token = authHeader.split(' ')[1];
-      const secret = config.JWT_SECRET || process.env.JWT_SECRET || 'livestudio-jwt-secret-key-2026';
-      const decoded = jwt.decode(token) as { userId?: string } | null;
-      if (decoded?.userId) {
-        let userWs = await prisma.workspace.findFirst({
-          where: { ownerId: decoded.userId },
-        });
-
-        if (!userWs) {
-          const membership = await prisma.workspaceMember.findFirst({
-            where: { userId: decoded.userId },
-            include: { workspace: true },
-          });
-          if (membership?.workspace) {
-            userWs = membership.workspace;
-          }
-        }
-
-        if (!userWs) {
-          const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-          if (user) {
-            userWs = await prisma.workspace.create({
-              data: {
-                name: `${user.name || 'User'}'s Studio`,
-                slug: `ws-${user.id.toLowerCase().slice(-6)}-${Date.now()}`,
-                ownerId: user.id,
-                members: {
-                  create: {
-                    userId: user.id,
-                    role: 'OWNER',
-                  },
-                },
-              },
-            });
-          }
-        }
-
-        if (userWs) return userWs.id;
-      }
-    } catch (err) {
-      console.warn('[Destinations] Error resolving user workspace from JWT:', err);
-    }
-  }
-
-  try {
-    const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-    if (defaultWs) return defaultWs.id;
-
-    const newWs = await prisma.workspace.create({
-      data: {
-        name: 'Default Workspace',
-        slug: `default-${Date.now()}`,
-        owner: {
-          create: {
-            email: `admin-${Date.now()}@livestudio.io`,
-            passwordHash: 'seeded',
-            name: 'Super Admin',
-            role: 'SUPER_ADMIN',
-          },
-        },
-      },
-    });
-    return newWs.id;
-  } catch (error) {
-    console.warn('[Workspace] Database unavailable during resolveWorkspaceId, using default workspace ID:', error);
-    return 'default-workspace';
-  }
+async function getOwnedDestination(req: Request, id: string) {
+  const destination = await prisma.destination.findUnique({ where: { id } });
+  if (!destination) throw new HttpError(404, 'Destination not found');
+  await assertWorkspaceAccess(req, destination.workspaceId);
+  return destination;
 }
 
 // POST /api/destinations
 router.post('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = DestinationSchema.parse(req.body);
-    const workspaceId = data.workspaceId || (await resolveWorkspaceId(req));
+    const workspaceId = await resolveWorkspaceId(req);
 
-    // Encrypt stream key with AES-256-GCM
-    const encRes = await encryptionService.encrypt(data.streamKey);
-    if (!encRes.success || !encRes.data) {
-      res.status(500).json({ success: false, error: 'Encryption failed' });
-      return;
-    }
+    const encRes = await encryptionService.encrypt(data.streamKey.trim());
+    if (!encRes.success) throw new HttpError(500, 'Encryption failed');
 
-    let destination: {
-      id: string;
-      workspaceId: string;
-      name: string;
-      platform: DestinationPlatform;
-      rtmpUrl: string;
-      status: string;
-      lastUsedAt?: Date | null;
-      createdAt: Date;
-    };
-
-    try {
-      const created = await prisma.destination.create({
-        data: {
-          workspaceId,
-          name: data.name,
-          platform: data.platform as DestinationPlatform,
-          rtmpUrl: data.rtmpUrl,
-          streamKeyEncrypted: encRes.data.encryptedData,
-          streamKeyIv: encRes.data.iv,
-          streamKeyTag: encRes.data.authTag,
-          status: 'DISCONNECTED',
-        },
-      });
-      destination = created;
-    } catch (dbErr) {
-      console.warn('[Destinations] Database write failed, saving to resilient fallback storage:', dbErr);
-      const fallbackItem: FallbackDestinationItem = {
-        id: `dest_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    const created = await prisma.destination.create({
+      data: {
         workspaceId,
         name: data.name,
         platform: data.platform as DestinationPlatform,
-        rtmpUrl: data.rtmpUrl,
+        rtmpUrl: data.rtmpUrl.trim(),
         streamKeyEncrypted: encRes.data.encryptedData,
         streamKeyIv: encRes.data.iv,
         streamKeyTag: encRes.data.authTag,
         status: 'DISCONNECTED',
-        lastUsedAt: null,
-        createdAt: new Date(),
-      };
-      fallbackDestinations.unshift(fallbackItem);
-      destination = fallbackItem;
-    }
-
-    res.status(201).json({
-      success: true,
-      data: {
-        id: destination.id,
-        workspaceId: destination.workspaceId,
-        name: destination.name,
-        platform: destination.platform,
-        rtmpUrl: destination.rtmpUrl,
-        streamKey: '••••••••••••',
-        status: destination.status,
-        lastUsedAt: destination.lastUsedAt,
-        createdAt: destination.createdAt,
       },
     });
+    res.status(201).json({ success: true, data: toPublic(created) });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
     next(error);
   }
 });
 
 // GET /api/destinations
-router.get('/', async (req: Request, res: Response): Promise<void> => {
+router.get('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const workspaceId = await resolveWorkspaceId(req);
-    let destinations: Array<{
-      id: string;
-      workspaceId: string;
-      name: string;
-      platform: DestinationPlatform;
-      rtmpUrl: string;
-      status: string;
-      lastUsedAt?: Date | null;
-      createdAt: Date;
-    }> = [];
-
-    try {
-      destinations = await prisma.destination.findMany({
-        where: { workspaceId },
-        orderBy: { createdAt: 'desc' },
-      });
-    } catch (dbErr) {
-      console.warn('[Destinations] Database read failed, using fallback cache:', dbErr);
-      destinations = fallbackDestinations.filter(
-        (d) => !d.workspaceId || d.workspaceId === workspaceId || workspaceId === 'default-workspace'
-      );
-    }
-
-    // Merge fallback destinations belonging to this workspace only
-    const seenIds = new Set(destinations.map((d) => d.id));
-    for (const fb of fallbackDestinations) {
-      if (!seenIds.has(fb.id) && (fb.workspaceId === workspaceId || (!fb.workspaceId && workspaceId === 'default-workspace'))) {
-        destinations.push(fb);
-      }
-    }
-
-    const safeDestinations = destinations.map((d) => ({
-      id: d.id,
-      workspaceId: d.workspaceId,
-      name: d.name,
-      platform: d.platform,
-      rtmpUrl: d.rtmpUrl,
-      streamKey: '••••••••••••',
-      status: d.status,
-      lastUsedAt: d.lastUsedAt,
-      createdAt: d.createdAt,
-    }));
-
-    res.status(200).json({ success: true, data: safeDestinations });
-  } catch {
-    res.status(200).json({
-      success: true,
-      data: fallbackDestinations.map((d) => ({
-        id: d.id,
-        workspaceId: d.workspaceId,
-        name: d.name,
-        platform: d.platform,
-        rtmpUrl: d.rtmpUrl,
-        streamKey: '••••••••••••',
-        status: d.status,
-        lastUsedAt: d.lastUsedAt,
-        createdAt: d.createdAt,
-      })),
+    const ids = await getUserWorkspaceIds(req.user!.id);
+    if (ids.length === 0) ids.push(await resolveWorkspaceId(req));
+    const destinations = await prisma.destination.findMany({
+      where: { workspaceId: { in: ids } },
+      orderBy: { createdAt: 'desc' },
     });
+    res.status(200).json({ success: true, data: destinations.map(toPublic) });
+  } catch (error) {
+    next(error);
   }
 });
-
 
 // GET /api/destinations/:destinationId
 router.get('/:destinationId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const destination = await prisma.destination.findUnique({
-      where: { id: req.params.destinationId },
-    });
-
-    if (!destination) {
-      res.status(404).json({ success: false, error: 'Destination not found' });
-      return;
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        id: destination.id,
-        workspaceId: destination.workspaceId,
-        name: destination.name,
-        platform: destination.platform,
-        rtmpUrl: destination.rtmpUrl,
-        streamKey: '••••••••••••',
-        status: destination.status,
-        lastUsedAt: destination.lastUsedAt,
-        createdAt: destination.createdAt,
-      },
-    });
+    const destination = await getOwnedDestination(req, req.params.destinationId);
+    res.status(200).json({ success: true, data: toPublic(destination) });
   } catch (error) {
     next(error);
   }
@@ -307,98 +114,37 @@ router.get('/:destinationId', async (req: Request, res: Response, next: NextFunc
 // PUT /api/destinations/:destinationId
 router.put('/:destinationId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const destId = req.params.destinationId;
     const data = UpdateDestinationSchema.parse(req.body);
+    const existing = await getOwnedDestination(req, req.params.destinationId);
 
     const updatePayload: Record<string, unknown> = {};
     if (data.name) updatePayload.name = data.name;
     if (data.platform) updatePayload.platform = data.platform as DestinationPlatform;
-    if (data.rtmpUrl) updatePayload.rtmpUrl = data.rtmpUrl;
-
-    let encData: { encryptedData: string; iv: string; authTag: string } | null = null;
+    if (data.rtmpUrl) updatePayload.rtmpUrl = data.rtmpUrl.trim();
     if (data.streamKey && data.streamKey.trim() && !data.streamKey.includes('••••')) {
       const encRes = await encryptionService.encrypt(data.streamKey.trim());
-      if (encRes.success && encRes.data) {
-        encData = encRes.data;
-        updatePayload.streamKeyEncrypted = encData.encryptedData;
-        updatePayload.streamKeyIv = encData.iv;
-        updatePayload.streamKeyTag = encData.authTag;
-      }
+      if (!encRes.success) throw new HttpError(500, 'Encryption failed');
+      updatePayload.streamKeyEncrypted = encRes.data.encryptedData;
+      updatePayload.streamKeyIv = encRes.data.iv;
+      updatePayload.streamKeyTag = encRes.data.authTag;
     }
 
-    // Update in fallback cache if present
-    const cached = fallbackDestinations.find((d) => d.id === destId);
-    if (cached) {
-      if (data.name) cached.name = data.name;
-      if (data.platform) cached.platform = data.platform as DestinationPlatform;
-      if (data.rtmpUrl) cached.rtmpUrl = data.rtmpUrl;
-      if (encData) {
-        cached.streamKeyEncrypted = encData.encryptedData;
-        cached.streamKeyIv = encData.iv;
-        cached.streamKeyTag = encData.authTag;
-      }
-    }
-
-    let updatedDestination: any = cached || {
-      id: destId,
-      workspaceId: 'default-workspace',
-      name: data.name || 'Streaming Destination',
-      platform: (data.platform as DestinationPlatform) || 'YOUTUBE',
-      rtmpUrl: data.rtmpUrl || 'rtmp://a.rtmp.youtube.com/live2',
-      streamKey: '••••••••••••',
-      status: 'READY',
-      lastUsedAt: null,
-    };
-
-    try {
-      const updated = await prisma.destination.update({
-        where: { id: destId },
-        data: updatePayload,
-      });
-      updatedDestination = updated;
-    } catch (dbErr) {
-      console.warn('[Destinations] Database update skipped, using resilient cache update:', dbErr);
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        id: updatedDestination.id,
-        workspaceId: updatedDestination.workspaceId,
-        name: updatedDestination.name,
-        platform: updatedDestination.platform,
-        rtmpUrl: updatedDestination.rtmpUrl,
-        streamKey: '••••••••••••',
-        status: updatedDestination.status,
-        lastUsedAt: updatedDestination.lastUsedAt,
-      },
-    });
+    const updated = await prisma.destination.update({ where: { id: existing.id }, data: updatePayload });
+    res.status(200).json({ success: true, data: toPublic(updated) });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      res.status(400).json({ success: false, error: error.errors[0]?.message || 'Validation failed' });
-      return;
-    }
     next(error);
   }
 });
 
 // DELETE /api/destinations/:destinationId
-router.delete('/:destinationId', async (req: Request, res: Response): Promise<void> => {
-  const destId = req.params.destinationId;
-  const idx = fallbackDestinations.findIndex((d) => d.id === destId);
-  if (idx !== -1) {
-    fallbackDestinations.splice(idx, 1);
-  }
-
+router.delete('/:destinationId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    await prisma.destination.delete({
-      where: { id: destId },
-    });
+    const existing = await getOwnedDestination(req, req.params.destinationId);
+    await prisma.destination.delete({ where: { id: existing.id } });
+    res.status(200).json({ success: true, data: { id: existing.id, deleted: true } });
   } catch (error) {
-    console.warn('[Destinations] Database delete skipped or already deleted:', error);
+    next(error);
   }
-
-  res.status(200).json({ success: true, data: { id: destId, deleted: true } });
 });
 
 export default router;

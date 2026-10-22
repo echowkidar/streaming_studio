@@ -2,6 +2,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { WebinarStatus } from '@prisma/client';
+import { requireAuth } from '../middleware/auth';
+import { assertWorkspaceAccess, resolveWorkspaceId } from '../lib/access';
 
 const router = Router();
 
@@ -28,39 +30,14 @@ const RegistrantSchema = z.object({
 const MessageSchema = z.object({
   authorName: z.string().min(1),
   authorEmail: z.string().email().optional(),
-  message: z.string().min(1),
+  message: z.string().min(1).max(2000),
 });
 
-async function resolveWorkspaceId(req: Request): Promise<string> {
-  const reqWsId = req.headers['x-workspace-id'] as string;
-  if (reqWsId) {
-    const ws = await prisma.workspace.findUnique({ where: { id: reqWsId } });
-    if (ws) return ws.id;
-  }
-  const defaultWs = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' } });
-  if (defaultWs) return defaultWs.id;
-  const newWs = await prisma.workspace.create({
-    data: {
-      name: 'Default Workspace',
-      slug: `default-${Date.now()}`,
-      owner: {
-        create: {
-          email: `admin-${Date.now()}@livestudio.io`,
-          passwordHash: 'seeded',
-          name: 'Super Admin',
-          role: 'SUPER_ADMIN',
-        },
-      },
-    },
-  });
-  return newWs.id;
-}
-
 // POST /api/webinars
-router.post('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = WebinarSchema.parse(req.body);
-    const workspaceId = data.workspaceId || (await resolveWorkspaceId(req));
+    const workspaceId = await resolveWorkspaceId(req);
 
     const webinar = await prisma.webinar.create({
       data: {
@@ -88,7 +65,7 @@ router.post('/', async (req: Request, res: Response, next: NextFunction): Promis
 });
 
 // GET /api/webinars
-router.get('/', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
     const webinars = await prisma.webinar.findMany({
@@ -191,6 +168,11 @@ router.get('/:id/messages', async (req: Request, res: Response, next: NextFuncti
 router.post('/:id/messages', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = MessageSchema.parse(req.body);
+    const webinar = await prisma.webinar.findUnique({ where: { id: req.params.id } });
+    if (!webinar || !webinar.chatEnabled) {
+      res.status(404).json({ success: false, error: 'Chat is not available for this webinar' });
+      return;
+    }
     const message = await prisma.webinarMessage.create({
       data: {
         webinarId: req.params.id,
@@ -210,8 +192,14 @@ router.post('/:id/messages', async (req: Request, res: Response, next: NextFunct
 });
 
 // DELETE /api/webinars/:id
-router.delete('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+router.delete('/:id', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const existing = await prisma.webinar.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      res.status(404).json({ success: false, error: 'Webinar not found' });
+      return;
+    }
+    await assertWorkspaceAccess(req, existing.workspaceId);
     await prisma.webinar.delete({ where: { id: req.params.id } });
     res.status(200).json({ success: true, data: { id: req.params.id, deleted: true } });
   } catch (error) {

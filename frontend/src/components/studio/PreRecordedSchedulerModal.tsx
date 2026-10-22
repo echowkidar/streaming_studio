@@ -1,5 +1,6 @@
 "use client";
 
+import { appendFileOrChunked } from "@/lib/chunkedUpload";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Film,
@@ -186,7 +187,7 @@ export const PreRecordedSchedulerModal: React.FC<PreRecordedSchedulerModalProps>
       if (studioId) formData.append("studioId", studioId);
 
       if (sourceType === "upload" && selectedFile) {
-        formData.append("video", selectedFile);
+        await appendFileOrChunked(formData, "video", selectedFile);
       } else if (sourceType === "library" && selectedAssetId) {
         formData.append("mediaAssetId", selectedAssetId);
       }

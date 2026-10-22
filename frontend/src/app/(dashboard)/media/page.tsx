@@ -1,5 +1,6 @@
 "use client";
 
+import { appendFileOrChunked } from "@/lib/chunkedUpload";
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
   FolderOpen,
@@ -114,7 +115,7 @@ export default function MediaLibraryPage() {
     setIsUploading(true);
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      await appendFileOrChunked(formData, "file", file);
       formData.append("name", file.name);
       formData.append("assetType", type.toUpperCase());
       formData.append("isPersistent", "true");
