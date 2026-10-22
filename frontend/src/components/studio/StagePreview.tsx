@@ -688,9 +688,13 @@ export const StagePreview: React.FC = () => {
 
         if (data?.event === "onReady") {
           syncYouTubePlayerState();
-          // Mute iframe directly: sound is piped through livestudio-active-media-audio into Web Audio & broadcast mix without echo
-          sendYouTubeIframeCommand("mute", []);
           sendYouTubeIframeCommand("playVideo", []);
+          if (!activeMedia?.isMuted && normalizedMediaVolumePct > 0) {
+            sendYouTubeIframeCommand("unMute", []);
+            sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+          } else {
+            sendYouTubeIframeCommand("mute", []);
+          }
           if (audioEl && !activeMedia?.isMuted && normalizedMediaVolumePct > 0) {
             audioEl.muted = false;
             audioEl.play().catch(() => { });
@@ -738,9 +742,19 @@ export const StagePreview: React.FC = () => {
             if (data.info.playerState === 1) {
               setIsMediaPaused(false);
               isMediaPausedRef.current = false;
-              sendYouTubeIframeCommand("mute", []);
               sendYouTubeIframeCommand("unloadModule", ["captions"]);
               sendYouTubeIframeCommand("unloadModule", ["cc"]);
+              const isAudioElActive = Boolean(
+                audioEl && !audioEl.paused && audioEl.readyState >= 2 && !audioEl.error
+              );
+              if (activeMedia?.isMuted || normalizedMediaVolumePct === 0) {
+                sendYouTubeIframeCommand("mute", []);
+              } else if (isAudioElActive) {
+                sendYouTubeIframeCommand("mute", []);
+              } else {
+                sendYouTubeIframeCommand("unMute", []);
+                sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+              }
               if (audioEl && audioEl.paused && !activeMedia?.isMuted) {
                 audioEl.play().catch(() => { });
               }
@@ -1196,8 +1210,17 @@ export const StagePreview: React.FC = () => {
       } catch { }
     }
     if (activeMedia?.type === "youtube" && useYtIframeFallback) {
-      // Keep iframe muted so audio is piped cleanly through livestudio-active-media-audio into Web Audio DSP without echo/phasing
-      sendYouTubeIframeCommand("mute", []);
+      const isAudioElActive = Boolean(
+        audioEl && !audioEl.paused && audioEl.readyState >= 2 && !audioEl.error
+      );
+      if (activeMedia.isMuted || effectiveVolPct === 0) {
+        sendYouTubeIframeCommand("mute", []);
+      } else if (isAudioElActive) {
+        sendYouTubeIframeCommand("mute", []);
+      } else {
+        sendYouTubeIframeCommand("unMute", []);
+        sendYouTubeIframeCommand("setVolume", [Math.min(100, effectiveVolPct)]);
+      }
     }
   }, [
     activeMedia?.isMuted,
@@ -2275,7 +2298,7 @@ export const StagePreview: React.FC = () => {
                   <iframe
                     id={isSecondary ? "livestudio-secondary-youtube-iframe" : "livestudio-active-youtube-iframe"}
                     key={`yt-${tileKey}-${ytVideoId || targetMedia.id}`}
-                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&mute=1&loop=${targetMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${targetMedia.startTimeSec ? `&start=${Math.floor(targetMedia.startTimeSec)}` : ""}${targetMedia.endTimeSec ? `&end=${Math.floor(targetMedia.endTimeSec)}` : ""}`}
+                    src={`https://www.youtube-nocookie.com/embed/${ytVideoId}?autoplay=1&enablejsapi=1&controls=0&cc_load_policy=0&hl=en&iv_load_policy=3&rel=0&fs=0&disablekb=1&modestbranding=1&playsinline=1&loop=${targetMedia.loop !== false ? 1 : 0}&playlist=${ytVideoId}${targetMedia.startTimeSec ? `&start=${Math.floor(targetMedia.startTimeSec)}` : ""}${targetMedia.endTimeSec ? `&end=${Math.floor(targetMedia.endTimeSec)}` : ""}`}
                     title={targetMedia.name}
                     allow="autoplay; encrypted-media; picture-in-picture"
                     style={{
@@ -2306,7 +2329,7 @@ export const StagePreview: React.FC = () => {
                       if (ytAudioAttempt === 0) {
                         setYtAudioAttempt(1);
                       } else {
-                        // Emergency fail-safe: unmute iframe so audio is never lost
+                        // Emergency fail-safe: direct audio proxy failed, ensure iframe stays unmuted with sound
                         sendYouTubeIframeCommand("unMute", []);
                         sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
                       }
@@ -2327,6 +2350,15 @@ export const StagePreview: React.FC = () => {
                     onPlaying={() => {
                       stageBroadcaster.ensureAudioContext();
                       stageBroadcaster.refreshAudioConnections();
+                      // Only mute iframe once proxy audio is verified to be outputting audio
+                      sendYouTubeIframeCommand("mute", []);
+                    }}
+                    onPause={() => {
+                      // If proxy audio pauses, keep iframe unmuted so host never experiences silence
+                      if (!activeMedia?.isMuted && normalizedMediaVolumePct > 0) {
+                        sendYouTubeIframeCommand("unMute", []);
+                        sendYouTubeIframeCommand("setVolume", [Math.min(100, normalizedMediaVolumePct)]);
+                      }
                     }}
                     onPlay={() => {
                       stageBroadcaster.ensureAudioContext();

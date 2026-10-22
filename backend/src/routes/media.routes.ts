@@ -377,7 +377,7 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
         if (!ytdlpBin) throw new Error('yt-dlp unavailable');
         const ytdlpArgs = ytDlpArgs(ytdlpBin, [
           '-f',
-          '18/b[ext=mp4]/b',
+          'ba/b[ext=m4a]/ba[ext=webm]/18/b',
           '--print',
           '%(url)s',
           '--print',
