@@ -643,18 +643,16 @@ export const StagePreview: React.FC = () => {
         })
         .catch(() => { });
 
-      // Resilient watchdog: only switch to iframe fallback if direct MP4 stream fails to decode/buffer
+      // Resilient watchdog: only switch to iframe fallback if direct MP4 stream fails to decode/buffer or has no video frames
       const streamWatchdog = setTimeout(() => {
         if (cancelled || ytReadyConfirmedRef.current) return;
         const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-        if (v && (v.readyState >= 2 || v.currentTime > 0 || !v.paused || ytReadyConfirmedRef.current)) {
+        if (v && v.videoWidth > 0 && (v.readyState >= 2 || v.currentTime > 0 || !v.paused)) {
           ytReadyConfirmedRef.current = true;
           return;
         }
-        if (!v || v.readyState < 1) {
-          setUseYtIframeFallback(true);
-        }
-      }, 12000);
+        setUseYtIframeFallback(true);
+      }, 2500);
 
       return () => {
         cancelled = true;
@@ -2409,11 +2407,21 @@ export const StagePreview: React.FC = () => {
                     loop={(targetMedia.loop ?? true) && !targetMedia.startTimeSec && !targetMedia.endTimeSec}
                     muted={Boolean(targetMedia.isMuted)}
                     crossOrigin="anonymous"
+                    onLoadedMetadata={(e) => {
+                      const v = e.currentTarget;
+                      if (targetMedia.type === "youtube" && v.videoWidth === 0) {
+                        setUseYtIframeFallback(true);
+                      }
+                    }}
                     onCanPlay={(e) => {
+                      const v = e.currentTarget;
+                      if (targetMedia.type === "youtube" && v.videoWidth === 0) {
+                        setUseYtIframeFallback(true);
+                        return;
+                      }
                       ytReadyConfirmedRef.current = true;
                       stageBroadcaster.ensureAudioContext();
                       stageBroadcaster.refreshAudioConnections();
-                      const v = e.currentTarget;
                       const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
                       if (!targetMedia.isMuted && vol > 0) {
                         v.muted = false;
@@ -2424,6 +2432,11 @@ export const StagePreview: React.FC = () => {
                       if (v.paused) v.play().catch(() => { });
                     }}
                     onPlaying={() => {
+                      const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
+                      if (targetMedia.type === "youtube" && v && v.videoWidth === 0) {
+                        setUseYtIframeFallback(true);
+                        return;
+                      }
                       ytReadyConfirmedRef.current = true;
                       stageBroadcaster.ensureAudioContext();
                       stageBroadcaster.refreshAudioConnections();
@@ -2434,11 +2447,7 @@ export const StagePreview: React.FC = () => {
                     }}
                     onError={() => {
                       if (targetMedia.type === "youtube") {
-                        if (ytStreamAttempt === 0) {
-                          setYtStreamAttempt(1);
-                        } else {
-                          setUseYtIframeFallback(true);
-                        }
+                        setUseYtIframeFallback(true);
                       }
                     }}
                     style={{

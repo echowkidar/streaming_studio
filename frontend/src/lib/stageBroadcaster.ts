@@ -1363,9 +1363,12 @@ class StageBroadcaster {
             }
           } else if (currentStore.activeMedia) {
             const activeM = currentStore.activeMedia;
+            const ytId =
+              activeM.youtubeId ||
+              (activeM.url ? activeM.url.match(/(?:youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)?.[1] : null);
             const posterCandidate =
               activeM.thumbnail ||
-              (activeM.youtubeId ? `https://i.ytimg.com/vi/${activeM.youtubeId}/hqdefault.jpg` : null);
+              (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : null);
 
             if (posterCandidate) {
               if (this.cachedMediaPosterUrl !== posterCandidate) {

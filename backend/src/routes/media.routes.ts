@@ -377,7 +377,7 @@ async function resolveDirectYouTubeStream(videoId: string): Promise<CachedYtStre
         if (!ytdlpBin) throw new Error('yt-dlp unavailable');
         const ytdlpArgs = ytDlpArgs(ytdlpBin, [
           '-f',
-          'ba/b[ext=m4a]/ba[ext=webm]/18/b',
+          '18/22/b[ext=mp4]/best[ext=mp4]/best',
           '--print',
           '%(url)s',
           '--print',
@@ -636,6 +636,73 @@ router.get('/youtube/stream', async (req: Request, res: Response): Promise<void>
   }
 });
 
+const ytAudioUrlCache = new Map<string, CachedYtStream>();
+
+async function resolveDirectYouTubeAudio(videoId: string): Promise<CachedYtStream | null> {
+  const cached = ytAudioUrlCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  // Tier 1: yt-dlp pure audio extraction (100% reliable across modern YouTube content)
+  try {
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const ytdlpBin = await getOrBootstrapYtDlpBinary();
+    if (ytdlpBin) {
+      const ytdlpArgs = ytDlpArgs(ytdlpBin, [
+        '-f',
+        'ba/b[ext=m4a]/ba[ext=webm]/18/b',
+        '--print',
+        '%(url)s',
+        '--print',
+        '%(duration)s',
+        '--no-playlist',
+        watchUrl,
+      ]);
+
+      const ytdlpResult = await new Promise<{ url: string; durSec: number } | null>((resolve) => {
+        execFile(
+          ytdlpBin,
+          ytdlpArgs,
+          { timeout: 12000 },
+          (err, stdout) => {
+            if (!err && stdout) {
+              const lines = stdout.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+              const foundUrl = lines.find((l) => l.startsWith('http'));
+              const durLine = lines.find((l) => /^\d+(\.\d+)?$/.test(l));
+              const parsedDur = durLine ? Math.round(Number(durLine)) : 0;
+              if (foundUrl) {
+                resolve({ url: foundUrl, durSec: parsedDur });
+                return;
+              }
+            }
+            resolve(null);
+          }
+        );
+      });
+
+      if (ytdlpResult?.url) {
+        const entry: CachedYtStream = {
+          url: ytdlpResult.url,
+          durationSec: ytdlpResult.durSec,
+          expiresAt: Date.now() + 45 * 60 * 1000,
+        };
+        ytAudioUrlCache.set(videoId, entry);
+        return entry;
+      }
+    }
+  } catch { }
+
+  // Tier 2: Fallback to video stream (which has muxed audio)
+  const vid = await resolveDirectYouTubeStream(videoId);
+  if (vid?.url) {
+    ytAudioUrlCache.set(videoId, vid);
+    return vid;
+  }
+
+  return null;
+}
+
 // GET /api/media/youtube/audio?videoId=...
 // Guaranteed same-origin audio bridge for Live Recording & Live Broadcast mixing
 router.get('/youtube/audio', async (req: Request, res: Response): Promise<void> => {
@@ -647,7 +714,7 @@ router.get('/youtube/audio', async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const resolved = await resolveDirectYouTubeStream(videoId);
+    const resolved = await resolveDirectYouTubeAudio(videoId);
     if (!resolved || !resolved.url) {
       res.status(404).json({
         success: false,
