@@ -67,6 +67,18 @@ const FairUseCanvasOverlay: React.FC<{
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const updateSize = () => {
+      if (canvas.parentElement) {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          canvas.width = Math.round(rect.width);
+          canvas.height = Math.round(rect.height);
+        }
+      }
+    };
+    updateSize();
+    window.addEventListener("resize", updateSize);
+
     let animId: number;
     let lastDraw = 0;
 
@@ -187,7 +199,10 @@ const FairUseCanvasOverlay: React.FC<{
     };
 
     animId = requestAnimationFrame(renderLoop);
-    return () => cancelAnimationFrame(animId);
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", updateSize);
+    };
   }, [grainEnabled, grainIntensity, linesEnabled, linesIntensity]);
 
   return (
@@ -610,18 +625,18 @@ export const StagePreview: React.FC = () => {
         })
         .catch(() => { });
 
-      // Resilient 8s watchdog: only switch to iframe fallback if direct MP4 stream fails to decode/buffer
+      // Resilient watchdog: only switch to iframe fallback if direct MP4 stream fails to decode/buffer
       const streamWatchdog = setTimeout(() => {
         if (cancelled || ytReadyConfirmedRef.current) return;
         const v = document.getElementById("livestudio-active-media-video") as HTMLVideoElement | null;
-        if (v && v.networkState === 2 && !v.paused) {
-          // Video is actively receiving network stream, allow it to continue
+        if (v && (v.readyState >= 2 || v.currentTime > 0 || !v.paused || ytReadyConfirmedRef.current)) {
+          ytReadyConfirmedRef.current = true;
           return;
         }
-        if (!v || v.readyState < 2) {
+        if (!v || v.readyState < 1) {
           setUseYtIframeFallback(true);
         }
-      }, 8000);
+      }, 12000);
 
       return () => {
         cancelled = true;
@@ -2288,6 +2303,7 @@ export const StagePreview: React.FC = () => {
               muted={Boolean(targetMedia.isMuted)}
               crossOrigin="anonymous"
               onCanPlay={(e) => {
+                ytReadyConfirmedRef.current = true;
                 const v = e.currentTarget;
                 const vol = targetMedia.volume !== undefined ? targetMedia.volume : 100;
                 if (!targetMedia.isMuted && vol > 0) {
@@ -2297,6 +2313,9 @@ export const StagePreview: React.FC = () => {
                   } catch { }
                 }
                 if (v.paused) v.play().catch(() => { });
+              }}
+              onPlaying={() => {
+                ytReadyConfirmedRef.current = true;
               }}
               style={{
                 objectFit: currentFitMode,
@@ -2340,6 +2359,30 @@ export const StagePreview: React.FC = () => {
               }}
               className="w-full h-full max-w-none pointer-events-auto"
             />
+          )}
+
+          {/* 60FPS HTML5 Canvas Fair-Use Film Grain + Refined 35mm Vintage Hairlines + Traveling Scanline Bars */}
+          {fairUseConfig?.enabled &&
+            ((fairUseConfig?.filmGrainOverlay ?? true) ||
+              (fairUseConfig?.vintageLinesOverlay ?? true)) && (
+              <FairUseCanvasOverlay
+                grainEnabled={fairUseConfig?.filmGrainOverlay ?? true}
+                grainIntensity={fairUseConfig?.grainIntensity || "random"}
+                linesEnabled={fairUseConfig?.vintageLinesOverlay ?? true}
+                linesIntensity={fairUseConfig?.vintageLinesIntensity || "medium"}
+              />
+            )}
+
+          {/* Fair Use / Safe Mode Badge on Active Media */}
+          {fairUseConfig?.enabled && (fairUseConfig?.showFairUseBadge ?? true) && (
+            <div
+              className={cn(
+                "absolute left-3 bottom-3 z-30 flex items-center gap-1.5 bg-amber-500/95 text-slate-950 font-black text-[9px] tracking-wider uppercase px-2 py-0.5 rounded shadow-lg pointer-events-none transition-all select-none"
+              )}
+            >
+              <ShieldAlert className="w-3 h-3 text-slate-950" />
+              <span>{fairUseConfig.badgeText || "Fair Use • Safe Mode"}</span>
+            </div>
           )}
 
           {/* Quick Corner Controls Overlay on Tile */}

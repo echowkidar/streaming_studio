@@ -1025,7 +1025,7 @@ class StageBroadcaster {
         }
 
         if (isMedia) {
-          const mediaMapCanvas = el.querySelector("#livestudio-tactical-map-canvas") as HTMLCanvasElement | null;
+          const mediaMapCanvas = (el.querySelector("#livestudio-tactical-map-canvas") || el.querySelector("canvas")) as HTMLCanvasElement | null;
           const mediaVideo = el.querySelector("video") as HTMLVideoElement | null;
           const mediaImg = el.querySelector("img") as HTMLImageElement | null;
 
@@ -1083,6 +1083,43 @@ class StageBroadcaster {
               } catch { }
             }
             ctx.restore();
+
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.filmGrainOverlay ?? true)) {
+              this.drawFilmGrainOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.grainIntensity || "random"
+              );
+            }
+
+            if (currentStore.fairUseConfig?.enabled && (currentStore.fairUseConfig?.vintageLinesOverlay ?? true)) {
+              this.drawVintageFilmLinesOverlay(
+                ctx,
+                x,
+                y,
+                w,
+                h,
+                currentStore.fairUseConfig?.vintageLinesIntensity || "medium"
+              );
+            }
+
+            if (currentStore.fairUseConfig?.enabled && currentStore.fairUseConfig?.showFairUseBadge) {
+              const badgeTxt = currentStore.fairUseConfig.badgeText || "LIVE COMMENTARY & REVIEW • FAIR USE";
+              ctx.save();
+              ctx.font = "bold 11px Inter, system-ui, sans-serif";
+              const bw = ctx.measureText(badgeTxt).width + 24;
+              ctx.fillStyle = "rgba(15, 23, 42, 0.86)";
+              this.drawRoundedRect(ctx, x + 12, y + h - 34, bw, 22, 6);
+              ctx.fill();
+              ctx.fillStyle = "#38bdf8";
+              ctx.textAlign = "left";
+              ctx.textBaseline = "middle";
+              ctx.fillText(badgeTxt, x + 24, y + h - 23);
+              ctx.restore();
+            }
           } else if (mediaVideo && mediaVideo.readyState >= 2 && mediaVideo.videoWidth > 0) {
             ctx.save();
             if (currentStore.fairUseConfig?.enabled) {
@@ -2237,6 +2274,32 @@ class StageBroadcaster {
       ctx.fillStyle = `rgba(255, 252, 235, ${baseAlpha * 0.85})`;
       ctx.fillRect(sx, sy, 1.6, 1.6);
     }
+
+    // Traveling horizontal VHS/35mm scanline bar (fair-use visual alteration)
+    const now = performance.now();
+    const scanY = y + (((now * 0.11) % (h + 60)) - 30);
+    if (scanY >= y - 16 && scanY <= y + h + 16) {
+      const scanGrad = ctx.createLinearGradient(x, scanY - 8, x, scanY + 8);
+      scanGrad.addColorStop(0, "rgba(255,255,255,0)");
+      scanGrad.addColorStop(0.5, `rgba(255,248,230,${(baseAlpha * 0.22).toFixed(2)})`);
+      scanGrad.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = scanGrad;
+      ctx.fillRect(x, Math.max(y, scanY - 8), w, 16);
+    }
+
+    // Dynamic Corner Vignette on recording & broadcast
+    const vigGrad = ctx.createRadialGradient(
+      x + w / 2,
+      y + h / 2,
+      Math.min(w, h) * 0.36,
+      x + w / 2,
+      y + h / 2,
+      Math.max(w, h) * 0.72
+    );
+    vigGrad.addColorStop(0, "rgba(0,0,0,0)");
+    vigGrad.addColorStop(1, "rgba(0,0,0,0.18)");
+    ctx.fillStyle = vigGrad;
+    ctx.fillRect(x, y, w, h);
 
     ctx.restore();
   }
